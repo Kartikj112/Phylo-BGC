@@ -1,0 +1,55 @@
+{
+  "accession": "BGC-TEST0000002",
+  "version": 2,
+  "changelog": {
+    "releases": [
+      {
+        "version": "4.0",
+        "date": "2026-01-15",
+        "entries": [
+          {"contributors": ["TESTCONTRIBUTOR2"], "reviewers": [], "comment": "synthetic fixture, not a real MIBiG entry"}
+        ]
+      }
+    ]
+  },
+  "quality": "medium",
+  "status": "active",
+  "completeness": "partial",
+  "loci": [
+    {
+      "accession": "XX999902.1",
+      "location": {"from": 500, "to": 38200},
+      "evidence": [
+        {"method": "Knock-out studies", "references": ["doi:10.9999/test.fixture.0002"]}
+      ]
+    }
+  ],
+  "biosynthesis": {
+    "classes": [
+      {"class": "NRPS"},
+      {"class": "PKS"}
+    ],
+    "modules": [],
+    "operons": [],
+    "paths": []
+  },
+  "compounds": [
+    {
+      "name": "Testomycin B1",
+      "evidence": [{"method": "NMR", "references": ["pubmed:19990002"]}],
+      "classes": ["Macrocyclic"],
+      "formula": "C22H31N3O6",
+      "databaseIds": ["pubchem:19990002", "chebi:1999002"]
+    },
+    {
+      "name": "Testomycin B2",
+      "evidence": [{"method": "X-ray crystallography", "references": ["pubmed:19990003"]}],
+      "classes": ["Macrocyclic"],
+      "formula": "C22H31N3O7"
+    }
+  ],
+  "taxonomy": {
+    "name": "Streptomyces testomycini",
+    "ncbiTaxId": 9999901
+  }
+}

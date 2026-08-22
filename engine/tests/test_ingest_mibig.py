@@ -1,0 +1,201 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from bgcscape.ingest.mibig import (
+    MibigParseError,
+    ingest_mibig_entries,
+    load_mibig_entry,
+    parse_mibig_entry,
+    read_mibig_entries_from_path,
+)
+from bgcscape.models import BGC, BGCClass, Compound, Genome, Taxon
+from bgcscape.models.base import EvidenceLevel
+from bgcscape.models.genome import AssemblyLevel
+
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def _load_fixture(name: str) -> dict:
+    return json.loads((FIXTURES / name).read_text())
+
+
+# --- parser tests (pure, no DB) -------------------------------------------------
+
+
+def test_parse_single_class_entry():
+    parsed = parse_mibig_entry(_load_fixture("mibig_test_entry_active_single_class.json"))
+
+    assert parsed.mibig_accession == "BGC-TEST0000001"
+    assert parsed.status == "active"
+    assert parsed.locus_accession == "XX999901.1"
+    assert parsed.start_coord == 1
+    assert parsed.end_coord == 24500
+    assert parsed.organism_name == "Streptomyces testomycini"
+    assert parsed.ncbi_taxid == 9999901
+    assert parsed.bgc_class is BGCClass.NRPS
+    assert parsed.subtype is None
+    assert len(parsed.compounds) == 1
+
+    compound = parsed.compounds[0]
+    assert compound.name == "Testomycin A"
+    assert compound.chemical_formula == "C10H15N3O2S"
+    assert compound.pubchem_cid == 19990001
+    assert compound.mibig_compound_ref == "BGC-TEST0000001:0"
+    assert compound.link_reference == "NMR; Mass spectrometry"
+
+
+def test_parse_hybrid_class_entry_maps_to_hybrid_with_joined_subtype():
+    parsed = parse_mibig_entry(_load_fixture("mibig_test_entry_active_hybrid_class.json"))
+
+    assert parsed.bgc_class is BGCClass.HYBRID
+    assert parsed.subtype == "NRPS+PKS"
+    assert len(parsed.compounds) == 2
+    assert {c.name for c in parsed.compounds} == {"Testomycin B1", "Testomycin B2"}
+    # Second compound has no databaseIds at all.
+    b2 = next(c for c in parsed.compounds if c.name == "Testomycin B2")
+    assert b2.pubchem_cid is None
+
+
+def test_parse_retired_entry_still_parses_successfully():
+    """Parsing succeeds regardless of status — filtering by status is the
+    orchestration layer's job (ingest_mibig_entries), not the parser's."""
+    parsed = parse_mibig_entry(_load_fixture("mibig_test_entry_retired.json"))
+    assert parsed.status == "retired"
+    assert parsed.bgc_class is BGCClass.OTHER
+
+
+def test_parse_missing_required_field_raises():
+    broken = _load_fixture("mibig_test_entry_active_single_class.json")
+    del broken["loci"]
+    with pytest.raises(MibigParseError, match="loci"):
+        parse_mibig_entry(broken)
+
+
+def test_parse_empty_loci_list_raises():
+    broken = _load_fixture("mibig_test_entry_active_single_class.json")
+    broken["loci"] = []
+    with pytest.raises(MibigParseError, match="no loci"):
+        parse_mibig_entry(broken)
+
+
+# --- loader tests (DB) -----------------------------------------------------------
+
+
+def test_load_mibig_entry_creates_full_graph(session, mibig_source):
+    parsed = parse_mibig_entry(_load_fixture("mibig_test_entry_active_single_class.json"))
+    bgc, created = load_mibig_entry(session, parsed, mibig_source)
+    session.commit()
+
+    assert created is True
+    assert bgc.mibig_accession == "BGC-TEST0000001"
+    assert bgc.bgc_class is BGCClass.NRPS
+    assert bgc.evidence_level is EvidenceLevel.OBSERVED_CURATED
+
+    genome = session.get(Genome, bgc.genome_id)
+    assert genome.accession == "XX999901.1"
+    assert genome.assembly_level is AssemblyLevel.LOCUS
+    assert genome.genome_size_bp == 24499  # end - start
+    assert genome.completeness_pct is None  # not meaningful for a locus stub
+
+    taxon = session.get(Taxon, genome.taxon_id)
+    assert taxon.name == "Streptomyces testomycini"
+    assert taxon.ncbi_taxid == 9999901
+
+    assert len(bgc.compound_links) == 1
+    compound = bgc.compound_links[0].compound
+    assert compound.name == "Testomycin A"
+    assert compound.pubchem_cid == 19990001
+
+
+def test_load_mibig_entry_is_idempotent(session, mibig_source):
+    raw = _load_fixture("mibig_test_entry_active_single_class.json")
+    parsed = parse_mibig_entry(raw)
+
+    bgc1, created1 = load_mibig_entry(session, parsed, mibig_source)
+    session.commit()
+    bgc2, created2 = load_mibig_entry(session, parsed, mibig_source)
+    session.commit()
+
+    assert created1 is True
+    assert created2 is False
+    assert bgc1.id == bgc2.id
+    assert session.query(BGC).count() == 1
+    assert session.query(Genome).count() == 1
+    assert session.query(Compound).count() == 1
+
+
+def test_two_entries_sharing_ncbi_taxid_share_one_taxon(session, mibig_source):
+    parsed_1 = parse_mibig_entry(_load_fixture("mibig_test_entry_active_single_class.json"))
+    parsed_2 = parse_mibig_entry(_load_fixture("mibig_test_entry_active_hybrid_class.json"))
+    assert parsed_1.ncbi_taxid == parsed_2.ncbi_taxid  # fixture precondition
+
+    bgc_1, _ = load_mibig_entry(session, parsed_1, mibig_source)
+    session.commit()
+    bgc_2, _ = load_mibig_entry(session, parsed_2, mibig_source)
+    session.commit()
+
+    genome_1 = session.get(Genome, bgc_1.genome_id)
+    genome_2 = session.get(Genome, bgc_2.genome_id)
+    assert genome_1.taxon_id == genome_2.taxon_id
+    assert session.query(Taxon).count() == 1
+
+
+# --- orchestration tests -----------------------------------------------------------
+
+
+def test_ingest_skips_retired_entries_by_default(session, mibig_source):
+    entries = [_load_fixture("mibig_test_entry_retired.json")]
+    report = ingest_mibig_entries(session, mibig_source, entries)
+
+    assert report.created == 0
+    assert report.skipped == 1
+    assert report.errors == []
+    assert session.query(BGC).count() == 0
+
+
+def test_ingest_include_non_active_loads_retired_entries(session, mibig_source):
+    entries = [_load_fixture("mibig_test_entry_retired.json")]
+    report = ingest_mibig_entries(session, mibig_source, entries, include_non_active=True)
+
+    assert report.created == 1
+    assert report.skipped == 0
+    assert session.query(BGC).count() == 1
+
+
+def test_ingest_records_parse_errors_without_aborting_batch(session, mibig_source):
+    good = _load_fixture("mibig_test_entry_active_single_class.json")
+    broken = _load_fixture("mibig_test_entry_active_hybrid_class.json")
+    del broken["taxonomy"]  # will raise MibigParseError
+
+    report = ingest_mibig_entries(session, mibig_source, [good, broken])
+
+    assert report.created == 1
+    assert len(report.errors) == 1
+    assert report.errors[0][0] == "BGC-TEST0000002"
+    # The good entry that came before the broken one must still be persisted
+    # — a batch-wide rollback on the second entry's failure must not have
+    # discarded the first entry's already-committed work.
+    assert session.query(BGC).count() == 1
+
+
+def test_read_mibig_entries_from_fixtures_directory():
+    entries = list(read_mibig_entries_from_path(FIXTURES))
+    accessions = {e["accession"] for e in entries}
+    assert accessions == {"BGC-TEST0000001", "BGC-TEST0000002", "BGC-TEST0000003"}
+
+
+def test_ingest_full_fixture_directory_end_to_end(session, mibig_source):
+    entries = read_mibig_entries_from_path(FIXTURES)
+    report = ingest_mibig_entries(session, mibig_source, entries)
+
+    # 2 active (single-class + hybrid) created, 1 retired skipped.
+    assert report.created == 2
+    assert report.skipped == 1
+    assert report.errors == []
+    assert session.query(BGC).count() == 2
+    # Both active entries share an organism -> one Taxon, not two.
+    assert session.query(Taxon).count() == 1

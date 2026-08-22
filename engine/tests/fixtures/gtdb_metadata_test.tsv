@@ -1,0 +1,4 @@
+accession	gtdb_taxonomy	genome_size	checkm_completeness	checkm_contamination	gc_percentage	ncbi_assembly_level	gtdb_genome_representative
+RS_GCF_TEST900001.1	d__Bacteria;p__Actinomycetota;c__Actinomycetes;o__Streptomycetales;f__Streptomycetaceae;g__Streptomyces;s__Streptomyces testomycini	8452341	99.87	0.12	71.4	Complete Genome	RS_GCF_TEST900001.1
+GB_GCF_TEST900002.1	d__Bacteria;p__Actinomycetota;c__Actinomycetes;o__Streptomycetales;f__Streptomycetaceae;g__Streptomyces;s__Streptomyces fixturensis	8210007	98.5	1.8	70.9	Complete Genome	RS_GCF_TEST900001.1
+GCF_TEST900003.1	d__Bacteria;p__Actinomycetota;c__Actinomycetes;o__Streptomycetales;f__Streptomycetaceae;g__Streptomyces;s__	6104220	87.3	4.6	69.8	Scaffold	RS_GCF_TEST900001.1

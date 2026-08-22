@@ -1,17 +1,21 @@
-"""BGC-scape engine CLI.
-
-Deliberately small in this chunk — `bgcscape ingest mibig`, `bgcscape
-ingest gtdb`, etc. land in Phase 1b alongside the ingestion code they front.
-"""
+"""BGC-scape engine CLI."""
 from __future__ import annotations
+
+from pathlib import Path
 
 import typer
 
 import bgcscape.models as models  # noqa: F401 - ensures all models are registered before any table op
 from bgcscape import __version__
-from bgcscape.db.session import get_engine
+from bgcscape.db.session import get_engine, session_scope
+from bgcscape.ingest._util import IngestReport
+from bgcscape.ingest.gtdb import ingest_gtdb_metadata, read_gtdb_metadata_tsv
+from bgcscape.ingest.mibig import ingest_mibig_entries, read_mibig_entries_from_path
+from bgcscape.models import Source, SourceType
 
 app = typer.Typer(help="BGC-scape scientific engine CLI.")
+ingest_app = typer.Typer(help="Ingest curated reference datasets (MIBiG, GTDB).")
+app.add_typer(ingest_app, name="ingest")
 
 
 @app.callback(invoke_without_command=True)
@@ -36,6 +40,60 @@ def init_db() -> None:
     engine = get_engine()
     models.Base.metadata.create_all(engine)
     typer.echo(f"Initialized schema at {engine.url}")
+
+
+def _get_or_create_source(session, *, name: str, source_type: SourceType, version: str | None) -> Source:
+    """Shared by both ingest subcommands: find-or-create the Source row that
+    every ingested record from this run will point back to, keyed on
+    (name, version) so re-running against the same release reuses one row.
+    """
+    query = session.query(Source).filter_by(name=name, version=version)
+    source = query.one_or_none()
+    if source is not None:
+        return source
+    source = Source(name=name, source_type=source_type, version=version)
+    session.add(source)
+    session.commit()
+    return source
+
+
+def _echo_report(report: IngestReport) -> None:
+    typer.echo(f"Done: {report}")
+    if report.errors:
+        typer.echo("Errors:")
+        for identifier, message in report.errors[:20]:
+            typer.echo(f"  {identifier}: {message}")
+        if len(report.errors) > 20:
+            typer.echo(f"  ... and {len(report.errors) - 20} more")
+
+
+@ingest_app.command("mibig")
+def ingest_mibig_cmd(
+    path: Path = typer.Argument(..., help="A single MIBiG entry .json file, or a directory of them."),
+    version: str = typer.Option("4.0", help="MIBiG version label to record on the Source row."),
+    include_non_active: bool = typer.Option(
+        False, help="Also load retired/pending/embargoed entries (skipped by default)."
+    ),
+) -> None:
+    """Ingest MIBiG BGC entries from a JSON file or directory of them."""
+    with session_scope() as session:
+        source = _get_or_create_source(session, name="MIBiG", source_type=SourceType.REFERENCE_DATABASE, version=version)
+        entries = read_mibig_entries_from_path(path)
+        report = ingest_mibig_entries(session, source, entries, include_non_active=include_non_active)
+    _echo_report(report)
+
+
+@ingest_app.command("gtdb")
+def ingest_gtdb_cmd(
+    path: Path = typer.Argument(..., help="A GTDB *_metadata.tsv file (bac120_metadata.tsv or ar53_metadata.tsv)."),
+    version: str = typer.Option("R11-RS232", help="GTDB release label to record on the Source row."),
+) -> None:
+    """Ingest genomes + taxonomy from a GTDB metadata TSV."""
+    with session_scope() as session:
+        source = _get_or_create_source(session, name="GTDB", source_type=SourceType.REFERENCE_DATABASE, version=version)
+        rows = read_gtdb_metadata_tsv(path)
+        report = ingest_gtdb_metadata(session, source, rows)
+    _echo_report(report)
 
 
 if __name__ == "__main__":

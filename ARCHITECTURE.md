@@ -112,3 +112,124 @@ CI run as the remaining step before calling the schema production-ready.
 Ingestion code (MIBiG/GTDB/antiSMASH import), any HTTP/API layer, the
 frontend, BiG-SCAPE/CORASON orchestration, novelty scoring, user uploads.
 See `PROGRESS.md` for the phase tracker and what's next.
+
+---
+
+## Phase 1b: ingestion architecture
+
+Every source module (`engine/src/bgcscape/ingest/{mibig,gtdb}.py`) follows
+the same two-stage shape, deliberately kept separate:
+
+- **`parse_*()`** — pure function, raw external format → a plain
+  dataclass. No database access, so it's unit-testable without a session
+  or fixtures.
+- **`load_*()`** — dataclass + `Session` + the source's `Source` row →
+  idempotent upsert of ORM objects. Safe to re-run over a refreshed
+  export.
+- **`ingest_*()`** — orchestrates a batch: loops records, applies any
+  source-specific filtering (e.g. MIBiG's retired-entry skip), and never
+  lets one bad record abort the run.
+
+Schemas parsed against MIBiG/GTDB's *real* formats, not assumptions —
+verified by cloning `mibig-secmet/python-mibig` and
+`Ecogenomics/GTDBTk`/an nf-core pipeline doc from GitHub (in this
+sandbox's network allow-list) rather than trusting training-data memory of
+older MIBiG/GTDB versions. See `docs/DATA_SOURCES.md`.
+
+### Idempotency: `get_or_create_or_update`
+
+Ingestion has to be safe to re-run without duplicating rows, and *should*
+refresh stale fields when re-run against newer source data — a different
+default than a typical web app's "create once" flow. `ingest/_util.py`'s
+`get_or_create_or_update()` is the one place this logic lives, used by
+every loader. Two non-obvious behaviors, both added after being caught by
+this project's own tests (see "Real bugs found" below), not designed in
+up front:
+
+1. A `None` in the update payload never overwrites an existing non-None
+   value — a source that simply doesn't carry a field shouldn't be able to
+   erase a fact a *different* source already recorded for the same row.
+2. `fallback_lookups`: when two sources' natural keys can identify the
+   same real-world entity (MIBiG's `Taxon` lookup is `ncbi_taxid`; GTDB's
+   is `(rank, name)`), a bare single-key lookup only merges correctly in
+   one ingestion order. `fallback_lookups` tries secondary keys before
+   giving up and creating a new row, and once a fallback match is found,
+   backfills the primary key's fields onto it — making the merge order-
+   independent. This is a deliberately narrow fix for a specific observed
+   collision, not a general multi-source entity-resolution system.
+
+**Known limitation, left as-is for this chunk:** when two sources' rows
+merge, `source_id`/`evidence_level` end up reflecting whichever source
+touched the row *last*, not "all sources that ever asserted something
+about it." Real per-field provenance (a fact-level, not row-level,
+attribution model) would need a bigger schema change — a legitimate future
+direction, not attempted here.
+
+### MIBiG loci are not genomes
+
+A MIBiG entry's `loci[].accession` is a single deposited GenBank locus
+(often just the BGC region itself), not a `GCA_`/`GCF_` whole-assembly
+accession. Modeling it as a full `Genome` row would be a category error —
+assembly-level QC fields (completeness/contamination) don't apply to a
+locus deposit. This is why `AssemblyLevel.LOCUS` exists: a genuine,
+additive vocabulary extension that `native_enum=False` was specifically
+chosen to make painless (see above) — first real validation of that Phase
+1a design bet paying off.
+
+### Transaction strategy: one commit per record, not per batch
+
+`ingest_mibig_entries()`/`ingest_gtdb_metadata()` commit after each
+successfully-loaded record, not once at the end of the whole batch. A
+single all-encompassing transaction would mean one bad record's rollback
+silently discards every good record processed earlier in the same run —
+caught by this project's own `test_ingest_records_parse_errors_without_aborting_batch`
+test failing against the first (batch-transaction) implementation.
+
+### Real bugs found and fixed in this chunk (via actual execution, not review)
+
+Listed explicitly because they're the kind of thing worth knowing about
+before extending this code further:
+
+1. **`SAEnum(..., native_enum=False)` was not actually creating a CHECK
+   constraint.** `create_constraint` defaults to `None`
+   (effectively off) in SQLAlchemy 2.0 for non-native enums — Phase 1a's
+   `ARCHITECTURE.md` claimed "VARCHAR + CHECK constraint" but only
+   `validate_strings=True`'s *Python-side* check was actually running.
+   Anything writing to the database outside this ORM had zero protection
+   against an invalid enum string. Fixed by passing `create_constraint=True`
+   explicitly on all five enum columns, confirmed by inserting an invalid
+   value via raw SQL (bypassing the ORM entirely) and watching SQLite
+   reject it.
+2. **Enum columns were storing the Python member *name*
+   (`"OBSERVED_CURATED"`), not the `.value` the enums were deliberately
+   defined with (`"observed_curated"`).** SQLAlchemy's default for a
+   `(str, Enum)` hybrid is name-based storage; every enum was explicitly
+   given lowercase snake_case values for a reason (matching what Pydantic
+   already emits in JSON), so this was a silent contract violation between
+   the raw database and every API/schema response. Fixed with
+   `values_callable=lambda enum_cls: [m.value for m in enum_cls]` on all
+   five enum columns.
+3. **The cross-source Taxon merge bug** described above under
+   `get_or_create_or_update`.
+4. **A batch-transaction bug** in the ingestion orchestrators, described
+   above under "Transaction strategy."
+5. Alembic's `--autogenerate` reliably emits
+   `postgresql.JSONB(astext_type=Text())` without importing bare `Text` —
+   confirmed to recur on a second, independent autogenerate run in this
+   chunk (not a one-off from Phase 1a). Documented directly in
+   `models/types.py` where `JSONVariant` is defined, since that's where
+   someone regenerating a migration would need the reminder.
+
+None of these were caught by writing the code carefully — all five were
+caught by actually running it (executing raw SQL against the resulting
+database, running the CLI against fixture data in more than one order,
+promoting SQLAlchemy warnings to hard errors in the test suite) in this
+sandbox. That's the practical case for the "verified in this sandbox, not
+just written" framing PROGRESS.md uses.
+
+### What Phase 1b deliberately does not include
+
+antiSMASH region-JSON ingestion (MVP v2 in the original product report,
+not MVP v1 — MIBiG + GTDB was the deliberate scope for this chunk),
+BiG-SCAPE family-clustering ingestion, any HTTP/API layer, the frontend,
+novelty scoring, user uploads, full multi-source per-field provenance.

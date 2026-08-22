@@ -1,0 +1,44 @@
+{
+  "accession": "BGC-TEST0000003",
+  "version": 1,
+  "changelog": {
+    "releases": [
+      {
+        "version": "4.0",
+        "date": "2026-01-15",
+        "entries": [
+          {"contributors": ["TESTCONTRIBUTOR3"], "reviewers": [], "comment": "synthetic fixture, not a real MIBiG entry"}
+        ]
+      }
+    ]
+  },
+  "quality": "questionable",
+  "status": "retired",
+  "completeness": "unknown",
+  "retirement_reasons": ["Superseded by a corrected entry (synthetic fixture reason)"],
+  "loci": [
+    {
+      "accession": "XX999903.1",
+      "location": {"from": 1, "to": 5000},
+      "evidence": []
+    }
+  ],
+  "biosynthesis": {
+    "classes": [
+      {"class": "other"}
+    ],
+    "modules": [],
+    "operons": [],
+    "paths": []
+  },
+  "compounds": [
+    {
+      "name": "Withdrawn Test Compound",
+      "evidence": []
+    }
+  ],
+  "taxonomy": {
+    "name": "Streptomyces testomycini",
+    "ncbiTaxId": 9999901
+  }
+}

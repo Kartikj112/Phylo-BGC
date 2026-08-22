@@ -1,0 +1,253 @@
+"""GTDB (Genome Taxonomy Database) taxonomy/metadata ingestion.
+
+Targets GTDB's metadata TSV format (`bac120_metadata.tsv` /
+`ar53_metadata.tsv`), read by column **name** via `csv.DictReader` rather
+than positional index, so column reordering across GTDB releases doesn't
+silently corrupt parsing.
+
+Column names below were cross-checked against real GTDB-Tk-ecosystem
+tooling on GitHub (`Ecogenomics/GTDBTk`, and an nf-core pipeline that
+documents the exact metadata columns it expects) — see
+docs/DATA_SOURCES.md for the trail. Confirmed with reasonable confidence:
+`gtdb_taxonomy`, `gtdb_genome_representative`, `checkm_completeness`,
+`checkm_contamination`, `genome_size`. Lower confidence, flagged in code:
+the exact GC-content and NCBI-assembly-level column names — verify against
+the real downloaded header before a production run and adjust
+`_GC_COLUMNS`/`_ASSEMBLY_LEVEL_COLUMN` below if needed.
+
+GTDB's taxonomy is itself the output of a rigorous, curated phylogenomic
+pipeline over GTDB's *own reference genome set* — this ingestion path is
+for exactly that reference set (the metadata TSV GTDB publishes per
+release), so rows get `evidence_level = OBSERVED_CURATED`, matching the
+"GTDB type-strain taxonomy assignment" example already named in
+`EvidenceLevel`'s own docstring (models/base.py). A *new* genome being
+placed against GTDB by a user's own GTDB-Tk run is a different situation
+(an automated placement of something outside the curated set) and should
+be ingested as `PREDICTED` — that's a separate, not-yet-built ingestion
+path (Phase 5, user uploads), not this one.
+
+Two-stage design matching ingest/mibig.py: parse_gtdb_metadata_row() (pure)
++ load_gtdb_genome() (DB), orchestrated by ingest_gtdb_metadata().
+"""
+from __future__ import annotations
+
+import csv
+from collections.abc import Iterator
+from dataclasses import dataclass
+from pathlib import Path
+
+from sqlalchemy.orm import Session
+
+from bgcscape.ingest._util import IngestReport, get_or_create_or_update
+from bgcscape.models import EvidenceLevel, Genome, Source, Taxon, TaxonRank
+from bgcscape.models.genome import AssemblyLevel
+from bgcscape.schemas import GenomeCreate, TaxonCreate
+
+_ACCESSION_COLUMNS = ("accession", "accno")
+_GC_COLUMNS = ("gc_percentage", "gc_percent")  # lower confidence, see module docstring
+_ASSEMBLY_LEVEL_COLUMN = "ncbi_assembly_level"  # lower confidence, see module docstring
+_EMPTY_VALUES = {"", "none", "n/a", "null", "na"}
+
+_NCBI_ASSEMBLY_LEVEL_MAP: dict[str, AssemblyLevel] = {
+    "Complete Genome": AssemblyLevel.COMPLETE_GENOME,
+    "Chromosome": AssemblyLevel.CHROMOSOME,
+    "Scaffold": AssemblyLevel.SCAFFOLD,
+    "Contig": AssemblyLevel.CONTIG,
+}
+
+_RANK_PREFIXES: dict[str, TaxonRank] = {
+    "d__": TaxonRank.DOMAIN,
+    "p__": TaxonRank.PHYLUM,
+    "c__": TaxonRank.CLASS,
+    "o__": TaxonRank.ORDER,
+    "f__": TaxonRank.FAMILY,
+    "g__": TaxonRank.GENUS,
+    "s__": TaxonRank.SPECIES,
+}
+
+
+class GtdbParseError(ValueError):
+    """The row is structurally invalid for BGC-scape's model (no usable
+    accession, or no gtdb_taxonomy column at all)."""
+
+
+def normalize_gtdb_accession(raw_accession: str) -> str:
+    """Strip GTDB's RS_/GB_ provenance prefix: "RS_GCF_000203835.1" ->
+    "GCF_000203835.1", matching the bare NCBI assembly accession so it can
+    be cross-referenced against other NCBI-derived data later."""
+    for prefix in ("RS_", "GB_"):
+        if raw_accession.startswith(prefix):
+            return raw_accession[len(prefix) :]
+    return raw_accession
+
+
+def parse_gtdb_taxonomy_string(taxonomy_string: str) -> list[tuple[TaxonRank, str]]:
+    """"d__Bacteria;p__...;s__..." -> [(DOMAIN, "Bacteria"), ...]. Ranks
+    left empty (e.g. no "s__" species assignment for a low-quality MAG) are
+    skipped rather than producing a Taxon with an empty name."""
+    result: list[tuple[TaxonRank, str]] = []
+    for token in taxonomy_string.split(";"):
+        token = token.strip()
+        rank = _RANK_PREFIXES.get(token[:3])
+        name = token[3:].strip()
+        if rank and name:
+            result.append((rank, name))
+    return result
+
+
+def _first_present(row: dict[str, str], *names: str) -> str | None:
+    for name in names:
+        value = row.get(name)
+        if value is not None and value.strip().lower() not in _EMPTY_VALUES:
+            return value.strip()
+    return None
+
+
+def _parse_float(value: str | None) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
+
+
+def _parse_int(value: str | None) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(float(value))
+    except ValueError:
+        return None
+
+
+@dataclass
+class ParsedGtdbGenome:
+    accession: str
+    taxonomy_string: str
+    taxonomy_chain: list[tuple[TaxonRank, str]]
+    genome_size_bp: int | None
+    gc_content_pct: float | None
+    completeness_pct: float | None
+    contamination_pct: float | None
+    assembly_level: AssemblyLevel
+
+
+def parse_gtdb_metadata_row(row: dict[str, str]) -> ParsedGtdbGenome:
+    accession_raw = _first_present(row, *_ACCESSION_COLUMNS)
+    if not accession_raw:
+        raise GtdbParseError(f"row has no recognizable accession column (tried {_ACCESSION_COLUMNS})")
+
+    taxonomy_string = _first_present(row, "gtdb_taxonomy")
+    if not taxonomy_string:
+        raise GtdbParseError(f"{accession_raw}: missing gtdb_taxonomy column")
+
+    ncbi_level_raw = row.get(_ASSEMBLY_LEVEL_COLUMN, "")
+    # SCAFFOLD is a deliberately conservative default (not COMPLETE_GENOME)
+    # when the assembly-level column is absent/unrecognized.
+    assembly_level = _NCBI_ASSEMBLY_LEVEL_MAP.get(ncbi_level_raw, AssemblyLevel.SCAFFOLD)
+
+    return ParsedGtdbGenome(
+        accession=normalize_gtdb_accession(accession_raw),
+        taxonomy_string=taxonomy_string,
+        taxonomy_chain=parse_gtdb_taxonomy_string(taxonomy_string),
+        genome_size_bp=_parse_int(row.get("genome_size")),
+        gc_content_pct=_parse_float(_first_present(row, *_GC_COLUMNS)),
+        completeness_pct=_parse_float(row.get("checkm_completeness")),
+        contamination_pct=_parse_float(row.get("checkm_contamination")),
+        assembly_level=assembly_level,
+    )
+
+
+def load_gtdb_genome(session: Session, parsed: ParsedGtdbGenome, source: Source) -> tuple[Genome, bool]:
+    """Upsert one parsed GTDB genome, walking its taxonomy chain
+    root-to-leaf and get-or-creating each rank along the way.
+
+    Idempotency keys:
+      Taxon  (rank, name) — safe *for GTDB specifically*: the taxonomy is
+             explicitly rank-normalized with no cross-clade homonyms by
+             design. This would NOT be a safe key for raw NCBI taxonomy,
+             which does have occasional homonyms across kingdoms.
+      Genome (accession)  — global, matches the Phase 1a unique constraint.
+    """
+    parent: Taxon | None = None
+    leaf_taxon: Taxon | None = None
+    for rank, name in parsed.taxonomy_chain:
+        taxon_create = TaxonCreate(
+            name=name,
+            rank=rank,
+            parent_id=parent.id if parent else None,
+            source_id=source.id,
+            evidence_level=EvidenceLevel.OBSERVED_CURATED,
+        )
+        taxon, _ = get_or_create_or_update(
+            session,
+            Taxon,
+            lookup={"rank": rank, "name": name},
+            values=taxon_create.model_dump(exclude={"rank", "name"}),
+        )
+        session.flush()
+        parent = taxon
+        leaf_taxon = taxon
+
+    if leaf_taxon is not None and leaf_taxon.rank == TaxonRank.SPECIES:
+        leaf_taxon.gtdb_taxonomy_string = parsed.taxonomy_string
+
+    genome_create = GenomeCreate(
+        accession=parsed.accession,
+        taxon_id=leaf_taxon.id if leaf_taxon else None,
+        assembly_level=parsed.assembly_level,
+        is_mag=False,  # no verified MAG-detection column yet, see module docstring
+        genome_size_bp=parsed.genome_size_bp,
+        gc_content_pct=parsed.gc_content_pct,
+        completeness_pct=parsed.completeness_pct,
+        contamination_pct=parsed.contamination_pct,
+        source_id=source.id,
+        evidence_level=EvidenceLevel.OBSERVED_CURATED,
+    )
+    genome, created = get_or_create_or_update(
+        session,
+        Genome,
+        lookup={"accession": genome_create.accession},
+        values=genome_create.model_dump(exclude={"accession"}),
+    )
+    return genome, created
+
+
+def read_gtdb_metadata_tsv(path: str | Path) -> Iterator[dict[str, str]]:
+    """Yield rows from a GTDB `*_metadata.tsv` file as column-name-keyed dicts."""
+    with open(Path(path), newline="", encoding="utf-8") as fh:
+        yield from csv.DictReader(fh, delimiter="\t")
+
+
+def ingest_gtdb_metadata(
+    session: Session,
+    source: Source,
+    rows: Iterator[dict[str, str]] | list[dict[str, str]],
+) -> IngestReport:
+    """Load a batch of GTDB metadata rows. Never aborts on one bad row —
+    each row is committed individually, see get_or_create_or_update()'s
+    docstring for why."""
+    report = IngestReport()
+    for row in rows:
+        identifier = row.get("accession") or row.get("accno") or "<unknown>"
+        try:
+            parsed = parse_gtdb_metadata_row(row)
+        except GtdbParseError as exc:
+            report.record_error(identifier, str(exc))
+            continue
+
+        try:
+            _, created = load_gtdb_genome(session, parsed, source)
+            session.commit()
+        except Exception as exc:  # noqa: BLE001 - one bad row shouldn't abort a bulk load
+            report.record_error(identifier, f"{type(exc).__name__}: {exc}")
+            session.rollback()
+            continue
+
+        if created:
+            report.created += 1
+        else:
+            report.updated += 1
+
+    return report

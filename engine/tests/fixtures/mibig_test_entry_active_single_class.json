@@ -1,0 +1,54 @@
+{
+  "accession": "BGC-TEST0000001",
+  "version": 1,
+  "changelog": {
+    "releases": [
+      {
+        "version": "4.0",
+        "date": "2026-01-15",
+        "entries": [
+          {"contributors": ["TESTCONTRIBUTOR1"], "reviewers": [], "comment": "synthetic fixture, not a real MIBiG entry"}
+        ]
+      }
+    ]
+  },
+  "quality": "high",
+  "status": "active",
+  "completeness": "complete",
+  "loci": [
+    {
+      "accession": "XX999901.1",
+      "location": {"from": 1, "to": 24500},
+      "evidence": [
+        {"method": "Heterologous expression", "references": ["doi:10.9999/test.fixture.0001"]}
+      ]
+    }
+  ],
+  "biosynthesis": {
+    "classes": [
+      {"class": "NRPS"}
+    ],
+    "modules": [],
+    "operons": [],
+    "paths": []
+  },
+  "compounds": [
+    {
+      "name": "Testomycin A",
+      "evidence": [
+        {"method": "NMR", "references": ["pubmed:19990001"]},
+        {"method": "Mass spectrometry", "references": ["pubmed:19990001"]}
+      ],
+      "classes": ["Linear"],
+      "structure": "CC(C)CC(NC(C)=O)C(=O)O",
+      "formula": "C10H15N3O2S",
+      "mass": 245.3,
+      "cyclic": false,
+      "databaseIds": ["pubchem:19990001"]
+    }
+  ],
+  "taxonomy": {
+    "name": "Streptomyces testomycini",
+    "ncbiTaxId": 9999901
+  }
+}

@@ -50,7 +50,17 @@ class BGC(Base, TimestampMixin, ProvenanceMixin):
     end_coord: Mapped[int | None] = mapped_column(Integer, nullable=True)
     strand: Mapped[str | None] = mapped_column(String(1), nullable=True)
     bgc_class: Mapped[BGCClass] = mapped_column(
-        SAEnum(BGCClass, native_enum=False, length=16, validate_strings=True), nullable=False, index=True
+        SAEnum(
+            BGCClass,
+            native_enum=False,
+            length=16,
+            validate_strings=True,
+            create_constraint=True,
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+            name="ck_bgc_bgc_class_valid",
+        ),
+        nullable=False,
+        index=True,
     )
     subtype: Mapped[str | None] = mapped_column(String(128), nullable=True)
     predicted_by_tool: Mapped[str | None] = mapped_column(String(64), nullable=True)  # e.g. "antiSMASH 7.1.0"

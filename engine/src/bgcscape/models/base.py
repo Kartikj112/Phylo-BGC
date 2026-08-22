@@ -75,7 +75,30 @@ class ProvenanceMixin:
     def source_id(cls) -> Mapped[uuid.UUID]:  # noqa: N805 - SQLAlchemy declared_attr convention
         return mapped_column(ForeignKey("source.id"), nullable=False, index=True)
 
-    evidence_level: Mapped[EvidenceLevel] = mapped_column(
-        SAEnum(EvidenceLevel, native_enum=False, length=32, validate_strings=True),
-        nullable=False,
-    )
+    @declared_attr
+    def evidence_level(cls) -> Mapped[EvidenceLevel]:  # noqa: N805
+        # create_constraint=True is NOT the default for native_enum=False in
+        # SQLAlchemy 2.0 (it defaults to no DB-level constraint at all,
+        # relying only on validate_strings' Python-side check) — passing it
+        # explicitly is what actually gives this column a real CHECK
+        # constraint, matching ARCHITECTURE.md's "VARCHAR + CHECK" claim.
+        # values_callable is equally important and easy to miss: SQLAlchemy
+        # defaults to storing a (str, Enum)'s *member name*
+        # ("OBSERVED_CURATED"), not the lowercase `.value` the enum was
+        # deliberately defined with ("observed_curated") — without this,
+        # the raw DB contents silently diverge from what every JSON
+        # schema/API response actually emits (Pydantic serializes `.value`).
+        # Named per-table (via declared_attr) since this mixin is shared
+        # across many tables and constraint names should be unambiguous.
+        return mapped_column(
+            SAEnum(
+                EvidenceLevel,
+                native_enum=False,
+                length=32,
+                validate_strings=True,
+                create_constraint=True,
+                values_callable=lambda enum_cls: [member.value for member in enum_cls],
+                name=f"ck_{cls.__tablename__}_evidence_level_valid",
+            ),
+            nullable=False,
+        )

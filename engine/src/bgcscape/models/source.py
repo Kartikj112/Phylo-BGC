@@ -42,7 +42,16 @@ class Source(Base, TimestampMixin):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     source_type: Mapped[SourceType] = mapped_column(
-        SAEnum(SourceType, native_enum=False, length=32, validate_strings=True), nullable=False
+        SAEnum(
+            SourceType,
+            native_enum=False,
+            length=32,
+            validate_strings=True,
+            create_constraint=True,
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+            name="ck_source_source_type_valid",
+        ),
+        nullable=False,
     )
     version: Mapped[str | None] = mapped_column(String(64), nullable=True)
     url: Mapped[str | None] = mapped_column(String(512), nullable=True)

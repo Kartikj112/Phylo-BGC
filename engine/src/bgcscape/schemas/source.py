@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-import uuid
 from datetime import datetime
 
+from pydantic import BaseModel
+
 from bgcscape.models.source import SourceType
-from bgcscape.schemas.base import ORMReadModel
+from bgcscape.schemas.base import ORMReadModel, PersistedReadMixin
 
 
-class SourceRead(ORMReadModel):
-    id: uuid.UUID
+class SourceBase(BaseModel):
     name: str
     source_type: SourceType
     version: str | None = None
@@ -16,3 +16,11 @@ class SourceRead(ORMReadModel):
     license: str | None = None
     citation: str | None = None
     retrieved_at: datetime | None = None
+
+
+class SourceCreate(SourceBase):
+    pass
+
+
+class SourceRead(SourceBase, PersistedReadMixin, ORMReadModel):
+    pass

@@ -35,7 +35,16 @@ class Taxon(Base, TimestampMixin, ProvenanceMixin):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
     rank: Mapped[TaxonRank] = mapped_column(
-        SAEnum(TaxonRank, native_enum=False, length=16, validate_strings=True), nullable=False
+        SAEnum(
+            TaxonRank,
+            native_enum=False,
+            length=16,
+            validate_strings=True,
+            create_constraint=True,
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+            name="ck_taxon_rank_valid",
+        ),
+        nullable=False,
     )
     parent_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("taxon.id"), nullable=True, index=True)
     gtdb_taxonomy_string: Mapped[str | None] = mapped_column(String(512), nullable=True)

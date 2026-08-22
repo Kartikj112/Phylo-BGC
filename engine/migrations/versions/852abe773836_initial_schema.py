@@ -1,8 +1,8 @@
 """initial schema
 
-Revision ID: d2256596c9d0
+Revision ID: 852abe773836
 Revises: 
-Create Date: 2026-08-21 03:56:30.780479
+Create Date: 2026-08-22 04:38:56.271449
 
 """
 from typing import Sequence, Union
@@ -13,7 +13,7 @@ from sqlalchemy import Text
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision: str = 'd2256596c9d0'
+revision: str = '852abe773836'
 down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -24,7 +24,7 @@ def upgrade() -> None:
     op.create_table('source',
     sa.Column('id', sa.Uuid(), nullable=False),
     sa.Column('name', sa.String(length=128), nullable=False),
-    sa.Column('source_type', sa.Enum('REFERENCE_DATABASE', 'TOOL_RUN', 'USER_UPLOAD', name='sourcetype', native_enum=False, length=32), nullable=False),
+    sa.Column('source_type', sa.Enum('reference_database', 'tool_run', 'user_upload', name='ck_source_source_type_valid', native_enum=False, create_constraint=True, length=32), nullable=False),
     sa.Column('version', sa.String(length=64), nullable=True),
     sa.Column('url', sa.String(length=512), nullable=True),
     sa.Column('license', sa.String(length=128), nullable=True),
@@ -45,8 +45,8 @@ def upgrade() -> None:
     sa.Column('pubchem_cid', sa.Integer(), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
     sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
-    sa.Column('evidence_level', sa.Enum('OBSERVED_CURATED', 'COMPUTED', 'PREDICTED', 'HYPOTHESIZED', name='evidencelevel', native_enum=False, length=32), nullable=False),
     sa.Column('source_id', sa.Uuid(), nullable=False),
+    sa.Column('evidence_level', sa.Enum('observed_curated', 'computed', 'predicted', 'hypothesized', name='ck_compound_evidence_level_valid', native_enum=False, create_constraint=True, length=32), nullable=False),
     sa.ForeignKeyConstraint(['source_id'], ['source.id'], ),
     sa.PrimaryKeyConstraint('id')
     )
@@ -62,8 +62,8 @@ def upgrade() -> None:
     sa.Column('newick_storage_uri', sa.String(length=1024), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
     sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
-    sa.Column('evidence_level', sa.Enum('OBSERVED_CURATED', 'COMPUTED', 'PREDICTED', 'HYPOTHESIZED', name='evidencelevel', native_enum=False, length=32), nullable=False),
     sa.Column('source_id', sa.Uuid(), nullable=False),
+    sa.Column('evidence_level', sa.Enum('observed_curated', 'computed', 'predicted', 'hypothesized', name='ck_phylogenetic_tree_evidence_level_valid', native_enum=False, create_constraint=True, length=32), nullable=False),
     sa.CheckConstraint('newick_inline IS NOT NULL OR newick_storage_uri IS NOT NULL', name='ck_phylogenetic_tree_has_newick_source'),
     sa.ForeignKeyConstraint(['source_id'], ['source.id'], ),
     sa.PrimaryKeyConstraint('id')
@@ -72,14 +72,14 @@ def upgrade() -> None:
     op.create_table('taxon',
     sa.Column('id', sa.Uuid(), nullable=False),
     sa.Column('name', sa.String(length=256), nullable=False),
-    sa.Column('rank', sa.Enum('DOMAIN', 'PHYLUM', 'CLASS', 'ORDER', 'FAMILY', 'GENUS', 'SPECIES', name='taxonrank', native_enum=False, length=16), nullable=False),
+    sa.Column('rank', sa.Enum('domain', 'phylum', 'class', 'order', 'family', 'genus', 'species', name='ck_taxon_rank_valid', native_enum=False, create_constraint=True, length=16), nullable=False),
     sa.Column('parent_id', sa.Uuid(), nullable=True),
     sa.Column('gtdb_taxonomy_string', sa.String(length=512), nullable=True),
     sa.Column('ncbi_taxid', sa.Integer(), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
     sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
-    sa.Column('evidence_level', sa.Enum('OBSERVED_CURATED', 'COMPUTED', 'PREDICTED', 'HYPOTHESIZED', name='evidencelevel', native_enum=False, length=32), nullable=False),
     sa.Column('source_id', sa.Uuid(), nullable=False),
+    sa.Column('evidence_level', sa.Enum('observed_curated', 'computed', 'predicted', 'hypothesized', name='ck_taxon_evidence_level_valid', native_enum=False, create_constraint=True, length=32), nullable=False),
     sa.ForeignKeyConstraint(['parent_id'], ['taxon.id'], ),
     sa.ForeignKeyConstraint(['source_id'], ['source.id'], ),
     sa.PrimaryKeyConstraint('id')
@@ -92,7 +92,7 @@ def upgrade() -> None:
     sa.Column('id', sa.Uuid(), nullable=False),
     sa.Column('accession', sa.String(length=64), nullable=False),
     sa.Column('taxon_id', sa.Uuid(), nullable=True),
-    sa.Column('assembly_level', sa.Enum('COMPLETE_GENOME', 'CHROMOSOME', 'SCAFFOLD', 'CONTIG', 'MAG', name='assemblylevel', native_enum=False, length=32), nullable=False),
+    sa.Column('assembly_level', sa.Enum('complete_genome', 'chromosome', 'scaffold', 'contig', 'mag', 'locus', name='ck_genome_assembly_level_valid', native_enum=False, create_constraint=True, length=32), nullable=False),
     sa.Column('is_mag', sa.Boolean(), nullable=False),
     sa.Column('genome_size_bp', sa.Integer(), nullable=True),
     sa.Column('gc_content_pct', sa.Float(), nullable=True),
@@ -101,8 +101,8 @@ def upgrade() -> None:
     sa.Column('sample_metadata', sa.JSON().with_variant(postgresql.JSONB(astext_type=Text()), 'postgresql'), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
     sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
-    sa.Column('evidence_level', sa.Enum('OBSERVED_CURATED', 'COMPUTED', 'PREDICTED', 'HYPOTHESIZED', name='evidencelevel', native_enum=False, length=32), nullable=False),
     sa.Column('source_id', sa.Uuid(), nullable=False),
+    sa.Column('evidence_level', sa.Enum('observed_curated', 'computed', 'predicted', 'hypothesized', name='ck_genome_evidence_level_valid', native_enum=False, create_constraint=True, length=32), nullable=False),
     sa.ForeignKeyConstraint(['source_id'], ['source.id'], ),
     sa.ForeignKeyConstraint(['taxon_id'], ['taxon.id'], ),
     sa.PrimaryKeyConstraint('id')
@@ -117,15 +117,15 @@ def upgrade() -> None:
     sa.Column('start_coord', sa.Integer(), nullable=True),
     sa.Column('end_coord', sa.Integer(), nullable=True),
     sa.Column('strand', sa.String(length=1), nullable=True),
-    sa.Column('bgc_class', sa.Enum('NRPS', 'PKS', 'RIPP', 'TERPENE', 'SIDEROPHORE', 'SACCHARIDE', 'ALKALOID', 'HYBRID', 'OTHER', name='bgcclass', native_enum=False, length=16), nullable=False),
+    sa.Column('bgc_class', sa.Enum('nrps', 'pks', 'ripp', 'terpene', 'siderophore', 'saccharide', 'alkaloid', 'hybrid', 'other', name='ck_bgc_bgc_class_valid', native_enum=False, create_constraint=True, length=16), nullable=False),
     sa.Column('subtype', sa.String(length=128), nullable=True),
     sa.Column('predicted_by_tool', sa.String(length=64), nullable=True),
     sa.Column('mibig_accession', sa.String(length=32), nullable=True),
     sa.Column('raw_annotation', sa.JSON().with_variant(postgresql.JSONB(astext_type=Text()), 'postgresql'), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
     sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
-    sa.Column('evidence_level', sa.Enum('OBSERVED_CURATED', 'COMPUTED', 'PREDICTED', 'HYPOTHESIZED', name='evidencelevel', native_enum=False, length=32), nullable=False),
     sa.Column('source_id', sa.Uuid(), nullable=False),
+    sa.Column('evidence_level', sa.Enum('observed_curated', 'computed', 'predicted', 'hypothesized', name='ck_bgc_evidence_level_valid', native_enum=False, create_constraint=True, length=32), nullable=False),
     sa.ForeignKeyConstraint(['genome_id'], ['genome.id'], ),
     sa.ForeignKeyConstraint(['source_id'], ['source.id'], ),
     sa.PrimaryKeyConstraint('id')
@@ -160,8 +160,8 @@ def upgrade() -> None:
     sa.Column('reference', sa.String(length=512), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
     sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
-    sa.Column('evidence_level', sa.Enum('OBSERVED_CURATED', 'COMPUTED', 'PREDICTED', 'HYPOTHESIZED', name='evidencelevel', native_enum=False, length=32), nullable=False),
     sa.Column('source_id', sa.Uuid(), nullable=False),
+    sa.Column('evidence_level', sa.Enum('observed_curated', 'computed', 'predicted', 'hypothesized', name='ck_bgc_compound_link_evidence_level_valid', native_enum=False, create_constraint=True, length=32), nullable=False),
     sa.ForeignKeyConstraint(['bgc_id'], ['bgc.id'], ),
     sa.ForeignKeyConstraint(['compound_id'], ['compound.id'], ),
     sa.ForeignKeyConstraint(['source_id'], ['source.id'], ),
@@ -178,8 +178,8 @@ def upgrade() -> None:
     sa.Column('representative_bgc_id', sa.Uuid(), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
     sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
-    sa.Column('evidence_level', sa.Enum('OBSERVED_CURATED', 'COMPUTED', 'PREDICTED', 'HYPOTHESIZED', name='evidencelevel', native_enum=False, length=32), nullable=False),
     sa.Column('source_id', sa.Uuid(), nullable=False),
+    sa.Column('evidence_level', sa.Enum('observed_curated', 'computed', 'predicted', 'hypothesized', name='ck_bgc_family_evidence_level_valid', native_enum=False, create_constraint=True, length=32), nullable=False),
     sa.ForeignKeyConstraint(['representative_bgc_id'], ['bgc.id'], ),
     sa.ForeignKeyConstraint(['source_id'], ['source.id'], ),
     sa.PrimaryKeyConstraint('id')

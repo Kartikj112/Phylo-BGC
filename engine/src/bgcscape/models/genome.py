@@ -20,6 +20,12 @@ class AssemblyLevel(str, enum.Enum):
     SCAFFOLD = "scaffold"
     CONTIG = "contig"
     MAG = "mag"
+    # A single deposited genomic locus (e.g. a MIBiG reference BGC record's
+    # GenBank accession) rather than a full genome assembly. QC fields that
+    # only make sense at assembly scale — completeness_pct, contamination_pct
+    # — are not meaningful here and should be left null; genome_size_bp may
+    # still be populated with the locus span.
+    LOCUS = "locus"
 
 
 class Genome(Base, TimestampMixin, ProvenanceMixin):
@@ -37,7 +43,16 @@ class Genome(Base, TimestampMixin, ProvenanceMixin):
     accession: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
     taxon_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("taxon.id"), nullable=True, index=True)
     assembly_level: Mapped[AssemblyLevel] = mapped_column(
-        SAEnum(AssemblyLevel, native_enum=False, length=32, validate_strings=True), nullable=False
+        SAEnum(
+            AssemblyLevel,
+            native_enum=False,
+            length=32,
+            validate_strings=True,
+            create_constraint=True,
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+            name="ck_genome_assembly_level_valid",
+        ),
+        nullable=False,
     )
     is_mag: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     genome_size_bp: Mapped[int | None] = mapped_column(Integer, nullable=True)
