@@ -2,157 +2,124 @@
 
 **Read this file first when resuming work in a new chunk.**
 
-_Last updated: Chunk 2 (Phase 1b) — 2026-08-22_
+_Last updated: Chunk 3 (Phase 2, in progress) — 2026-08-22_
 
 ## Status at a glance
 
 | Phase | Scope | Status |
 |---|---|---|
-| 1a | Core scientific data model (SQLAlchemy + Pydantic contracts) | ✅ Done |
-| 1b | Curated reference dataset ingestion (MIBiG, GTDB) | ✅ **Done (this chunk)** |
-| 1c | antiSMASH region-JSON ingestion + BiG-SCAPE family clustering | ⏭️ Queued |
-| 2 | High-performance interactive phylogenetic tree (frontend) | ⏭️ Queued |
+| 1a | Core scientific data model | ✅ Done |
+| 1b | Curated reference dataset ingestion (MIBiG, GTDB) | ✅ Done |
+| 2 | Visualization API | ✅ **Done (this chunk)** |
+| 2 | Design prototype (interactive, sample data) | ✅ **Done (this chunk)** |
+| 2 | **Production Next.js frontend** | ⏭️ **Queued — the concrete next chunk** |
+| 1c | antiSMASH ingestion + BiG-SCAPE family clustering | Not started |
 | 3 | Layered BGC overlays, filtering, MIBiG/family integration | Not started |
 | 4 | Comparative analysis + publication-grade export suite | Not started |
 | 5 | User uploads + novelty prioritization scoring | Not started |
 
-**MVP v1 (per the original product report: "MIBiG + representative genomes +
-GTDB taxonomy") is now data-complete** — ingestion for both sources works,
-is tested, and is idempotent. What's *not* done yet for a demoable MVP v1
-is the tree visualization itself (Phase 2) — there's real data to look at
-now, but no way to look at it. See "Recommendation for next chunk" below.
+Phase 2 is split into three pieces on purpose: API (backend, testable the
+same way every prior chunk has been) → design prototype (fast, interactive,
+gets real feedback before committing to a production implementation) →
+production frontend (the actual deliverable). The first two are done and
+verified; the third is now unambiguous — no more "pick a direction" framing
+like last chunk, this chunk locked in the direction and built toward it.
 
-## What exists right now (additions since Chunk 1 in bold)
+## What exists right now (additions since Chunk 2 in bold)
 
 ```
 bgc-scape/
 ├── README.md, ARCHITECTURE.md, PROGRESS.md (this file)
 ├── docs/DATA_SOURCES.md
 ├── docker-compose.yml, .env.example, .github/workflows/ci.yml
-└── engine/
-    ├── alembic.ini, migrations/          regenerated clean this chunk (see below)
-    ├── src/bgcscape/
-    │   ├── models/                        + AssemblyLevel.LOCUS; all 5 enum
-    │   │                                    columns fixed (see "Bugs fixed")
-    │   ├── schemas/                        refactored: Base/Create/Read per
-    │   │                                    entity (Create schemas are new)
-    │   ├── ingest/                         new this chunk
-    │   │   ├── _util.py                    get_or_create_or_update + IngestReport
-    │   │   ├── mibig.py                    MIBiG 4.0 JSON parser + loader
-    │   │   └── gtdb.py                     GTDB metadata TSV parser + loader
-    │   ├── db/session.py
-    │   └── cli/main.py                     + `bgcscape ingest mibig|gtdb`
-    └── tests/                              48 tests, all passing, zero warnings
-        ├── fixtures/                        new: schema-accurate, content-
-        │                                      synthetic MIBiG/GTDB fixtures
-        ├── test_ingest_mibig.py             new
-        ├── test_ingest_gtdb.py              new
-        ├── test_ingest_cross_source.py      new — see "Bugs fixed" #3
-        └── (6 Phase 1a test files, unchanged in count, still passing)
+├── engine/
+│   ├── src/bgcscape/
+│   │   ├── models/, schemas/, ingest/, db/, cli/    (unchanged this chunk)
+│   │   ├── **api/**                                  **new this chunk**
+│   │   │   ├── **schemas.py**                         UI-shaped response models
+│   │   │   ├── **tree_builder.py**                    aggregates Taxon+Genome+BGC into one tree
+│   │   │   └── **app.py**                              FastAPI: tree, genome/BGC detail, search
+│   │   └── cli/main.py                                (unchanged)
+│   └── tests/
+│       ├── **test_api.py**                            **new — 11 tests, real TestClient**
+│       └── (existing 48 tests, unchanged, still passing)
+└── **web/**
+    └── **design-prototype/**
+        ├── **tree-explorer-demo.jsx**    interactive React/D3 prototype (see its README)
+        └── **README.md**                  what it is, what was verified, real bug found
 ```
 
-**Verified in this sandbox, not just written:** all 48 tests pass with
-SQLAlchemy warnings promoted to errors; the regenerated initial migration
-applies and downgrades cleanly; an invalid enum value was rejected via raw
-SQL that bypasses the ORM entirely (proving the CHECK constraint fix is
-real, not just tested through the ORM that would enforce it anyway); the
-CLI (`bgcscape ingest mibig`, `bgcscape ingest gtdb`) was run directly
-against fixture data in *both* orderings, confirming idempotency and the
-cross-source merge fix outside of pytest too.
+**59 engine tests total, all passing, zero warnings.** API endpoints were
+also hit with `curl` against a live `uvicorn` process (not just
+`TestClient`) — real HTTP, real ingested fixture data, correct responses.
 
-## Real bugs found and fixed this chunk (full detail in ARCHITECTURE.md)
+## Real bugs found this chunk (full detail in ARCHITECTURE.md)
 
-Flagging these prominently because they're the kind of thing that would
-otherwise resurface confusingly later:
-
-1. **CHECK constraints were never actually being created** in Phase 1a
-   despite `ARCHITECTURE.md` claiming they were — `SAEnum(...,
-   native_enum=False)` needs `create_constraint=True` explicitly in
-   SQLAlchemy 2.0. Fixed on all 5 enum columns; verified by rejecting an
-   invalid value via raw SQL.
-2. **Enum columns stored the Python member name** (`"OBSERVED_CURATED"`),
-   not the lowercase `.value` every enum was deliberately defined with —
-   silently inconsistent with what Pydantic schemas emit in JSON. Fixed
-   with `values_callable` on all 5 enum columns.
-3. **A cross-source data-loss bug**: ingesting GTDB after MIBiG (or vice
-   versa) for the same organism silently nulled out fields the *other*
-   source had already recorded, because the generic upsert helper blindly
-   overwrote every field including with `None`. Fixed with a "don't let
-   None overwrite non-None" guard, plus a `fallback_lookups` mechanism so
-   the merge works regardless of which source runs first. Two regression
-   tests lock this in (`test_ingest_cross_source.py`).
-4. **A batch-transaction bug**: one bad record's `session.rollback()`
-   would have silently discarded every good record processed earlier in
-   the same ingestion run. Fixed by committing per-record instead of
-   per-batch.
-5. Alembic's autogenerate still drops the `Text` import for
-   `JSONB(astext_type=Text())` — confirmed recurring (not a Phase-1a
-   one-off) on this chunk's independent regeneration. Now documented
-   directly in `models/types.py`.
-
-Because of bugs #1 and #2, **the initial migration was regenerated from
-scratch this chunk** rather than patched incrementally — there was no real
-deployment to preserve compatibility with, and a clean initial migration
-beats a two-step "create wrong, then immediately fix" history.
+1. **SQLite `:memory:` is per-connection** — an API test fixture's seed
+   data was invisible to the API's own DB session (different pooled
+   connection). Fixed with `poolclass=StaticPool`.
+2. **Hybrid-BGC filtering bug in the design prototype** — the class-count
+   panel correctly attributed a hybrid (NRPS+PKS) BGC to both component
+   classes, but the tree's dim/highlight logic checked the literal string
+   `"hybrid"` against the active filter set, which can never match. A
+   genome whose only NRPS activity came via a hybrid BGC would've been
+   wrongly dimmed when filtering to NRPS-only. Fixed with a shared
+   decomposition helper; locked in with a targeted logic test.
+3. The design prototype's sample data initially had **no species-level
+   taxon nodes at all** (genomes attached directly under genus) — meaning
+   the italic-species-name styling (a real nomenclature convention) never
+   actually rendered. Caught by an automated render-content check, not by
+   inspection; fixed by restructuring the sample tree to match how the
+   real data model actually works (species Taxon → genomes).
 
 ## Key design decisions made this chunk
 
-1. **Parse/load separation** in every ingestion module — pure parsers,
-   DB-touching loaders, orchestration on top. See ARCHITECTURE.md.
-2. **`AssemblyLevel.LOCUS`** — MIBiG loci are GenBank locus deposits, not
-   whole-genome assemblies; modeling them as `Genome` rows with assembly-
-   level QC fields would have been a category error.
-3. **Idempotency via natural-key upsert**, not primary-key merge — see
-   `get_or_create_or_update()`.
-4. **One commit per ingested record**, not one per batch.
-5. **MIBiG status filtering**: retired/pending/embargoed entries are
-   skipped by default (`include_non_active=True` to load them anyway).
-6. **Schemas refactored to Base/Create/Read** — Create schemas didn't
-   exist in Phase 1a because their shape was genuinely unclear before a
-   real ingestion format existed to design against.
+1. **`bgcscape.api` is a separate, optional (`[api]` extra) subpackage** —
+   keeps core engine/ingest/CLI free of a web-framework dependency.
+2. **API response schemas are distinct from the engine's Create/Read
+   schemas** — they're UI-shaped aggregates (rolled-up counts), not 1:1
+   table mirrors.
+3. **The tree API explicitly renders GTDB taxonomy, not a phylogeny** —
+   said out loud in both code comments and this file, since nothing
+   populates `PhylogeneticTree` yet and presenting one as the other would
+   be a real epistemic-rigor violation, not just an imprecise label.
+4. **Prototype before production frontend code** — an interactive,
+   immediately-viewable design artifact, built and *verified* (real Babel
+   transpile, real React SSR, targeted logic tests — not just "looks
+   right in my head") before writing TypeScript against a real API.
+5. **Visual direction follows the brief's explicit instruction** ("calm
+   precise scientific instrument... Nature/Cell") rather than a generic
+   template — see ARCHITECTURE.md for the specific choices and reasoning.
 
 ## Explicitly deferred / not yet built
 
-antiSMASH region-JSON ingestion · BiG-SCAPE family-clustering ingestion ·
-any HTTP/API layer · the frontend · novelty scoring · user uploads · full
-per-field multi-source provenance (source_id/evidence_level currently
-reflect "last source to touch this row," documented as a known
-simplification, not fixed this chunk).
+The production Next.js frontend itself · antiSMASH/BiG-SCAPE ingestion ·
+novelty scoring · user uploads · full per-field multi-source provenance ·
+publication-grade export · Web Worker offloading (premature at current
+data scale).
 
 ## Known constraints from this build environment
 
-- Still true from Chunk 1: this sandbox can't reach
-  mibig.secondarymetabolites.org or gtdb.ecogenomic.org directly. This
-  chunk worked around it differently than planned — rather than
-  `web_fetch`-ing individual example records, it cloned
-  `mibig-secmet/python-mibig` and `Ecogenomics/GTDBTk` from GitHub (which
-  *is* reachable from `bash_tool`) to read the real schema/column-name
-  source code directly, then built clearly-synthetic-content fixtures
-  matching that real schema. Real bulk ingestion against the live
-  databases still needs to happen somewhere with broader network access.
-- A couple of GTDB metadata TSV column names (`gc_percentage`,
-  `ncbi_assembly_level`) are lower-confidence than the rest (`gtdb_taxonomy`,
-  `checkm_completeness`, `checkm_contamination`, `genome_size` are
-  confirmed against real tooling source code) — flagged in
-  `ingest/gtdb.py`'s module docstring. Check against a real downloaded
-  header before a production run.
-- GitHub Actions CI still hasn't run on an actual runner.
-- Alembic upgrade/downgrade re-verified against file-based SQLite this
-  chunk; still not verified against real Postgres.
+- Everything from Chunks 1–2 still applies (no direct network access to
+  MIBiG/GTDB/NCBI from `bash_tool`; GitHub *is* reachable and was used
+  again this chunk conceptually — the design prototype's sample data
+  deliberately mirrors the real API shape rather than being ingested from
+  anywhere).
+- This sandbox has no browser or screenshot capability — the design
+  prototype's *actual visual appearance* was never seen by anything in
+  this build process, only its rendered HTML content and its pure-logic
+  correctness. Look at it yourself before treating the visual direction as
+  settled, not just the interaction logic.
+- `uvicorn` was run manually as a background process to smoke-test the API
+  over real HTTP, then killed — there's no persistent running service.
 
-## Recommendation for next chunk
+## How to resume
 
-Two reasonable directions from here — flagging rather than silently
-picking, since they're genuinely different in kind, not just sequential:
-
-- **(a) Phase 2, tree visualization.** The original roadmap sequences this
-  right after the data model, and there's now real (if fixture-scale)
-  data to render. Gets to a demoable, if minimal, end-to-end MVP v1
-  fastest.
-- **(b) Phase 1c, antiSMASH + BiG-SCAPE ingestion.** Completes the full
-  backend data layer (MVP v2 territory) before any frontend work starts.
-
-Say "continue" and, absent other direction, this project will proceed with
-**(a)** — it's what the roadmap in the original spec suggests, and seeing
-something on screen after two backend-only chunks is worth more than it
-might look like on a task list. Say which you'd prefer if that's wrong.
+Say "continue" and this project will build the **production Next.js
+frontend**: a TypeScript port of the prototype's D3 tree-layout logic,
+wired to actually `fetch()` from `GET /api/v1/taxonomy-tree` instead of
+reading hardcoded sample data, with a real `package.json`/build verified
+to succeed in this sandbox the same way every other deliverable has been.
+Look at `web/design-prototype/tree-explorer-demo.jsx` yourself first if
+you want to redirect the visual/interaction direction before it's ported —
+changing it now is a lot cheaper than changing it after.

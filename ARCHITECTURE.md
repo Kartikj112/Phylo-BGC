@@ -233,3 +233,83 @@ antiSMASH region-JSON ingestion (MVP v2 in the original product report,
 not MVP v1 — MIBiG + GTDB was the deliberate scope for this chunk),
 BiG-SCAPE family-clustering ingestion, any HTTP/API layer, the frontend,
 novelty scoring, user uploads, full multi-source per-field provenance.
+
+---
+
+## Phase 2 (in progress): visualization API + design prototype
+
+### API layer: `bgcscape.api`, read-only, UI-shaped
+
+`engine/src/bgcscape/api/` is a FastAPI app, gated behind an `api` extra
+(`pip install -e ".[api]"`) so the core engine/ingest/CLI stay free of a
+web-framework dependency, per the separation-of-concerns principle. Its
+schemas (`api/schemas.py`) are deliberately **not** the same as
+`bgcscape.schemas` (the engine's general Create/Read contracts used by
+ingestion) — `TaxonTreeNode.genome_count` and `.bgc_class_counts` are
+aggregated across every descendant, which has no equivalent column
+anywhere in the database. This is UI-shaped response data, built for one
+consumer (the tree visualization), not a general CRUD API.
+
+`api/tree_builder.py` loads the whole taxonomy + genome + BGC set into
+memory and aggregates counts via Python post-order recursion, rather than
+a recursive SQL CTE — correct and simple at fixture/demo scale, a
+deliberate simplification to revisit with a CTE or materialized-path
+approach once real dataset size makes an in-memory build impractical.
+
+**Taxonomy vs. phylogeny, said explicitly because it's easy to blur:**
+what this renders is the GTDB *taxonomic* hierarchy (`Taxon.parent_id`),
+not an inferred *phylogeny* with branch lengths. The data model has a
+separate `PhylogeneticTree`/`PhylogeneticNode` pair (Phase 1a) for that,
+but nothing populates it yet — MAFFT/IQ-TREE orchestration is still-future
+work. Taxonomy and phylogeny are highly correlated but not identical;
+presenting one as the other without saying so would cut against this
+project's own epistemic-rigor principle. The UI should say "taxonomic
+tree," not "phylogeny," until real tree inference exists.
+
+### Design prototype before production frontend code
+
+`web/design-prototype/tree-explorer-demo.jsx` is a single-file React/D3
+prototype (a Claude.ai artifact) built to get real, immediately-
+interactive feedback on the visual/interaction direction before writing
+the production Next.js implementation — see its own README for what was
+actually verified (real Babel transpilation, real `react-dom/server`
+rendering, a targeted unit-test suite for the pure filtering/tree logic)
+versus what wasn't (actual visual appearance, real click simulation).
+
+Visual direction follows the original brief's explicit instruction
+("calm, precise scientific instrument... Nature/Cell data graphics, not a
+flashy SaaS dashboard") rather than a generic default: quiet cool-neutral
+background (not the common warm-cream AI default), IBM Plex Sans/Mono
+(technical-instrument feel), italic taxonomic names (a genuine scientific
+convention), and a signature element — small colored tick marks per BGC on
+each genome tip, like a genomic ideogram/barcode — grounded in real genome-
+browser vernacular and directly serving the brief's "scan for biosynthetic
+hotspots" use case, not decorative color.
+
+### Real bugs found this sub-chunk
+
+1. **SQLite `:memory:` is per-connection by default.** The first API test
+   fixture seeded data on one connection and queried it via the FastAPI
+   dependency's own session (a different pooled connection) — which saw an
+   empty database ("no such table"). Fixed with `poolclass=StaticPool` to
+   share a single connection across the whole test.
+2. **Hybrid-BGC filtering bug in the design prototype**: the class-count
+   panel correctly decomposed a hybrid (e.g. NRPS+PKS) BGC into its
+   component classes, but the tree's dimming logic checked the literal
+   string `"hybrid"` against the active-filter set, which can never match
+   (`"hybrid"` isn't a real filter option). A genome whose only NRPS
+   activity came from a hybrid BGC would have been wrongly dimmed when
+   filtering to "NRPS only." Fixed with a shared decomposition helper used
+   consistently by both the count panel and the dimming check; locked in
+   with a targeted logic test. Full detail in the prototype's own README.
+
+### What Phase 2 still needs (explicitly not done yet)
+
+The **production Next.js/TypeScript frontend** itself — the prototype
+validates direction, it isn't the deliverable. Also not done: wiring the
+frontend to a real, running API (`uvicorn` was only run manually in this
+sandbox to smoke-test endpoints, not as a persistent service); search/
+filter UI in the *production* app (present in the prototype, not yet
+ported); publication-grade SVG/PDF export (report §1 "Publication-First");
+Web Worker offloading for large trees (tech stack calls for this at scale;
+premature at fixture-size data).
