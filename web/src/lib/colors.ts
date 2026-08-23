@@ -1,0 +1,60 @@
+/**
+ * Design tokens. See ARCHITECTURE.md "Phase 2" for the reasoning — ported
+ * directly from web/design-prototype/tree-explorer-demo.jsx, which was
+ * built and verified (rendered, unit-tested) before this production port,
+ * not redesigned from scratch here.
+ *
+ * These duplicate the color values in tailwind.config.ts intentionally:
+ * Tailwind's config isn't importable into runtime TS/TSX code (it's
+ * consumed by the PostCSS build step, not bundled), and D3-computed SVG
+ * fills need real color values at render time, not utility class names.
+ * Keep the two in sync if either changes.
+ */
+export const COLORS = {
+  paper: "#F7F7F4",
+  card: "#FFFFFF",
+  ink: "#1C1E1B",
+  inkMuted: "#5B5F58",
+  inkFaint: "#9A9D95",
+  line: "#DEDFDA",
+  lineStrong: "#C4C6BF",
+  signal: "#2C5F52",
+  signalWash: "#E7EEEC",
+} as const;
+
+export const BGC_CLASS_COLORS: Record<string, string> = {
+  nrps: "#8B5A3C",
+  pks: "#4A6FA5",
+  ripp: "#7B5EA7",
+  terpene: "#5B8C5A",
+  siderophore: "#A67C3D",
+  saccharide: "#5B9C94",
+  alkaloid: "#8B4560",
+  other: "#8A8D86",
+};
+
+export const BGC_CLASS_LABELS: Record<string, string> = {
+  nrps: "NRPS",
+  pks: "PKS",
+  ripp: "RiPP",
+  terpene: "Terpene",
+  siderophore: "Siderophore",
+  saccharide: "Saccharide",
+  alkaloid: "Alkaloid",
+  other: "Other",
+};
+
+export const CLASS_ORDER: string[] = Object.keys(BGC_CLASS_COLORS);
+
+/** A hybrid BGC (e.g. "nrps+pks") renders as a split marker showing both
+ * component colors rather than inventing a 9th flat hue — see tree-logic.ts
+ * for the corresponding *filtering* logic, which decomposes hybrids the
+ * same way (a real bug in the prototype came from doing this in only one
+ * of the two places, not both — see that file's docstring). */
+export function classColor(bgcClass: string, subtype: string | null | undefined): string[] {
+  if (bgcClass === "hybrid" && subtype) {
+    const [a, b] = subtype.toLowerCase().split("+");
+    return [BGC_CLASS_COLORS[a ?? ""] ?? COLORS.inkFaint, BGC_CLASS_COLORS[b ?? ""] ?? COLORS.inkFaint];
+  }
+  return [BGC_CLASS_COLORS[bgcClass] ?? COLORS.inkFaint];
+}

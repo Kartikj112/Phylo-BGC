@@ -2,7 +2,7 @@
 
 **Read this file first when resuming work in a new chunk.**
 
-_Last updated: Chunk 3 (Phase 2, in progress) — 2026-08-22_
+_Last updated: Chunk 4 (Phase 2 complete) — 2026-08-23_
 
 ## Status at a glance
 
@@ -10,116 +10,155 @@ _Last updated: Chunk 3 (Phase 2, in progress) — 2026-08-22_
 |---|---|---|
 | 1a | Core scientific data model | ✅ Done |
 | 1b | Curated reference dataset ingestion (MIBiG, GTDB) | ✅ Done |
-| 2 | Visualization API | ✅ **Done (this chunk)** |
-| 2 | Design prototype (interactive, sample data) | ✅ **Done (this chunk)** |
-| 2 | **Production Next.js frontend** | ⏭️ **Queued — the concrete next chunk** |
-| 1c | antiSMASH ingestion + BiG-SCAPE family clustering | Not started |
-| 3 | Layered BGC overlays, filtering, MIBiG/family integration | Not started |
-| 4 | Comparative analysis + publication-grade export suite | Not started |
+| 2 | Visualization API | ✅ Done |
+| 2 | Design prototype (interactive, sample data) | ✅ Done |
+| 2 | **Production Next.js frontend** | ✅ **Done (this chunk)** |
+| 1c | antiSMASH ingestion + BiG-SCAPE family clustering | ⏭️ Next candidate |
+| 3 | BGC-family highlighting, comparative clade analysis | Not started |
+| 4 | Publication-grade export suite | Not started |
 | 5 | User uploads + novelty prioritization scoring | Not started |
 
-Phase 2 is split into three pieces on purpose: API (backend, testable the
-same way every prior chunk has been) → design prototype (fast, interactive,
-gets real feedback before committing to a production implementation) →
-production frontend (the actual deliverable). The first two are done and
-verified; the third is now unambiguous — no more "pick a direction" framing
-like last chunk, this chunk locked in the direction and built toward it.
+**MVP v1 is now fully end-to-end**: real ingestion (MIBiG + GTDB) → real
+API → real, running, tested frontend that renders an actual taxonomy tree
+with BGC-class overlays, search, filtering, and a detail panel. This was
+verified with both servers running simultaneously against real ingested
+data — not just "the pieces exist," but "they actually talk to each other
+correctly," including a real CORS check.
 
-## What exists right now (additions since Chunk 2 in bold)
+## What exists right now (additions since Chunk 3 in bold)
 
 ```
 bgc-scape/
-├── README.md, ARCHITECTURE.md, PROGRESS.md (this file)
-├── docs/DATA_SOURCES.md
-├── docker-compose.yml, .env.example, .github/workflows/ci.yml
-├── engine/
-│   ├── src/bgcscape/
-│   │   ├── models/, schemas/, ingest/, db/, cli/    (unchanged this chunk)
-│   │   ├── **api/**                                  **new this chunk**
-│   │   │   ├── **schemas.py**                         UI-shaped response models
-│   │   │   ├── **tree_builder.py**                    aggregates Taxon+Genome+BGC into one tree
-│   │   │   └── **app.py**                              FastAPI: tree, genome/BGC detail, search
-│   │   └── cli/main.py                                (unchanged)
-│   └── tests/
-│       ├── **test_api.py**                            **new — 11 tests, real TestClient**
-│       └── (existing 48 tests, unchanged, still passing)
-└── **web/**
-    └── **design-prototype/**
-        ├── **tree-explorer-demo.jsx**    interactive React/D3 prototype (see its README)
-        └── **README.md**                  what it is, what was verified, real bug found
+├── README.md, ARCHITECTURE.md, PROGRESS.md (this file) — all updated
+├── engine/                                    (unchanged from Chunk 3)
+│   └── src/bgcscape/cli/main.py                + **dump-openapi-schema command**
+└── web/
+    ├── design-prototype/                       (unchanged — the prototype
+    │                                             this chunk ported from)
+    ├── **package.json, tsconfig.json, next.config.mjs,**
+    ├── **tailwind.config.ts, postcss.config.mjs, vitest.config.ts**
+    ├── **src/fonts/**                           **self-hosted IBM Plex woff2 files**
+    ├── **src/app/**
+    │   ├── **layout.tsx**                        root layout, next/font/local
+    │   ├── **page.tsx**                          main page, wires everything together
+    │   └── **globals.css**
+    ├── **src/components/**
+    │   ├── **Header.tsx**                        wordmark + search
+    │   ├── **ClassFilterRail.tsx**                BGC class filter checkboxes
+    │   ├── **DetailPanel.tsx**                    fetches genome/BGC detail on selection
+    │   └── **TreeCanvas.tsx**                     D3 tree rendering (the core visualization)
+    ├── **src/hooks/useTaxonomyTree.ts**           data-fetching hook
+    └── **src/lib/**
+        ├── **api-schema.generated.ts**            generated from real OpenAPI, not hand-written
+        ├── **api-types.ts**                       convenience aliases + DisplayNode union
+        ├── **api-client.ts**                      typed fetch wrapper
+        ├── **colors.ts**                           design tokens, ported from the prototype
+        ├── **tree-logic.ts**                       pure tree/filter logic, ported + improved
+        ├── **tree-logic.test.ts**                  **24 tests**, incl. the hybrid-filter regression
+        └── **test-fixtures.ts**                    test data matching the real API shape
 ```
 
-**59 engine tests total, all passing, zero warnings.** API endpoints were
-also hit with `curl` against a live `uvicorn` process (not just
-`TestClient`) — real HTTP, real ingested fixture data, correct responses.
+**59 engine tests + 24 frontend tests = 83 tests total, all passing.**
 
-## Real bugs found this chunk (full detail in ARCHITECTURE.md)
+## What was actually verified this chunk, in order
 
-1. **SQLite `:memory:` is per-connection** — an API test fixture's seed
-   data was invisible to the API's own DB session (different pooled
-   connection). Fixed with `poolclass=StaticPool`.
-2. **Hybrid-BGC filtering bug in the design prototype** — the class-count
-   panel correctly attributed a hybrid (NRPS+PKS) BGC to both component
-   classes, but the tree's dim/highlight logic checked the literal string
-   `"hybrid"` against the active filter set, which can never match. A
-   genome whose only NRPS activity came via a hybrid BGC would've been
-   wrongly dimmed when filtering to NRPS-only. Fixed with a shared
-   decomposition helper; locked in with a targeted logic test.
-3. The design prototype's sample data initially had **no species-level
-   taxon nodes at all** (genomes attached directly under genus) — meaning
-   the italic-species-name styling (a real nomenclature convention) never
-   actually rendered. Caught by an automated render-content check, not by
-   inspection; fixed by restructuring the sample tree to match how the
-   real data model actually works (species Taxon → genomes).
+Every step below was run for real, not assumed:
+
+1. `npm install` — resolved to 0 vulnerabilities after upgrading
+   Next.js 14→16 (14.x had no further stable patches) and force-upgrading
+   Vitest to close a dev-only esbuild advisory.
+2. `npx tsc --noEmit` — clean, after fixing one real type mismatch (see
+   ARCHITECTURE.md).
+3. `npx vitest run` — 24/24, including a direct automated regression test
+   for the hybrid-BGC filtering bug found last chunk (previously only
+   caught by manual verification of the prototype).
+4. `next build` (production) — succeeded, after solving a real font-hosting
+   problem (see below).
+5. **Full end-to-end**: real `uvicorn` + real `next start`, both running
+   simultaneously against real ingested fixture data, hit with real `curl`
+   — confirmed correct HTML content, confirmed self-hosted fonts resolve,
+   confirmed the API's CORS config actually permits the frontend's origin.
+
+## Real problems found and fixed this chunk
+
+1. **`next/font/google` can't build in this sandbox.** It fetches font
+   files from `fonts.googleapis.com` at *build time* to self-host them —
+   that domain isn't in this sandbox's network allow-list, so the first
+   `next build` failed outright. Same *class* of issue as MIBiG/GTDB not
+   being reachable from `bash_tool` in earlier chunks, hit again in a
+   different subsystem. Fixed by fetching the real IBM Plex Sans/Mono
+   `.woff2` files from IBM's own open-source GitHub repo and switching to
+   `next/font/local` — the functional equivalent of what
+   `next/font/google` would have produced, actually verified to build.
+2. **A real TypeScript type mismatch**: `classColor()`'s `subtype`
+   parameter was typed `string | null`, but the generated OpenAPI type for
+   an `Optional[str] = None` Pydantic field is `string | null |
+   undefined` (optional property, not just nullable). Fixed by widening
+   the function signature to match the real generated type.
+3. **A test-design bug, not a code bug**: the first version of a
+   "collapsing reduces tree height" test used a fixture tree too small to
+   clear the layout's `MIN_TREE_HEIGHT` floor in either state, so both
+   sides of the comparison were equal by coincidence. Rewritten with a
+   purpose-sized tree so the test actually exercises the scaling logic.
 
 ## Key design decisions made this chunk
 
-1. **`bgcscape.api` is a separate, optional (`[api]` extra) subpackage** —
-   keeps core engine/ingest/CLI free of a web-framework dependency.
-2. **API response schemas are distinct from the engine's Create/Read
-   schemas** — they're UI-shaped aggregates (rolled-up counts), not 1:1
-   table mirrors.
-3. **The tree API explicitly renders GTDB taxonomy, not a phylogeny** —
-   said out loud in both code comments and this file, since nothing
-   populates `PhylogeneticTree` yet and presenting one as the other would
-   be a real epistemic-rigor violation, not just an imprecise label.
-4. **Prototype before production frontend code** — an interactive,
-   immediately-viewable design artifact, built and *verified* (real Babel
-   transpile, real React SSR, targeted logic tests — not just "looks
-   right in my head") before writing TypeScript against a real API.
-5. **Visual direction follows the brief's explicit instruction** ("calm
-   precise scientific instrument... Nature/Cell") rather than a generic
-   template — see ARCHITECTURE.md for the specific choices and reasoning.
+1. **Generated, not hand-maintained, API types** — `openapi-typescript`
+   against the real FastAPI schema, via a new `bgcscape dump-openapi-schema`
+   CLI command. Direct response to this project's own history of
+   shape-assumption bugs (see ARCHITECTURE.md).
+2. **`d3.hierarchy(root, childrenAccessor)` instead of pre-pruning** — an
+   architecture improvement found *while porting* the prototype, not a
+   mechanical copy. The accessor function checks collapse state itself,
+   avoiding a parallel "pruned tree" data shape recomputed on every toggle.
+3. **Self-hosted local fonts** over `next/font/google`, for the reason
+   above — also arguably the more genuinely "production-grade" choice
+   regardless of this sandbox's constraints (no runtime dependency on
+   Google's font CDN).
+4. **`bgcscape dump-openapi-schema` is a lazy-imported CLI command** — so
+   the core CLI keeps working without the `api` extra installed; only this
+   one command needs it.
 
 ## Explicitly deferred / not yet built
 
-The production Next.js frontend itself · antiSMASH/BiG-SCAPE ingestion ·
-novelty scoring · user uploads · full per-field multi-source provenance ·
-publication-grade export · Web Worker offloading (premature at current
-data scale).
+antiSMASH/BiG-SCAPE ingestion · BGC-family highlighting in the tree ·
+comparative clade analysis · publication-grade SVG/PDF export · Web Worker
+offloading (premature at current data scale) · novelty scoring · user
+uploads · full per-field multi-source provenance.
 
 ## Known constraints from this build environment
 
-- Everything from Chunks 1–2 still applies (no direct network access to
-  MIBiG/GTDB/NCBI from `bash_tool`; GitHub *is* reachable and was used
-  again this chunk conceptually — the design prototype's sample data
-  deliberately mirrors the real API shape rather than being ingested from
-  anywhere).
-- This sandbox has no browser or screenshot capability — the design
-  prototype's *actual visual appearance* was never seen by anything in
-  this build process, only its rendered HTML content and its pure-logic
-  correctness. Look at it yourself before treating the visual direction as
-  settled, not just the interaction logic.
-- `uvicorn` was run manually as a background process to smoke-test the API
-  over real HTTP, then killed — there's no persistent running service.
+- Everything from Chunks 1–3 still applies.
+- **No browser in this sandbox** — actual visual rendering has never been
+  seen by anything in this build process, only HTML content correctness
+  and logical behavior. This is the single most important thing to check
+  yourself before trusting the visual result.
+- `next dev`/`uvicorn --reload` weren't left running as persistent
+  services — background processes don't survive across separate tool
+  calls in this environment (confirmed directly: an E2E check split across
+  two calls failed with "connection refused" on the second, because the
+  first call's background servers had already been torn down when that
+  call's shell session ended). All multi-service verification this chunk
+  was done within single, combined tool calls for exactly this reason.
 
 ## How to resume
 
-Say "continue" and this project will build the **production Next.js
-frontend**: a TypeScript port of the prototype's D3 tree-layout logic,
-wired to actually `fetch()` from `GET /api/v1/taxonomy-tree` instead of
-reading hardcoded sample data, with a real `package.json`/build verified
-to succeed in this sandbox the same way every other deliverable has been.
-Look at `web/design-prototype/tree-explorer-demo.jsx` yourself first if
-you want to redirect the visual/interaction direction before it's ported —
-changing it now is a lot cheaper than changing it after.
+MVP v1 is functionally complete end-to-end. Reasonable next directions,
+genuinely different in kind:
+
+- **antiSMASH + BiG-SCAPE ingestion (Phase 1c)** — completes the MVP v2
+  backend data layer (predicted BGCs at scale, family clustering), which
+  the frontend's BGC-family-highlighting features would then have
+  something real to render.
+- **Frontend polish** — the production app covers MVP v1's core loop but
+  not everything the prototype demonstrated (e.g. refined interaction
+  details); worth comparing the two side by side.
+- **Deploy something** — Postgres via docker-compose has still never been
+  tested against real Postgres (only SQLite, repeatedly, in this sandbox);
+  worth doing before trusting the Postgres path.
+
+Say "continue" and, absent other direction, this project will proceed with
+antiSMASH + BiG-SCAPE ingestion — it's the more clearly-scoped unit of
+work and unblocks real (if still fixture-scale) predicted-BGC data at
+volume, which several already-built frontend pieces (the class filter
+rail, especially) would benefit from having more of to work with.

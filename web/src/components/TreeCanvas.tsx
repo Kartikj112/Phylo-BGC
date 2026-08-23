@@ -1,0 +1,187 @@
+"use client";
+
+import * as d3 from "d3";
+import { useMemo } from "react";
+import type { DisplayNode, TaxonDisplayNode } from "@/lib/api-types";
+import { BGC_CLASS_COLORS, COLORS, classColor } from "@/lib/colors";
+import {
+  computeTreeLayout,
+  genomeMatchesActiveClasses,
+  hiddenChildrenCount,
+  matchesQuery,
+  nodeKey,
+  nodeVisibleClasses,
+} from "@/lib/tree-logic";
+
+interface TreeCanvasProps {
+  root: TaxonDisplayNode;
+  collapsed: Set<string>;
+  onToggleCollapse: (key: string) => void;
+  activeClasses: Set<string>;
+  searchQuery: string;
+  selectedId: string | null;
+  onSelectGenome: (id: string) => void;
+  onSelectBgc: (id: string) => void;
+}
+
+const TREE_WIDTH = 760;
+const SVG_VIEWBOX_WIDTH = 900;
+
+export function TreeCanvas({
+  root,
+  collapsed,
+  onToggleCollapse,
+  activeClasses,
+  searchQuery,
+  selectedId,
+  onSelectGenome,
+  onSelectBgc,
+}: TreeCanvasProps) {
+  const { nodes, links, height } = useMemo(() => computeTreeLayout(root, collapsed, TREE_WIDTH), [root, collapsed]);
+
+  const linkGenerator = useMemo(
+    () =>
+      d3
+        .linkHorizontal<d3.HierarchyPointLink<DisplayNode>, d3.HierarchyPointNode<DisplayNode>>()
+        .x((d) => d.y)
+        .y((d) => d.x),
+    [],
+  );
+
+  const dimAll = activeClasses.size < Object.keys(BGC_CLASS_COLORS).length;
+
+  return (
+    <svg width="100%" height={height} viewBox={`0 0 ${SVG_VIEWBOX_WIDTH} ${height}`}>
+      <g transform="translate(30,20)">
+        {links.map((link, i) => (
+          <path key={i} d={linkGenerator(link) ?? undefined} fill="none" stroke={COLORS.lineStrong} strokeWidth={1.25} />
+        ))}
+
+        {nodes.map((n) => {
+          const node = n.data;
+          const key = nodeKey(node);
+          const isGenome = node._kind === "genome";
+          const isMatch = matchesQuery(node, searchQuery);
+          const hidden = hiddenChildrenCount(node, collapsed);
+
+          const dimmed =
+            dimAll && !isGenome && ![...nodeVisibleClasses(node)].some((c) => activeClasses.has(c));
+          const genomeDimmed = dimAll && isGenome && !genomeMatchesActiveClasses(node, activeClasses);
+
+          return (
+            <g key={key} transform={`translate(${n.y},${n.x})`} opacity={dimmed || genomeDimmed ? 0.25 : 1}>
+              {!isGenome && (
+                <TaxonNode
+                  node={node}
+                  hiddenCount={hidden}
+                  matched={isMatch}
+                  onToggleCollapse={() => onToggleCollapse(key)}
+                />
+              )}
+              {isGenome && (
+                <GenomeNode
+                  node={node}
+                  matched={isMatch}
+                  dimmedBySelection={selectedId !== null && selectedId !== node.id}
+                  onSelectGenome={() => onSelectGenome(node.id)}
+                  onSelectBgc={onSelectBgc}
+                />
+              )}
+            </g>
+          );
+        })}
+      </g>
+    </svg>
+  );
+}
+
+function TaxonNode({
+  node,
+  hiddenCount,
+  matched,
+  onToggleCollapse,
+}: {
+  node: Extract<DisplayNode, { _kind: "taxon" }>;
+  hiddenCount: number;
+  matched: boolean;
+  onToggleCollapse: () => void;
+}) {
+  const isHighRank = node.rank === "domain" || node.rank === "phylum";
+  return (
+    <>
+      <circle
+        r={4.5}
+        fill={hiddenCount > 0 ? COLORS.signal : COLORS.paper}
+        stroke={COLORS.ink}
+        strokeWidth={1.25}
+        className="cursor-pointer"
+        onClick={onToggleCollapse}
+      />
+      <text
+        x={-9}
+        textAnchor="end"
+        dy="0.32em"
+        fontStyle={node.rank === "species" ? "italic" : "normal"}
+        fontSize={isHighRank ? 13 : 12}
+        fontWeight={isHighRank ? 600 : 400}
+        fill={matched ? COLORS.signal : COLORS.ink}
+      >
+        {node.name}
+        {hiddenCount > 0 ? ` (+${hiddenCount})` : ""}
+      </text>
+    </>
+  );
+}
+
+const BARCODE_START_X = 132;
+const BARCODE_TICK_WIDTH = 11;
+
+function GenomeNode({
+  node,
+  matched,
+  dimmedBySelection,
+  onSelectGenome,
+  onSelectBgc,
+}: {
+  node: Extract<DisplayNode, { _kind: "genome" }>;
+  matched: boolean;
+  dimmedBySelection: boolean;
+  onSelectGenome: () => void;
+  onSelectBgc: (id: string) => void;
+}) {
+  return (
+    <g className="cursor-pointer" onClick={onSelectGenome} opacity={dimmedBySelection ? 0.55 : 1}>
+      <text x={10} dy="0.32em" fontSize={11.5} fill={matched ? COLORS.signal : COLORS.inkMuted} className="font-mono">
+        {node.accession}
+      </text>
+      {node.bgcs.map((b, i) => {
+        const colors = classColor(b.bgc_class, b.subtype);
+        const x = BARCODE_START_X + i * BARCODE_TICK_WIDTH;
+        const primary = colors[0] ?? COLORS.inkFaint;
+        return (
+          <g
+            key={b.id}
+            onClick={(e) => {
+              e.stopPropagation();
+              onSelectBgc(b.id);
+            }}
+          >
+            {colors.length === 1 ? (
+              <rect x={x} y={-5} width={7} height={10} fill={primary} rx={1} />
+            ) : (
+              <>
+                <rect x={x} y={-5} width={3.5} height={10} fill={primary} />
+                <rect x={x + 3.5} y={-5} width={3.5} height={10} fill={colors[1] ?? COLORS.inkFaint} />
+              </>
+            )}
+          </g>
+        );
+      })}
+      {node.is_mag && (
+        <text x={BARCODE_START_X + node.bgcs.length * BARCODE_TICK_WIDTH + 6} dy="0.32em" fontSize={9.5} fill={COLORS.inkFaint}>
+          MAG
+        </text>
+      )}
+    </g>
+  );
+}

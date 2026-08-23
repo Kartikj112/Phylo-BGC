@@ -1,6 +1,7 @@
 """BGC-scape engine CLI."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import typer
@@ -94,6 +95,26 @@ def ingest_gtdb_cmd(
         rows = read_gtdb_metadata_tsv(path)
         report = ingest_gtdb_metadata(session, source, rows)
     _echo_report(report)
+
+
+@app.command("dump-openapi-schema")
+def dump_openapi_schema(
+    output: Path = typer.Option(Path("openapi.json"), help="Where to write the OpenAPI schema JSON."),
+) -> None:
+    """Dump the API's OpenAPI schema to a file, for `openapi-typescript`
+    (see web/package.json's `generate-api-types` script) to regenerate the
+    frontend's TypeScript types from. Requires the `api` extra
+    (`pip install -e ".[api]"`) — imported lazily here, not at module
+    level, so every other CLI command keeps working without it installed.
+    """
+    try:
+        from bgcscape.api.app import app as fastapi_app
+    except ImportError as exc:
+        typer.echo(f"This command needs the 'api' extra: pip install -e '.[api]' ({exc})", err=True)
+        raise typer.Exit(1) from exc
+
+    output.write_text(json.dumps(fastapi_app.openapi(), indent=2))
+    typer.echo(f"Wrote OpenAPI schema to {output}")
 
 
 if __name__ == "__main__":

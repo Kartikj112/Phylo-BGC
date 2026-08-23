@@ -16,37 +16,49 @@ work on this project.**
 
 ```
 bgc-scape/
-├── engine/          Python scientific engine — the data model + (future)
-│                     ingestion/analysis pipelines. No web framework code
-│                     lives here; see ARCHITECTURE.md §Separation of concerns.
-├── web/              Frontend (Next.js/React/D3) — not yet built.
+├── engine/                Python scientific engine: data model, ingestion,
+│                           visualization API. No biological logic lives in
+│                           the frontend; see ARCHITECTURE.md's separation
+│                           of concerns.
+├── web/                   Next.js/TypeScript/D3 frontend.
+│   └── design-prototype/   Interactive design prototype (not production code).
 ├── docs/
-│   └── DATA_SOURCES.md   Per-source licensing/versioning notes.
-├── docker-compose.yml    Local Postgres + Adminer for development.
-└── PROGRESS.md           Build status and phase tracker.
+│   └── DATA_SOURCES.md    Per-source licensing/versioning notes.
+├── docker-compose.yml     Local Postgres + Adminer for development.
+└── PROGRESS.md            Build status and phase tracker.
 ```
 
-## Quickstart (engine)
+## Quickstart
 
 ```bash
+# 1. Engine + database
 cd engine
-pip install -e ".[dev]"
-
-# Option A — real Postgres (recommended, matches production target):
-docker compose -f ../docker-compose.yml up -d postgres
-cp ../.env.example ../.env   # then edit if needed
+pip install -e ".[dev,api]"
+docker compose -f ../docker-compose.yml up -d postgres   # or use SQLite, see .env.example
+cp ../.env.example ../.env
 alembic upgrade head
 
-# Option B — zero-setup SQLite for a quick look:
-export BGCSCAPE_DATABASE_URL="sqlite+pysqlite:///./bgcscape_dev.db"
-bgcscape init-db
+# 2. Ingest some data (curated test fixtures ship with the repo; real
+#    MIBiG/GTDB downloads are a separate step — see docs/DATA_SOURCES.md)
+bgcscape ingest gtdb tests/fixtures/gtdb_metadata_test.tsv
+bgcscape ingest mibig tests/fixtures/
 
-# Run the test suite (uses in-memory SQLite regardless of the above):
-pytest -v
+# 3. API
+uvicorn bgcscape.api.app:app --reload   # http://127.0.0.1:8000
+
+# 4. Frontend (in another terminal)
+cd ../web
+npm install
+cp .env.local.example .env.local
+npm run dev                              # http://localhost:3000
+
+# Tests
+cd ../engine && pytest -v          # 59 tests
+cd ../web && npm test               # 24 tests
 ```
 
 ## Status
 
-Phase 1a (core data model) is complete and tested. Everything else —
-ingestion, API, frontend, novelty scoring, user uploads — is planned but not
-yet built. Full detail in `PROGRESS.md`.
+Phases 1a/1b (data model, MIBiG+GTDB ingestion) and Phase 2 (visualization
+API + production frontend) are complete and tested. See `PROGRESS.md` for
+the full phase tracker and what's next.

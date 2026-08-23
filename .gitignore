@@ -15,3 +15,14 @@ build/
 htmlcov/
 node_modules/
 .DS_Store
+
+# Next.js
+.next/
+out/
+next-env.d.ts
+*.tsbuildinfo
+
+# Regeneratable API contract snapshot — the generated TS types
+# (web/src/lib/api-schema.generated.ts) ARE committed; this raw dump
+# isn't, see `bgcscape dump-openapi-schema` in cli/main.py.
+engine/openapi.json

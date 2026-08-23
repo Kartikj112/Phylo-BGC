@@ -313,3 +313,82 @@ filter UI in the *production* app (present in the prototype, not yet
 ported); publication-grade SVG/PDF export (report §1 "Publication-First");
 Web Worker offloading for large trees (tech stack calls for this at scale;
 premature at fixture-size data).
+
+---
+
+## Phase 2 (complete): production Next.js frontend
+
+### Generated, not hand-maintained, type boundary
+
+`web/src/lib/api-schema.generated.ts` is generated directly from the
+FastAPI app's own OpenAPI schema via `openapi-typescript`
+(`bgcscape dump-openapi-schema` → `npm run generate-api-types`), not
+hand-written to mirror `bgcscape.schemas`/`bgcscape.api.schemas`. This is
+a direct response to this project's own track record: two separate real
+bugs this build already found (enum storage using `.name` instead of
+`.value`; a schema-shape assumption that turned out wrong for GTDB
+metadata columns) both came from *believing* a shape matched reality
+without checking. A hand-maintained parallel type definition is exactly
+the kind of thing that would drift silently; a generated one can't.
+
+### Architecture improvement over the prototype, found while porting
+
+The prototype (`web/design-prototype/`) pre-pruned the tree into a new
+collapse-aware copy before handing it to `d3.hierarchy()`. The production
+version (`web/src/lib/tree-logic.ts`) instead passes a **children-accessor
+function** to `d3.hierarchy(root, accessor)` that itself checks collapse
+state — `d3.hierarchy` is built for exactly this, and it avoids re-deriving
+a parallel "pruned tree" data shape on every collapse toggle. Ported code
+should be re-examined for this kind of thing, not copied mechanically —
+the hybrid-filtering bug pattern (getting a decomposition right in one
+place but not a structurally-similar other place) was worth designing
+around directly rather than just fixing the two call sites again.
+
+### Self-hosted fonts: a second real network-boundary finding
+
+`next/font/google` fetches font files from `fonts.googleapis.com` **at
+build time** (that's how it self-hosts for production — download once,
+serve locally, no runtime request to Google). This sandbox's network
+allow-list doesn't cover that domain, so the first `next build` attempt
+failed outright — the same *class* of constraint as MIBiG/GTDB not being
+reachable from `bash_tool` in earlier chunks, encountered again in a
+different subsystem. Fixed by fetching the real IBM Plex Sans/Mono
+`.woff2` files from IBM's own open-source repository (github.com/IBM/plex,
+SIL Open Font License) and switching to `next/font/local` — functionally
+the same end state `next/font/google` would have produced, verified to
+actually build rather than assumed. See `web/README.md` for detail and how
+to switch back if building somewhere with normal internet access.
+
+### What was actually verified, in order
+
+Every step below was run for real in this sandbox, not assumed from
+writing the code carefully:
+
+1. `npm install` — 0 vulnerabilities after upgrading Next.js 14→16 (14.x
+   had no further stable patches available) and force-upgrading Vitest to
+   resolve a dev-only esbuild advisory.
+2. `npx tsc --noEmit` — clean after fixing one real type mismatch (a
+   Pydantic `Optional[str] = None` field generates as `string | null |
+   undefined` in the OpenAPI schema, not `string | null` — the function
+   signature was widened to match the real generated type, not
+   patched around at call sites).
+3. `npx vitest run` — 24 tests, including a direct regression test for
+   the hybrid-BGC filtering bug (ported from the prototype's manual
+   verification into an actual automated test) and new tests for the D3
+   layout logic (leaf-count-driven height, collapse removing descendants
+   from `d3.hierarchy()` output, finite coordinates on every node).
+4. `next build` (production, Turbopack) — succeeded after the font fix.
+5. **Full end-to-end**: real `uvicorn` process + real `next start`
+   production server, both running simultaneously, hit with real `curl`
+   requests — confirmed the served HTML contains expected content (header,
+   search box, the correct client-side-fetch loading state), confirmed
+   self-hosted font preload links resolve to real hashed filenames, and
+   confirmed the API's CORS configuration actually permits the frontend's
+   origin (`access-control-allow-origin: *`) rather than assuming the
+   `CORSMiddleware` config from Phase 2's API work was sufficient.
+
+One thing not verified, stated plainly rather than glossed over: **actual
+visual rendering**. This sandbox has no browser. Everything above confirms
+the app builds, serves, and is logically correct — not that it looks
+right. Open `npm run dev` yourself before treating the visual output as
+settled.
