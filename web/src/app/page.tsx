@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { ClassFilterRail } from "@/components/ClassFilterRail";
+import { ComparisonPanel } from "@/components/ComparisonPanel";
 import { DetailPanel, type Selection } from "@/components/DetailPanel";
 import { FamilyRail } from "@/components/FamilyRail";
 import { Header } from "@/components/Header";
@@ -17,6 +18,13 @@ export default function HomePage() {
   const [query, setQuery] = useState("");
   const [selection, setSelection] = useState<Selection>(null);
   const [selectedFamilyId, setSelectedFamilyId] = useState<string | null>(null);
+  const [comparisonTaxonIds, setComparisonTaxonIds] = useState<string[]>([]);
+
+  function toggleComparisonTaxon(taxonId: string): void {
+    setComparisonTaxonIds((prev) =>
+      prev.includes(taxonId) ? prev.filter((id) => id !== taxonId) : [...prev, taxonId],
+    );
+  }
 
   const root = useMemo(() => (tree ? toRootDisplayNode(tree) : null), [tree]);
   const classCounts = useMemo(() => (root ? countBgcClasses(root) : {}), [root]);
@@ -73,6 +81,8 @@ export default function HomePage() {
               searchQuery={query}
               selectedId={selection?.id ?? null}
               selectedFamilyId={selectedFamilyId}
+              comparisonTaxonIds={comparisonTaxonIds}
+              onToggleComparisonTaxon={toggleComparisonTaxon}
               onSelectGenome={(id) => setSelection({ kind: "genome", id })}
               onSelectBgc={(id) => setSelection({ kind: "bgc", id })}
             />
@@ -85,6 +95,12 @@ export default function HomePage() {
           onSelectBgc={(id) => setSelection({ kind: "bgc", id })}
         />
       </div>
+
+      <ComparisonPanel
+        taxonIds={comparisonTaxonIds}
+        onClose={() => setComparisonTaxonIds([])}
+        onClearSelection={() => setComparisonTaxonIds([])}
+      />
     </div>
   );
 }

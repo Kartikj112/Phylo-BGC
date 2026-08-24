@@ -23,6 +23,8 @@ interface TreeCanvasProps {
   searchQuery: string;
   selectedId: string | null;
   selectedFamilyId: string | null;
+  comparisonTaxonIds: string[];
+  onToggleComparisonTaxon: (taxonId: string) => void;
   onSelectGenome: (id: string) => void;
   onSelectBgc: (id: string) => void;
 }
@@ -38,6 +40,8 @@ export function TreeCanvas({
   searchQuery,
   selectedId,
   selectedFamilyId,
+  comparisonTaxonIds,
+  onToggleComparisonTaxon,
   onSelectGenome,
   onSelectBgc,
 }: TreeCanvasProps) {
@@ -88,7 +92,9 @@ export function TreeCanvas({
                   hiddenCount={hidden}
                   matched={isMatch}
                   inSelectedFamily={inSelectedFamily}
+                  inComparison={node.id !== null && comparisonTaxonIds.includes(node.id)}
                   onToggleCollapse={() => onToggleCollapse(key)}
+                  onToggleComparison={() => node.id !== null && onToggleComparisonTaxon(node.id)}
                 />
               )}
               {isGenome && (
@@ -114,13 +120,17 @@ function TaxonNode({
   hiddenCount,
   matched,
   inSelectedFamily,
+  inComparison,
   onToggleCollapse,
+  onToggleComparison,
 }: {
   node: Extract<DisplayNode, { _kind: "taxon" }>;
   hiddenCount: number;
   matched: boolean;
   inSelectedFamily: boolean;
+  inComparison: boolean;
   onToggleCollapse: () => void;
+  onToggleComparison: () => void;
 }) {
   const isHighRank = node.rank === "domain" || node.rank === "phylum";
   return (
@@ -133,15 +143,26 @@ function TaxonNode({
         className="cursor-pointer"
         onClick={onToggleCollapse}
       />
+      {/* Shift-click adds/removes this clade from the comparison, leaving
+          plain click as collapse/expand — the far more frequent action,
+          which shouldn't get harder to reach because a second mode exists. */}
       <text
         x={-9}
         textAnchor="end"
         dy="0.32em"
         fontStyle={node.rank === "species" ? "italic" : "normal"}
         fontSize={isHighRank ? 13 : 12}
-        fontWeight={isHighRank || inSelectedFamily ? 600 : 400}
-        fill={matched || inSelectedFamily ? COLORS.signal : COLORS.ink}
+        fontWeight={isHighRank || inSelectedFamily || inComparison ? 600 : 400}
+        fill={matched || inSelectedFamily || inComparison ? COLORS.signal : COLORS.ink}
+        className="cursor-pointer"
+        onClick={(e) => {
+          if (e.shiftKey) {
+            e.stopPropagation();
+            onToggleComparison();
+          }
+        }}
       >
+        {inComparison ? "\u25C6 " : ""}
         {node.name}
         {hiddenCount > 0 ? ` (+${hiddenCount})` : ""}
       </text>

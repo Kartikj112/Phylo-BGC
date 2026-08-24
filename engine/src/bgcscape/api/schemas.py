@@ -134,3 +134,51 @@ class BGCFamilyMember(BaseModel):
 
 class BGCFamilyDetail(BGCFamilySummary):
     members: list[BGCFamilyMember]
+
+
+class FamilyRef(BaseModel):
+    id: uuid.UUID
+    label: str
+
+
+class ClassProfileEntry(BaseModel):
+    """One BGC class within one clade's profile.
+
+    `count` and `per_genome` are both present deliberately: raw counts
+    between clades of different sizes mostly measure sampling effort, so
+    the UI should lead with the rate — but the count is what a reader
+    needs to judge whether the rate rests on enough data to mean anything.
+    """
+
+    bgc_class: str
+    count: int
+    per_genome: float | None = None
+
+
+class CladeSummary(BaseModel):
+    taxon_id: uuid.UUID
+    taxon_name: str
+    rank: TaxonRank | None = None
+    genome_count: int
+    bgc_count: int
+    bgcs_per_genome: float | None = None
+    class_profile: list[ClassProfileEntry]
+    family_count: int
+    only_in_this_clade: list[FamilyRef]
+    """Families found in this clade and none of the others compared.
+
+    Named `only_in_*`, not `absent_from_others`: this reflects what was
+    *observed in this dataset*, and cannot distinguish true absence
+    elsewhere from insufficient sampling. See `CladeComparison.caveats`.
+    """
+
+
+class CladeComparison(BaseModel):
+    clades: list[CladeSummary]
+    shared_families: list[FamilyRef]
+    """Families present in every compared clade (not merely in several)."""
+    comparable: bool
+    """False when sampling is too thin or lopsided for the numbers to
+    support a claim about biology. The response is still returned — the UI
+    should present it descriptively rather than as evidence."""
+    caveats: list[str]

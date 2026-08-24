@@ -26,8 +26,11 @@ export function Header({ query, onQueryChange, genomeCount }: HeaderProps) {
         />
       </div>
 
-      <span className="ml-auto font-mono text-xs text-ink-faint">
-        {genomeCount} genome{genomeCount === 1 ? "" : "s"} · taxonomic tree (GTDB)
+      <span className="ml-auto flex items-center gap-3 text-xs text-ink-faint">
+        <span className="hidden lg:inline">shift-click a clade to compare</span>
+        <span className="font-mono">
+          {genomeCount} genome{genomeCount === 1 ? "" : "s"} · taxonomic tree (GTDB)
+        </span>
       </span>
     </div>
   );

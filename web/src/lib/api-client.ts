@@ -8,6 +8,7 @@ import type {
   BGCDetail,
   BGCFamilyDetail,
   BGCFamilySummary,
+  CladeComparison,
   GenomeDetail,
   SearchResult,
   TaxonTreeNode,
@@ -68,4 +69,9 @@ export function fetchFamilies(): Promise<BGCFamilySummary[]> {
 
 export function fetchFamily(familyId: string): Promise<BGCFamilyDetail> {
   return getJson<BGCFamilyDetail>(`/api/v1/families/${familyId}`);
+}
+
+export function fetchComparison(taxonIds: string[]): Promise<CladeComparison> {
+  const params = taxonIds.map((id) => `taxon_ids=${encodeURIComponent(id)}`).join("&");
+  return getJson<CladeComparison>(`/api/v1/compare?${params}`);
 }

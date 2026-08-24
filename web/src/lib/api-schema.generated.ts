@@ -128,6 +128,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/compare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Compare Clades
+         * @description Compare the biosynthetic repertoires of two or more clades.
+         *
+         *     Read the `comparable` flag and `caveats` before drawing conclusions —
+         *     see api/comparison.py for why they're part of the response rather than
+         *     a UI afterthought.
+         */
+        get: operations["compare_clades_api_v1_compare_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/search": {
         parameters: {
             query?: never;
@@ -289,6 +313,57 @@ export interface components {
              */
             family_ids: string[];
         };
+        /** CladeComparison */
+        CladeComparison: {
+            /** Clades */
+            clades: components["schemas"]["CladeSummary"][];
+            /** Shared Families */
+            shared_families: components["schemas"]["FamilyRef"][];
+            /** Comparable */
+            comparable: boolean;
+            /** Caveats */
+            caveats: string[];
+        };
+        /** CladeSummary */
+        CladeSummary: {
+            /**
+             * Taxon Id
+             * Format: uuid
+             */
+            taxon_id: string;
+            /** Taxon Name */
+            taxon_name: string;
+            rank?: components["schemas"]["TaxonRank"] | null;
+            /** Genome Count */
+            genome_count: number;
+            /** Bgc Count */
+            bgc_count: number;
+            /** Bgcs Per Genome */
+            bgcs_per_genome?: number | null;
+            /** Class Profile */
+            class_profile: components["schemas"]["ClassProfileEntry"][];
+            /** Family Count */
+            family_count: number;
+            /** Only In This Clade */
+            only_in_this_clade: components["schemas"]["FamilyRef"][];
+        };
+        /**
+         * ClassProfileEntry
+         * @description One BGC class within one clade's profile.
+         *
+         *     `count` and `per_genome` are both present deliberately: raw counts
+         *     between clades of different sizes mostly measure sampling effort, so
+         *     the UI should lead with the rate — but the count is what a reader
+         *     needs to judge whether the rate rests on enough data to mean anything.
+         */
+        ClassProfileEntry: {
+            /** Bgc Class */
+            bgc_class: string;
+            /** Count */
+            count: number;
+            /** Per Genome */
+            per_genome?: number | null;
+        };
         /** CompoundSummary */
         CompoundSummary: {
             /**
@@ -327,6 +402,16 @@ export interface components {
          * @enum {string}
          */
         EvidenceLevel: "observed_curated" | "computed" | "predicted" | "hypothesized";
+        /** FamilyRef */
+        FamilyRef: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Label */
+            label: string;
+        };
         /** GenomeDetail */
         GenomeDetail: {
             /**
@@ -602,6 +687,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BGCFamilyDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    compare_clades_api_v1_compare_get: {
+        parameters: {
+            query: {
+                /** @description Two or more taxon ids to compare. */
+                taxon_ids: string[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CladeComparison"];
                 };
             };
             /** @description Validation Error */

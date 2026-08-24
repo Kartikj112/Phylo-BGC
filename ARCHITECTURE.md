@@ -587,3 +587,75 @@ cluster boundaries and class but says nothing about products) broke it —
 correctly. Now split into two explicit tests: a MIBiG-derived BGC *must*
 carry curated compounds, and an antiSMASH-derived one *must* report an
 empty list rather than anything invented.
+
+---
+
+## Phase 3 (cont.): comparative clade analysis
+
+`GET /api/v1/compare?taxon_ids=...&taxon_ids=...` answers the original
+report's §4.7 question — "what biosynthetic capabilities distinguish these
+groups?" — for two to six clades.
+
+### The rigor problem is the design problem
+
+Comparing clades is where a tool like this most easily produces confident
+nonsense, so most of the design effort went there rather than into the
+statistics:
+
+- **Every count is paired with a per-genome rate.** Two clades almost
+  never have the same number of genomes; raw counts between a 40-genome
+  clade and a 3-genome clade mostly measure sampling effort. The UI leads
+  with the rate and shows the count in parentheses, because the count is
+  what tells a reader whether the rate rests on enough data to mean
+  anything.
+- **`comparable: false` when sampling is thin or lopsided.** Below 3
+  genomes, per-genome rates are dominated by individual genomes; beyond a
+  10x size imbalance, raw counts are mostly sampling artifact. The
+  response is still returned — the flag governs *presentation*, not
+  availability, and the frontend renders a prominent warning above the
+  table rather than suppressing the numbers.
+- **`only_in_this_clade`, never `absent_from_others`.** This is the
+  naming decision that matters most. A family missing from a clade's
+  profile means no genome *in this dataset* was found to carry it, which
+  conflates true absence with incomplete sampling, assembly gaps, and
+  prediction sensitivity. The caveat saying exactly that is returned on
+  *every* comparison, including well-sampled ones, and is rendered above
+  the table — burying it underneath would mean most readers form
+  conclusions before reaching it.
+- **No p-values.** Enrichment testing across clades needs a model of
+  phylogenetic non-independence (closely related genomes are not
+  independent samples). Without one, a naive p-value would be worse than
+  no p-value, so the API reports none and says so.
+
+### Deliberate partitioning choice
+
+Families present in *some but not all* clades (when comparing 3+) land in
+neither `shared_families` nor any clade's `only_in_this_clade`. "In two of
+three" is a genuinely distinct and less interpretable situation than
+either universal or unique; folding it into one of those buckets would
+misrepresent it. There is a test asserting this specifically.
+
+### A real bug caught by that test
+
+`partition_families()` initially filtered to clades that *have* families
+before intersecting them — which meant a clade with no families was
+silently excluded from the "shared by every clade" calculation, so a
+family could be reported as universal even when one of the compared
+clades plainly lacked it. Caught by both the three-clade test and the
+empty-clade test. The intersection now runs over every profile: if any
+clade lacks a family, that family is not shared, and a clade with nothing
+in it means nothing is shared.
+
+### Interaction design
+
+Shift-click a taxon label toggles it into the comparison; plain click
+stays collapse/expand. Collapse/expand is by far the more frequent action
+and shouldn't get harder to reach because a second mode exists. Selected
+clades are marked with a ◆ and the signal color, and the header carries a
+"shift-click a clade to compare" hint, since a modifier-key interaction is
+otherwise undiscoverable.
+
+Hybrid BGCs are attributed to each component class in clade profiles,
+matching how the frontend's filter rail counts them — otherwise the same
+BGC would be counted one way in the comparison table and another way in
+the sidebar of the same screen.

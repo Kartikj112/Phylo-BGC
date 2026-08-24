@@ -12,18 +12,29 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterator
+from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session, selectinload
 
+from bgcscape.api.comparison import (
+    all_family_labels,
+    build_clade_profile,
+    compute_caveats,
+    partition_families,
+)
 from bgcscape.api.schemas import (
     BGCDetail,
     BGCFamilyDetail,
     BGCFamilyMember,
     BGCFamilySummary,
     BGCSummary,
+    CladeComparison,
+    CladeSummary,
+    ClassProfileEntry,
     CompoundSummary,
+    FamilyRef,
     GenomeDetail,
     SearchResult,
     TaxonTreeNode,
@@ -226,6 +237,80 @@ def get_family(family_id: uuid.UUID, session: Session = Depends(get_session)) ->
     ]
     members.sort(key=lambda m: (m.taxon_name or "", m.genome_accession))
     return BGCFamilyDetail(**summary.model_dump(), members=members)
+
+
+@app.get("/api/v1/compare", response_model=CladeComparison)
+def compare_clades(
+    taxon_ids: Annotated[list[uuid.UUID], Query(description="Two or more taxon ids to compare.")],
+    session: Session = Depends(get_session),
+) -> CladeComparison:
+    """Compare the biosynthetic repertoires of two or more clades.
+
+    Read the `comparable` flag and `caveats` before drawing conclusions —
+    see api/comparison.py for why they're part of the response rather than
+    a UI afterthought.
+    """
+    unique_ids = list(dict.fromkeys(taxon_ids))  # de-dupe, preserve order
+    if len(unique_ids) < 2:
+        raise HTTPException(status_code=422, detail="Comparison needs at least two distinct taxon ids")
+    if len(unique_ids) > 6:
+        raise HTTPException(
+            status_code=422,
+            detail="Comparing more than 6 clades at once produces a table too wide to read; narrow the selection",
+        )
+
+    taxa = []
+    for taxon_id in unique_ids:
+        taxon = session.get(Taxon, taxon_id)
+        if taxon is None:
+            raise HTTPException(status_code=404, detail=f"Taxon {taxon_id} not found")
+        taxa.append(taxon)
+
+    profiles = [build_clade_profile(session, taxon) for taxon in taxa]
+    comparable, caveats = compute_caveats(profiles)
+    shared_ids, only_in = partition_families(profiles)
+
+    labels: dict[uuid.UUID, str] = {}
+    for profile in profiles:
+        labels.update(profile.family_labels)
+    missing = (set(shared_ids) | {fid for ids in only_in.values() for fid in ids}) - labels.keys()
+    labels.update(all_family_labels(session, missing))
+
+    def family_refs(ids: list[uuid.UUID]) -> list[FamilyRef]:
+        refs = [FamilyRef(id=fid, label=labels.get(fid, "(unlabelled)")) for fid in ids]
+        refs.sort(key=lambda r: r.label)
+        return refs
+
+    clades = []
+    for profile in profiles:
+        class_profile = [
+            ClassProfileEntry(
+                bgc_class=bgc_class,
+                count=count,
+                per_genome=profile.class_rate(bgc_class),
+            )
+            for bgc_class, count in sorted(profile.bgc_class_counts.items())
+        ]
+        clades.append(
+            CladeSummary(
+                taxon_id=profile.taxon.id,
+                taxon_name=profile.taxon.name,
+                rank=profile.taxon.rank,
+                genome_count=profile.genome_count,
+                bgc_count=profile.bgc_count,
+                bgcs_per_genome=profile.bgcs_per_genome,
+                class_profile=class_profile,
+                family_count=len(profile.family_ids),
+                only_in_this_clade=family_refs(only_in.get(profile.taxon.id, [])),
+            )
+        )
+
+    return CladeComparison(
+        clades=clades,
+        shared_families=family_refs(shared_ids),
+        comparable=comparable,
+        caveats=caveats,
+    )
 
 
 @app.get("/api/v1/search", response_model=list[SearchResult])
