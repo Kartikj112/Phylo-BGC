@@ -442,3 +442,59 @@ def test_export_rejects_non_svg_input(api_client):
     }
     response = api_client.post("/api/v1/export", json=payload)
     assert response.status_code == 422
+
+
+# --- prioritization endpoint (Phase 5) -------------------------------------------
+
+
+def test_prioritization_endpoint_returns_ranked_candidates(api_client):
+    body = api_client.get("/api/v1/prioritization", params={"limit": 10}).json()
+
+    assert body["corpus_bgc_count"] == 5
+    assert body["mibig_reference_present"] is True
+    assert len(body["results"]) > 0
+
+    scored = [r["score"] for r in body["results"] if r["score"] is not None]
+    assert scored == sorted(scored, reverse=True)
+
+
+def test_prioritization_always_returns_the_framing_caveats(api_client):
+    """A client rendering `score` without these is misusing the endpoint,
+    so they are part of the contract rather than optional garnish."""
+    body = api_client.get("/api/v1/prioritization").json()
+    joined = " ".join(body["caveats"]).lower()
+    assert "does not indicate a novel compound" in joined
+    assert "not a measurement" in joined
+    assert "not a validated model" in joined
+
+
+def test_prioritization_exposes_every_component_with_availability(api_client):
+    body = api_client.get("/api/v1/prioritization").json()
+    first = body["results"][0]
+
+    assert len(first["components"]) == 5
+    for component in first["components"]:
+        assert "explanation" in component and component["explanation"]
+        # An unavailable component must carry a null value, never a
+        # number that could be mistaken for a real low/high score.
+        if not component["available"]:
+            assert component["value"] is None
+            assert component["name"] in first["unavailable_components"]
+
+
+def test_prioritization_reports_the_weights_it_used(api_client):
+    """Weights are a scientific judgement — the caller must be able to see
+    which ones produced this ranking."""
+    body = api_client.get("/api/v1/prioritization").json()
+    assert set(body["weights"]) == {
+        "unclustered",
+        "family_rarity",
+        "taxonomic_isolation",
+        "mibig_distance",
+        "class_rarity_in_clade",
+    }
+
+
+def test_prioritization_respects_limit(api_client):
+    body = api_client.get("/api/v1/prioritization", params={"limit": 2}).json()
+    assert len(body["results"]) <= 2

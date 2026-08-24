@@ -726,3 +726,75 @@ copying the browser's full computed style would add hundreds of
 irrelevant declarations per node. There are tests asserting the live SVG
 in the page isn't mutated by serialization, and that monospace treatment
 lands only on the elements that had `font-mono`.
+
+---
+
+## Phase 5: user uploads and BGC prioritization scoring
+
+### User uploads
+
+`bgcscape ingest upload` reuses the antiSMASH ingestion path but records
+`SourceType.USER_UPLOAD` rather than `TOOL_RUN`, so user-contributed data
+stays distinguishable from curated reference data at query time. That
+distinction is the entire point of the provenance model, and it would be
+lost if uploads borrowed the tool-run source type for convenience.
+Everything ingested this way is `PREDICTED`, never `OBSERVED_CURATED`.
+
+### Prioritization scoring: three properties, structurally enforced
+
+The original report is explicit that §8 must produce a **prioritization
+score**, never a novelty claim. Holding that line meant three design
+decisions that constrain the code rather than merely annotate it.
+
+**1. Components are never collapsed into a bare number.**
+`PrioritizationResult` always carries its per-component breakdown with a
+plain-language explanation each. Every component is a proxy standing in
+for something unmeasurable; a rank a user can't interrogate is a rank they
+can't disagree with.
+
+**2. Weights are explicit, overridable, and uncalibrated by construction.**
+`DEFAULT_WEIGHTS` is deliberately uniform. An unequal default would encode
+a scientific claim about which signals matter more — a judgement that
+depends on the research question and belongs to the researcher, not this
+module. Uniformity is at least an honest statement that no ordering is
+being asserted. `WEIGHTS_ARE_UNCALIBRATED` ships in every result's
+caveats, and the API returns the weights it used.
+
+**3. Missing evidence is never scored as evidence.**
+This is the failure mode that would make the feature actively harmful, so
+it gets structural enforcement. If MIBiG has never been ingested, "this
+BGC has no close MIBiG relative" is a fact about the database, not the
+cluster — and scoring it as maximal distance would rank *every* cluster in
+an empty corpus as maximally interesting. Uncomputable components return
+`None`, are excluded from the weighted mean (not zeroed, which would
+penalize clusters for reference-data gaps; not maxed, which would reward
+them for it), and are named in `unavailable_components`. Below two
+available components, no score is produced at all — a confident-looking
+number derived from one surviving proxy is worse than an honest refusal.
+
+The same principle recurs in the smaller cases: an unclustered BGC returns
+`None` for `mibig_distance` because "unclustered" is not the same as
+"distant from characterized clusters" — it means the question wasn't
+answerable. A genome with no genus-level classification returns `None` for
+`class_rarity_in_clade` because there's no peer group to be unusual
+relative to. A peer group of one genome likewise returns `None`.
+
+### Everything is relative to the ingested corpus
+
+"Rare" only ever means "rare in this database". `ScoringContext` makes
+that dependency explicit by computing corpus statistics once, in one
+place, and the result carries a caveat naming the corpus size whenever
+it's small enough for that to dominate. This is why the honest answer to
+"should we tune the weights?" is that it needs real data at volume first —
+weights fitted against a handful of fixture genomes would encode the
+fixtures, not the biology.
+
+### What deliberately isn't here
+
+No aggregate metric is exposed anywhere as "novelty". No component
+attempts sequence-level divergence or domain-architecture analysis — both
+are in the report's §8 sketch, and both need alignment infrastructure
+(MAFFT/HMMER) that this project treats as external analysis dependencies
+rather than reimplementing. Adding them later means adding components, not
+restructuring the scorer; that extensibility is why components are a list
+rather than fixed fields.

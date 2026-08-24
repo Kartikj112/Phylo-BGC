@@ -36,11 +36,14 @@ from bgcscape.api.schemas import (
     CladeComparison,
     CladeSummary,
     ClassProfileEntry,
+    ComponentScoreOut,
     CompoundSummary,
     DatasetProvenanceResponse,
     ExportRequest,
     FamilyRef,
     GenomeDetail,
+    PrioritizationOut,
+    PrioritizationResponse,
     SearchResult,
     TaxonTreeNode,
 )
@@ -55,6 +58,13 @@ from bgcscape.export import (
     render_pdf,
 )
 from bgcscape.schemas.source import SourceRead
+from bgcscape.scoring import (
+    DEFAULT_WEIGHTS,
+    NOT_A_NOVELTY_CLAIM,
+    SCORE_IS_ORDINAL,
+    WEIGHTS_ARE_UNCALIBRATED,
+    rank_bgcs,
+)
 from bgcscape.models import BGC, BGCCompoundLink, BGCFamily, BGCFamilyMembership, Genome, Source, Taxon
 
 app = FastAPI(
@@ -324,6 +334,62 @@ def compare_clades(
         shared_families=family_refs(shared_ids),
         comparable=comparable,
         caveats=caveats,
+    )
+
+
+@app.get("/api/v1/prioritization", response_model=PrioritizationResponse)
+def get_prioritization(
+    limit: int = 20,
+    session: Session = Depends(get_session),
+) -> PrioritizationResponse:
+    """Rank BGCs as candidates for follow-up.
+
+    This is a prioritization hint, not a novelty measurement — see
+    bgcscape/scoring/prioritization.py. The response's `caveats` are part
+    of the contract, not garnish.
+    """
+    ranked = rank_bgcs(session, limit=limit)
+    ctx_bgcs = session.query(BGC).count()
+    mibig_present = session.query(BGC).filter(BGC.mibig_accession.isnot(None)).count() > 0
+
+    bgc_ids = [r.bgc_id for r in ranked]
+    bgcs = {
+        b.id: b
+        for b in session.query(BGC)
+        .options(selectinload(BGC.genome).selectinload(Genome.taxon))
+        .filter(BGC.id.in_(bgc_ids))
+        .all()
+    } if bgc_ids else {}
+
+    results = []
+    for entry in ranked:
+        bgc = bgcs.get(entry.bgc_id)
+        if bgc is None:
+            continue
+        results.append(
+            PrioritizationOut(
+                bgc_id=entry.bgc_id,
+                genome_accession=bgc.genome.accession,
+                taxon_name=bgc.genome.taxon.name if bgc.genome.taxon else None,
+                bgc_class=bgc.bgc_class,
+                score=entry.score,
+                components=[
+                    ComponentScoreOut(
+                        name=c.name, value=c.value, available=c.available, explanation=c.explanation
+                    )
+                    for c in entry.components
+                ],
+                unavailable_components=entry.unavailable_components,
+            )
+        )
+
+    shared_caveats = ranked[0].caveats if ranked else [NOT_A_NOVELTY_CLAIM, SCORE_IS_ORDINAL, WEIGHTS_ARE_UNCALIBRATED]
+    return PrioritizationResponse(
+        results=results,
+        weights=DEFAULT_WEIGHTS,
+        caveats=shared_caveats,
+        corpus_bgc_count=ctx_bgcs,
+        mibig_reference_present=mibig_present,
     )
 
 

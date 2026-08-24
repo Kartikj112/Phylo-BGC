@@ -126,6 +126,38 @@ def ingest_antismash_cmd(
     _echo_report(report)
 
 
+@ingest_app.command("upload")
+def ingest_upload_cmd(
+    path: Path = typer.Argument(..., help="An antiSMASH result JSON for the user's own genome/MAG."),
+    genome_accession: str = typer.Option(..., help="An identifier for this genome (any stable string)."),
+    label: str = typer.Option("user upload", help="A label recorded on the Source row for this upload."),
+    is_mag: bool = typer.Option(False, help="Mark this genome as metagenome-assembled."),
+) -> None:
+    """Ingest a user's own genome/MAG from its antiSMASH output (Phase 5).
+
+    Uses SourceType.USER_UPLOAD rather than TOOL_RUN so user-contributed
+    data is distinguishable from curated reference data at query time —
+    the whole point of the provenance model. Everything ingested this way
+    is PREDICTED, never OBSERVED_CURATED.
+    """
+    with session_scope() as session:
+        source = _get_or_create_source(
+            session, name=label, source_type=SourceType.USER_UPLOAD, version=None
+        )
+        raw = read_antismash_result(path)
+        report = ingest_antismash_result(session, source, raw, genome_accession=genome_accession)
+
+        if is_mag:
+            from bgcscape.models import Genome
+
+            genome = session.query(Genome).filter_by(accession=genome_accession).one_or_none()
+            if genome is not None:
+                genome.is_mag = True
+                session.commit()
+
+    _echo_report(report)
+
+
 @ingest_app.command("bigscape")
 def ingest_bigscape_cmd(
     path: Path = typer.Argument(..., help="A BiG-SCAPE *_clustering_c{cutoff}.tsv file."),
@@ -169,6 +201,47 @@ def ingest_bigscape_cmd(
             f"  ({report.skipped} row(s) referenced a BGC not in the database — expected if the "
             "BiG-SCAPE run included MIBiG reference clusters, or if antiSMASH ingestion hasn't run yet.)"
         )
+
+
+@app.command("prioritize")
+def prioritize_cmd(
+    limit: int = typer.Option(20, help="How many candidates to list."),
+    show_components: bool = typer.Option(False, help="Show the per-component breakdown for each candidate."),
+) -> None:
+    """Rank BGCs as candidates for experimental follow-up.
+
+    This is a PRIORITIZATION hint, not a novelty measurement. The caveats
+    printed below the table are part of the output, not decoration — see
+    bgcscape/scoring/prioritization.py.
+    """
+    from bgcscape.models import BGC
+    from bgcscape.scoring import rank_bgcs
+
+    with session_scope() as session:
+        ranked = rank_bgcs(session, limit=limit)
+        if not ranked:
+            typer.echo("No BGCs in the database to rank.")
+            return
+
+        bgcs = {b.id: b for b in session.query(BGC).all()}
+        typer.echo(f"{'rank':<6}{'score':<9}{'class':<12}{'genome':<26}components")
+        typer.echo("-" * 78)
+        for index, entry in enumerate(ranked, start=1):
+            bgc = bgcs.get(entry.bgc_id)
+            if bgc is None:
+                continue
+            score = "n/a" if entry.score is None else f"{entry.score:.3f}"
+            note = f"{entry.available_component_count}/{len(entry.components)} available"
+            typer.echo(f"{index:<6}{score:<9}{bgc.bgc_class.value:<12}{bgc.genome.accession:<26}{note}")
+            if show_components:
+                for component in entry.components:
+                    value = "unavailable" if component.value is None else f"{component.value:.2f}"
+                    typer.echo(f"        {component.name:<24}{value:<14}{component.explanation}")
+
+        typer.echo("")
+        typer.echo("How to read this:")
+        for caveat in ranked[0].caveats:
+            typer.echo(f"  · {caveat}")
 
 
 @app.command("inspect-figure")

@@ -210,3 +210,38 @@ class ExportRequest(BaseModel):
     (bgcscape.export.view_config) rather than being duplicated into the
     API schema and drifting."""
     format: Literal["svg", "pdf"] = "pdf"
+
+
+class ComponentScoreOut(BaseModel):
+    name: str
+    value: float | None
+    """None means the component could not be computed — which is different
+    from, and must never be rendered as, a low or high score."""
+    available: bool
+    explanation: str
+
+
+class PrioritizationOut(BaseModel):
+    bgc_id: uuid.UUID
+    genome_accession: str
+    taxon_name: str | None = None
+    bgc_class: BGCClass
+    score: float | None
+    """None when too few components were computable to combine."""
+    components: list[ComponentScoreOut]
+    unavailable_components: list[str]
+
+
+class PrioritizationResponse(BaseModel):
+    """Ranked prioritization candidates.
+
+    `caveats` is not decoration: these framings are the difference between
+    a useful triage aid and a tool that manufactures false confidence. A
+    client that renders `score` without them is misusing this endpoint.
+    """
+
+    results: list[PrioritizationOut]
+    weights: dict[str, float]
+    caveats: list[str]
+    corpus_bgc_count: int
+    mibig_reference_present: bool

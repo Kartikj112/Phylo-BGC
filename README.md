@@ -56,7 +56,7 @@ cp .env.local.example .env.local
 npm run dev                              # http://localhost:3000
 
 # Tests
-cd ../engine && pytest -v          # 127 tests
+cd ../engine && pytest -v          # 149 tests
 cd ../web && npm test               # 45 tests
 
 # Run the engine suite against real Postgres instead of SQLite:
@@ -70,7 +70,11 @@ cd ../web && npm test               # 45 tests
 
 Phases 1a/1b/1c (data model; MIBiG, GTDB, antiSMASH, BiG-SCAPE ingestion),
 Phase 2 (visualization API + production frontend), Phase 3 (BGC-family
-highlighting + comparative clade analysis), and Phase 4 (publication-grade
-SVG/PDF export with embedded, replayable view configs) are complete and
-tested — **against both SQLite and real PostgreSQL 16**. See `PROGRESS.md`
-for the full phase tracker and what's next.
+highlighting + comparative clade analysis), Phase 4 (publication-grade
+SVG/PDF export with embedded, replayable view configs), and Phase 5 (user
+uploads + BGC prioritization scoring) are complete and tested — **against
+both SQLite and real PostgreSQL 16**.
+
+**All five roadmap phases are now implemented.** See `PROGRESS.md` for
+what remains genuinely unverified, and `ARCHITECTURE.md` for design
+rationale.

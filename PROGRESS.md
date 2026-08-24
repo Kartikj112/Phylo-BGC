@@ -2,7 +2,7 @@
 
 **Read this file first when resuming work in a new chunk.**
 
-_Last updated: Chunk 8 (Phase 4 complete) — 2026-08-25_
+_Last updated: Chunk 9 (Phase 5 complete) — 2026-08-25_
 
 ## Status at a glance
 
@@ -13,112 +13,112 @@ _Last updated: Chunk 8 (Phase 4 complete) — 2026-08-25_
 | 1c | antiSMASH + BiG-SCAPE ingestion | ✅ Done |
 | 2 | Visualization API + production Next.js frontend | ✅ Done |
 | 3 | BGC-family highlighting + comparative clade analysis | ✅ Done |
-| 4 | **Publication-grade export** | ✅ **Done (this chunk)** |
-| 5 | User uploads + novelty prioritization scoring | ⏭️ **Next — the last phase** |
+| 4 | Publication-grade export | ✅ Done |
+| 5 | **User uploads + BGC prioritization scoring** | ✅ **Done (this chunk)** |
 
-**Phases 1–4 are complete.** Every core principle in the original brief is
-now implemented, including the "Publication-First & FAIR" one that had
-remained entirely unbuilt until this chunk.
+**All five roadmap phases are implemented.** 149 engine tests (passing on
+BOTH SQLite and real Postgres) + 45 frontend tests = **194 total**.
 
-**127 engine tests (passing on BOTH SQLite and real Postgres) + 45
-frontend tests = 172 total.**
+The remaining work is no longer "build the next phase" — it's validation
+against reality. See "What's actually unverified" below, which is now the
+most important section of this file.
 
 ## What's new this chunk
 
 ```
-engine/src/bgcscape/export/       NEW
-├── view_config.py    versioned, replayable figure description w/ required provenance
-└── renderer.py       SVG metadata embedding, provenance caption, vector PDF
+engine/src/bgcscape/scoring/      NEW
+└── prioritization.py    component-wise scoring; missing evidence never scored as evidence
 
 engine/src/bgcscape/
-├── api/app.py        + GET /api/v1/provenance, POST /api/v1/export
-└── cli/main.py       + inspect-figure, render-figure
+├── api/app.py           + GET /api/v1/prioritization
+└── cli/main.py          + `bgcscape prioritize`, `bgcscape ingest upload`
 
-engine/tests/test_export.py       NEW — 17 tests
-web/src/lib/export.ts             NEW — config assembly + SVG serialization
-web/src/lib/export.test.ts        NEW — 15 tests (jsdom)
-web/src/components/ExportButton.tsx  NEW
+engine/tests/test_scoring.py      NEW — 17 tests
 ```
 
-## The idea worth keeping
+## The design decision that mattered
 
-**A figure carries its own provenance.** The `ViewConfig` — filters,
-collapsed nodes, highlighted family, compared clades, *and* which
-MIBiG/GTDB/antiSMASH versions produced the data — is embedded in the
-exported SVG's `<metadata>` element. Six months later:
+The report requires a **prioritization score, never a novelty claim**.
+Three properties enforce that structurally rather than by comment:
 
-```
-$ bgcscape inspect-figure figure3.svg
-Title:          Figure 3: NRPS distribution
-Dataset:        3 genomes, 3 BGCs, 8 taxa, 2 families
-Sources:        BiG-SCAPE 2.0.0 · GTDB R11-RS232 · antiSMASH 7.1.0
-View state:     BGC class filter: nrps, terpene
-                Search query: 'Streptomyces'
-```
+1. **Components are never collapsed into a bare number.** Every result
+   carries its per-component breakdown with plain-language explanations.
+2. **Weights are uniform by default and overridable.** An unequal default
+   would encode a scientific judgement that belongs to the researcher, not
+   this module. Every result says so in its caveats.
+3. **Missing evidence is never scored as evidence.** If MIBiG hasn't been
+   ingested, "no close MIBiG relative" is a fact about the database, not
+   the cluster — scoring it as maximal distance would rank every cluster
+   in an empty corpus as maximally interesting. Uncomputable components
+   return `None`, are excluded from the mean (not zeroed, not maxed), and
+   are named. Below two available components, **no score is produced at
+   all** — an honest refusal beats a confident number from one proxy.
 
-No database, no browser session, no memory required. `bgcscape
-render-figure` regenerates the PDF from that file alone.
-
-Design decisions behind it (fuller reasoning in ARCHITECTURE.md):
-
-1. **`dataset` provenance is required, not optional** — a config recording
-   filters but not data versions is reproducible in appearance only.
-2. **Version mismatches refuse rather than degrade** — a config from a
-   newer build is rejected outright; partially applying it would silently
-   change the figure.
-3. **PDF conversion is server-side** — browser print-to-PDF varies by
-   platform and silently rasterizes; a test asserts the output contains no
-   `/Subtype /Image`, i.e. that it really is vector.
-4. **"All classes selected" records as an empty filter** — the UI default
-   is everything-on, so recording all eight names would make every default
-   export look deliberately filtered.
+The central test in `test_scoring.py` is
+`test_absent_mibig_does_not_inflate_scores`; everything else supports it.
 
 ## Verified end-to-end this chunk
 
-Against **real Postgres**: exported a figure over real HTTP through the
-live API in both SVG and PDF, then interrogated the SVG with `bgcscape
-inspect-figure` and regenerated the PDF with `bgcscape render-figure` —
-with the database connection unset, proving the figure is genuinely
-self-describing. Confirmed the visible caption reads:
-`BGC-scape 0.1.0 · 2026-08-24 · 3 genomes, 3 BGCs · Sources: BiG-SCAPE 2.0.0; GTDB R11-RS232; antiSMASH 7.1.0`
+Against **real Postgres**: full pipeline → user upload via
+`bgcscape ingest upload` (recorded as `SourceType.USER_UPLOAD`, not
+`TOOL_RUN`) → `bgcscape prioritize --show-components`. Confirmed
+unavailable components render as `unavailable`, not as zeroes, and that a
+MIBiG reference entry correctly scores 0.00 on distance.
 
-## Explicitly deferred / not yet built
+## What's actually unverified — read this before trusting anything
 
-Phase 5 (user uploads, novelty prioritization scoring) · CORASON
-integration · full per-field multi-source provenance · `similarity_score`
-on family memberships (column exists; BiG-SCAPE's clustering TSV doesn't
-carry pairwise distances — they're in a separate network file).
+The build is complete; the **validation is not**. In rough order of how
+much it should worry you:
 
-## Known constraints from this build environment
+1. **No one has ever looked at the UI.** This sandbox has no browser. The
+   frontend builds, serves, type-checks, and its logic is unit-tested —
+   but its actual rendered appearance has never been seen by anything in
+   this entire project. Five phases of interface decisions rest on this.
+   **This is the single highest-value thing only you can do.**
+2. **The scoring weights are uncalibrated, by design.** They're uniform
+   because picking otherwise would be inventing a scientific claim. Tuning
+   them requires real data at volume; weights fitted against fixture
+   genomes would encode the fixtures, not the biology.
+3. **No real data has ever been ingested.** Only schema-accurate synthetic
+   fixtures. The parsers were written against verified real formats (read
+   from the tools' own source), but "verified format" ≠ "works on a real
+   50,000-genome GTDB release."
+4. **The export button's browser path is untested.**
+   `URL.createObjectURL` + synthetic click is exercised only through unit
+   tests of the pure functions around it.
+5. **GitHub Actions CI has never run on a real runner** — though what it
+   runs is now verified correct in substance.
 
-- **No browser.** The frontend's actual visual rendering has still never
-  been seen by anything in this build process — only HTML content and
-  logic. This remains the single most important unverified thing, and it
-  now includes the export button's download behavior (`URL.createObjectURL`
-  + synthetic click), which is exercised only by unit tests of the pure
-  functions around it, not the browser path itself.
-- Real bulk data has never been ingested — only schema-accurate synthetic
-  fixtures.
-- The `export` extra needs Cairo system libraries (`libcairo2`). Present in
-  this sandbox; verify on any deployment target.
-- Postgres runs from a sandbox-local cluster on port 5433 (`/tmp/pgdata`),
-  not docker-compose, and does not persist between chunks. Restart with:
+## Deferred by choice
+
+CORASON integration · sequence-level divergence and domain-architecture
+scoring components (need MAFFT/HMMER, treated as external analysis
+dependencies — adding them means adding components, not restructuring the
+scorer) · full per-field multi-source provenance · `similarity_score` on
+family memberships (BiG-SCAPE's clustering TSV doesn't carry pairwise
+distances; they're in a separate network file).
+
+## Environment notes
+
+- Postgres: sandbox-local cluster, port 5433 (`/tmp/pgdata`), does not
+  persist between chunks. Fresh sandbox:
+  `apt-get update && apt-get install -y postgresql`, `initdb`, then
   `su postgres -c "/usr/lib/postgresql/16/bin/pg_ctl -D /tmp/pgdata -l /tmp/pg.log -o '-p 5433 -k /tmp' start"`
-  (fresh sandbox: `apt-get update && apt-get install -y postgresql`, then `initdb`)
-- GitHub Actions CI still hasn't run on a real runner.
+- The `export` extra needs Cairo system libraries (`libcairo2`).
+- Run the engine suite against Postgres with `BGCSCAPE_TEST_DATABASE_URL`
+  (note the `_TEST_` — deliberately distinct from the app's variable,
+  because the fixture drops and recreates the schema).
 
 ## How to resume
 
-Say "continue" and this project will proceed with **Phase 5** — the last
-phase in the roadmap: user-uploaded genomes/MAGs and the BGC
-prioritization score (report §8).
+There is no obvious "next phase" — the roadmap is done. The highest-value
+next steps, in order:
 
-A note on that scoring feature, worth deciding deliberately rather than
-by momentum: the original report is explicit that it must be presented as
-a **prioritization score, never a novelty claim**, and it depends on
-several signals (phylogenetic rarity, distance from MIBiG, unusual domain
-architecture) whose weighting is a scientific judgement call, not a
-technical one. It's also the feature that most benefits from real data
-existing first — a scoring formula tuned against three synthetic fixture
-genomes would be meaningless. Consider whether ingesting real data at
-volume should come first.
+1. **Look at the UI and tell me what's wrong with it.** Genuinely the
+   biggest gap, and I can't close it from here.
+2. **Ingest real MIBiG/GTDB data at volume** somewhere with real network
+   access, and report what breaks. The parsers are the most likely thing
+   to surface surprises.
+3. **Calibrate the scoring weights** once (2) exists — a real scientific
+   task, not a coding one, and one I'd want your judgement on.
+4. Deploy: docker-compose is written but never run; CI never executed.
