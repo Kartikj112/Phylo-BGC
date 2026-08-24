@@ -15,9 +15,12 @@ from collections.abc import Iterator
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi.responses import Response
+from pydantic import ValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session, selectinload
 
+from bgcscape import __version__
 from bgcscape.api.comparison import (
     all_family_labels,
     build_clade_profile,
@@ -34,6 +37,8 @@ from bgcscape.api.schemas import (
     CladeSummary,
     ClassProfileEntry,
     CompoundSummary,
+    DatasetProvenanceResponse,
+    ExportRequest,
     FamilyRef,
     GenomeDetail,
     SearchResult,
@@ -41,7 +46,16 @@ from bgcscape.api.schemas import (
 )
 from bgcscape.api.tree_builder import build_taxonomy_tree
 from bgcscape.db.session import get_sessionmaker
-from bgcscape.models import BGC, BGCCompoundLink, BGCFamily, BGCFamilyMembership, Genome, Taxon
+from bgcscape.export import (
+    ConfigVersionError,
+    SvgRenderError,
+    ViewConfig,
+    add_provenance_caption,
+    embed_view_config,
+    render_pdf,
+)
+from bgcscape.schemas.source import SourceRead
+from bgcscape.models import BGC, BGCCompoundLink, BGCFamily, BGCFamilyMembership, Genome, Source, Taxon
 
 app = FastAPI(
     title="BGC-scape API",
@@ -310,6 +324,56 @@ def compare_clades(
         shared_families=family_refs(shared_ids),
         comparable=comparable,
         caveats=caveats,
+    )
+
+
+@app.get("/api/v1/provenance", response_model=DatasetProvenanceResponse)
+def get_provenance(session: Session = Depends(get_session)) -> DatasetProvenanceResponse:
+    """What this database actually contains — for figure captions and to
+    populate ViewConfig.dataset."""
+    return DatasetProvenanceResponse(
+        sources=[SourceRead.model_validate(s) for s in session.query(Source).order_by(Source.name).all()],
+        genome_count=session.query(Genome).count(),
+        bgc_count=session.query(BGC).count(),
+        taxon_count=session.query(Taxon).count(),
+        family_count=session.query(BGCFamily).count(),
+        engine_version=__version__,
+    )
+
+
+@app.post("/api/v1/export")
+def export_view(request: ExportRequest) -> Response:
+    """Render a frontend-produced SVG to a publication-ready figure.
+
+    The only non-GET endpoint in this API. It's not a write — nothing is
+    persisted — but it takes a body because an SVG document doesn't fit in
+    a query string. PDF conversion happens here rather than in the browser
+    because browser print-to-PDF varies by platform and silently
+    rasterizes some SVG features; see bgcscape/export/renderer.py.
+    """
+    try:
+        config = ViewConfig.model_validate(request.view_config)
+    except ConfigVersionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid view config: {exc}") from exc
+
+    try:
+        svg_with_metadata = embed_view_config(add_provenance_caption(request.svg, config), config)
+        if request.format == "svg":
+            return Response(
+                content=svg_with_metadata,
+                media_type="image/svg+xml",
+                headers={"Content-Disposition": 'attachment; filename="bgc-scape-figure.svg"'},
+            )
+        pdf = render_pdf(svg_with_metadata)
+    except SvgRenderError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": 'attachment; filename="bgc-scape-figure.pdf"'},
     )
 
 

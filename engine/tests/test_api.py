@@ -329,3 +329,116 @@ def test_mibig_bgcs_have_no_family_ids(api_client):
     walk(tree)
     assert len(mibig_bgcs) == 2
     assert all(b["family_ids"] == [] for b in mibig_bgcs)
+
+
+# --- provenance + export endpoints (Phase 4) ------------------------------------
+
+
+def test_provenance_endpoint_reports_real_database_state(api_client):
+    body = api_client.get("/api/v1/provenance").json()
+
+    names = {s["name"] for s in body["sources"]}
+    assert names == {"MIBiG", "GTDB", "antiSMASH", "BiG-SCAPE"}
+    assert body["genome_count"] == 5
+    assert body["bgc_count"] == 5  # 2 MIBiG + 3 antiSMASH
+    assert body["family_count"] == 2
+    assert body["engine_version"]
+
+    gtdb = next(s for s in body["sources"] if s["name"] == "GTDB")
+    assert gtdb["version"] == "R11-RS232"
+
+
+def _view_config_from_provenance(api_client, **tree_state):
+    prov = api_client.get("/api/v1/provenance").json()
+    return {
+        "config_version": 1,
+        "view_type": "taxonomy_tree",
+        "title": "Test figure",
+        "tree_state": {
+            "collapsed_node_ids": [],
+            "active_bgc_classes": [],
+            "selected_family_id": None,
+            "comparison_taxon_ids": [],
+            "search_query": "",
+            **tree_state,
+        },
+        "dataset": {
+            "sources": [
+                {"name": s["name"], "version": s["version"], "source_type": s["source_type"], "license": s["license"]}
+                for s in prov["sources"]
+            ],
+            "genome_count": prov["genome_count"],
+            "bgc_count": prov["bgc_count"],
+            "taxon_count": prov["taxon_count"],
+            "family_count": prov["family_count"],
+            "engine_version": prov["engine_version"],
+        },
+    }
+
+
+_EXPORT_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="300" viewBox="0 0 900 300">'
+    '<g><text x="10" y="20" font-size="12">Streptomyces</text></g></svg>'
+)
+
+
+def test_export_endpoint_returns_a_pdf(api_client):
+    payload = {
+        "svg": _EXPORT_SVG,
+        "view_config": _view_config_from_provenance(api_client, active_bgc_classes=["nrps"]),
+        "format": "pdf",
+    }
+    response = api_client.post("/api/v1/export", json=payload)
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/pdf"
+    assert "attachment" in response.headers["content-disposition"]
+    assert response.content.startswith(b"%PDF")
+
+
+def test_export_endpoint_returns_svg_with_recoverable_config(api_client):
+    from bgcscape.export import extract_view_config
+
+    payload = {
+        "svg": _EXPORT_SVG,
+        "view_config": _view_config_from_provenance(api_client, search_query="Strepto"),
+        "format": "svg",
+    }
+    response = api_client.post("/api/v1/export", json=payload)
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("image/svg+xml")
+
+    recovered = extract_view_config(response.text)
+    assert recovered is not None
+    assert recovered.tree_state.search_query == "Strepto"
+    # The round trip preserves the real dataset provenance, which is the
+    # whole point of the exercise.
+    assert recovered.dataset.genome_count == 5
+    assert {s.name for s in recovered.dataset.sources} == {"MIBiG", "GTDB", "antiSMASH", "BiG-SCAPE"}
+
+
+def test_export_rejects_a_config_from_a_newer_version(api_client):
+    config = _view_config_from_provenance(api_client)
+    config["config_version"] = 999
+    response = api_client.post("/api/v1/export", json={"svg": _EXPORT_SVG, "view_config": config})
+
+    assert response.status_code == 422
+    assert "newer BGC-scape" in response.json()["detail"]
+
+
+def test_export_rejects_a_config_without_provenance(api_client):
+    response = api_client.post(
+        "/api/v1/export",
+        json={"svg": _EXPORT_SVG, "view_config": {"config_version": 1, "title": "No dataset"}},
+    )
+    assert response.status_code == 422
+
+
+def test_export_rejects_non_svg_input(api_client):
+    payload = {
+        "svg": "<html>definitely not an svg</html>",
+        "view_config": _view_config_from_provenance(api_client),
+    }
+    response = api_client.post("/api/v1/export", json=payload)
+    assert response.status_code == 422

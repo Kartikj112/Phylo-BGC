@@ -9,6 +9,7 @@ import type {
   BGCFamilyDetail,
   BGCFamilySummary,
   CladeComparison,
+  DatasetProvenanceResponse,
   GenomeDetail,
   SearchResult,
   TaxonTreeNode,
@@ -74,4 +75,37 @@ export function fetchFamily(familyId: string): Promise<BGCFamilyDetail> {
 export function fetchComparison(taxonIds: string[]): Promise<CladeComparison> {
   const params = taxonIds.map((id) => `taxon_ids=${encodeURIComponent(id)}`).join("&");
   return getJson<CladeComparison>(`/api/v1/compare?${params}`);
+}
+
+export function fetchProvenance(): Promise<DatasetProvenanceResponse> {
+  return getJson<DatasetProvenanceResponse>("/api/v1/provenance");
+}
+
+/**
+ * Ask the engine to render a figure. PDF conversion happens server-side
+ * rather than via the browser's print dialog: print-to-PDF output varies
+ * by browser and platform and silently rasterizes some SVG features, and
+ * journals reject raster figures at these sizes. See
+ * engine/src/bgcscape/export/renderer.py.
+ */
+export async function exportFigure(
+  svg: string,
+  viewConfig: unknown,
+  format: "svg" | "pdf",
+): Promise<Blob> {
+  const res = await fetch(`${getBaseUrl()}/api/v1/export`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ svg, view_config: viewConfig, format }),
+  });
+  if (!res.ok) {
+    let detail = `${res.status}`;
+    try {
+      detail = (await res.json()).detail ?? detail;
+    } catch {
+      /* non-JSON error body; the status is all we have */
+    }
+    throw new ApiError(res.status, `Export failed: ${detail}`);
+  }
+  return res.blob();
 }

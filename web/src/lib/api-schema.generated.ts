@@ -152,6 +152,53 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/provenance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Provenance
+         * @description What this database actually contains — for figure captions and to
+         *     populate ViewConfig.dataset.
+         */
+        get: operations["get_provenance_api_v1_provenance_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Export View
+         * @description Render a frontend-produced SVG to a publication-ready figure.
+         *
+         *     The only non-GET endpoint in this API. It's not a write — nothing is
+         *     persisted — but it takes a body because an SVG document doesn't fit in
+         *     a query string. PDF conversion happens here rather than in the browser
+         *     because browser print-to-PDF varies by platform and silently
+         *     rasterizes some SVG features; see bgcscape/export/renderer.py.
+         */
+        post: operations["export_view_api_v1_export_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/search": {
         parameters: {
             query?: never;
@@ -379,6 +426,27 @@ export interface components {
             compound_class?: string | null;
         };
         /**
+         * DatasetProvenanceResponse
+         * @description What the current database actually contains, for figure captions
+         *     and `ViewConfig.dataset`. Fetched rather than assembled client-side so
+         *     a figure's recorded provenance always reflects the real database
+         *     state, not the frontend's possibly-stale idea of it.
+         */
+        DatasetProvenanceResponse: {
+            /** Sources */
+            sources: components["schemas"]["SourceRead"][];
+            /** Genome Count */
+            genome_count: number;
+            /** Bgc Count */
+            bgc_count: number;
+            /** Taxon Count */
+            taxon_count: number;
+            /** Family Count */
+            family_count: number;
+            /** Engine Version */
+            engine_version: string;
+        };
+        /**
          * EvidenceLevel
          * @description Epistemic status of a fact stored in BGC-scape.
          *
@@ -402,6 +470,24 @@ export interface components {
          * @enum {string}
          */
         EvidenceLevel: "observed_curated" | "computed" | "predicted" | "hypothesized";
+        /**
+         * ExportRequest
+         * @description SVG produced by the frontend, plus the view state that made it.
+         */
+        ExportRequest: {
+            /** Svg */
+            svg: string;
+            /** View Config */
+            view_config: {
+                [key: string]: unknown;
+            };
+            /**
+             * Format
+             * @default pdf
+             * @enum {string}
+             */
+            format: "svg" | "pdf";
+        };
         /** FamilyRef */
         FamilyRef: {
             /**
@@ -473,6 +559,43 @@ export interface components {
             /** Accession */
             accession?: string | null;
         };
+        /** SourceRead */
+        SourceRead: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Name */
+            name: string;
+            source_type: components["schemas"]["SourceType"];
+            /** Version */
+            version?: string | null;
+            /** Url */
+            url?: string | null;
+            /** License */
+            license?: string | null;
+            /** Citation */
+            citation?: string | null;
+            /** Retrieved At */
+            retrieved_at?: string | null;
+        };
+        /**
+         * SourceType
+         * @description Broad category of provenance.
+         * @enum {string}
+         */
+        SourceType: "reference_database" | "tool_run" | "user_upload";
         /**
          * TaxonRank
          * @enum {string}
@@ -719,6 +842,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CladeComparison"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_provenance_api_v1_provenance_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatasetProvenanceResponse"];
+                };
+            };
+        };
+    };
+    export_view_api_v1_export_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExportRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

@@ -2,7 +2,7 @@
 
 **Read this file first when resuming work in a new chunk.**
 
-_Last updated: Chunk 7 (Phase 3 complete) — 2026-08-25_
+_Last updated: Chunk 8 (Phase 4 complete) — 2026-08-25_
 
 ## Status at a glance
 
@@ -12,114 +12,113 @@ _Last updated: Chunk 7 (Phase 3 complete) — 2026-08-25_
 | 1b | Curated reference ingestion (MIBiG, GTDB) | ✅ Done |
 | 1c | antiSMASH + BiG-SCAPE ingestion | ✅ Done |
 | 2 | Visualization API + production Next.js frontend | ✅ Done |
-| 3 | BGC-family highlighting | ✅ Done |
-| 3 | **Comparative clade analysis** | ✅ **Done (this chunk)** |
-| 4 | Publication-grade export suite | ⏭️ **Next** |
-| 5 | User uploads + novelty prioritization scoring | Not started |
+| 3 | BGC-family highlighting + comparative clade analysis | ✅ Done |
+| 4 | **Publication-grade export** | ✅ **Done (this chunk)** |
+| 5 | User uploads + novelty prioritization scoring | ⏭️ **Next — the last phase** |
 
-**Phases 1–3 are complete.** Everything in the original report's MVP v1
-and v2 scope now exists end-to-end: four-source ingestion → API →
-interactive tree with class filtering, family highlighting, and clade
-comparison.
+**Phases 1–4 are complete.** Every core principle in the original brief is
+now implemented, including the "Publication-First & FAIR" one that had
+remained entirely unbuilt until this chunk.
 
-**104 engine tests (passing on BOTH SQLite and real Postgres) + 30
-frontend tests = 134 total.**
+**127 engine tests (passing on BOTH SQLite and real Postgres) + 45
+frontend tests = 172 total.**
 
 ## What's new this chunk
 
 ```
-engine/src/bgcscape/api/
-├── comparison.py    NEW — subtree collection, clade profiling, caveat logic
-├── schemas.py       + CladeComparison / CladeSummary / ClassProfileEntry / FamilyRef
-└── app.py           + GET /api/v1/compare
+engine/src/bgcscape/export/       NEW
+├── view_config.py    versioned, replayable figure description w/ required provenance
+└── renderer.py       SVG metadata embedding, provenance caption, vector PDF
 
-engine/tests/
-└── test_api_comparison.py   NEW — 13 tests, incl. the rigor caveats
+engine/src/bgcscape/
+├── api/app.py        + GET /api/v1/provenance, POST /api/v1/export
+└── cli/main.py       + inspect-figure, render-figure
 
-web/src/components/
-├── ComparisonPanel.tsx      NEW — comparison table + prominent caveats
-├── TreeCanvas.tsx           + shift-click clade selection
-└── Header.tsx               + discoverability hint
+engine/tests/test_export.py       NEW — 17 tests
+web/src/lib/export.ts             NEW — config assembly + SVG serialization
+web/src/lib/export.test.ts        NEW — 15 tests (jsdom)
+web/src/components/ExportButton.tsx  NEW
 ```
 
-## The design work that mattered here
+## The idea worth keeping
 
-Comparing clades is where a tool like this most easily produces confident
-nonsense, so most of the effort went into rigor rather than statistics
-(fuller reasoning in ARCHITECTURE.md):
+**A figure carries its own provenance.** The `ViewConfig` — filters,
+collapsed nodes, highlighted family, compared clades, *and* which
+MIBiG/GTDB/antiSMASH versions produced the data — is embedded in the
+exported SVG's `<metadata>` element. Six months later:
 
-1. **Every count is paired with a per-genome rate** — raw counts between
-   differently-sized clades mostly measure sampling effort.
-2. **`comparable: false` when sampling is thin (<3 genomes) or lopsided
-   (>10x imbalance)** — the response is still returned; the flag governs
-   presentation. The UI shows a prominent warning *above* the table.
-3. **`only_in_this_clade`, never `absent_from_others`** — the naming
-   decision that matters most. Missing from a profile means "not found in
-   this dataset," which conflates true absence with sampling depth,
-   assembly gaps, and prediction sensitivity. That caveat is returned on
-   *every* comparison and rendered above the numbers.
-4. **No p-values** — enrichment testing needs a model of phylogenetic
-   non-independence this doesn't have; a naive p-value would be worse
-   than none.
-5. **Families in some-but-not-all clades land in neither bucket** — "in
-   two of three" is genuinely distinct from universal or unique.
+```
+$ bgcscape inspect-figure figure3.svg
+Title:          Figure 3: NRPS distribution
+Dataset:        3 genomes, 3 BGCs, 8 taxa, 2 families
+Sources:        BiG-SCAPE 2.0.0 · GTDB R11-RS232 · antiSMASH 7.1.0
+View state:     BGC class filter: nrps, terpene
+                Search query: 'Streptomyces'
+```
 
-## Real bug found this chunk
+No database, no browser session, no memory required. `bgcscape
+render-figure` regenerates the PDF from that file alone.
 
-`partition_families()` initially filtered to clades that *have* families
-before intersecting — so a clade with no families was silently excluded
-from the "shared by all" calculation, and a family could be reported as
-universal even when a compared clade plainly lacked it. Caught by both the
-three-clade test and the empty-clade test. Fixed to intersect over every
-profile.
+Design decisions behind it (fuller reasoning in ARCHITECTURE.md):
+
+1. **`dataset` provenance is required, not optional** — a config recording
+   filters but not data versions is reproducible in appearance only.
+2. **Version mismatches refuse rather than degrade** — a config from a
+   newer build is rejected outright; partially applying it would silently
+   change the figure.
+3. **PDF conversion is server-side** — browser print-to-PDF varies by
+   platform and silently rasterizes; a test asserts the output contains no
+   `/Subtype /Image`, i.e. that it really is vector.
+4. **"All classes selected" records as an empty filter** — the UI default
+   is everything-on, so recording all eight names would make every default
+   export look deliberately filtered.
 
 ## Verified end-to-end this chunk
 
-Against **real Postgres**: migrations → ingestion → live `uvicorn` →
-`/api/v1/compare` over real HTTP, comparing two real species clades.
-Confirmed correct per-genome rates, correct hybrid attribution to
-component classes, and — notably — that the endpoint correctly returned
-`comparable: false` with the thin-sampling caveat naming both clades,
-rather than presenting one-genome-per-clade numbers as meaningful.
-Frontend `tsc` clean, 30 tests passing, production build succeeds.
+Against **real Postgres**: exported a figure over real HTTP through the
+live API in both SVG and PDF, then interrogated the SVG with `bgcscape
+inspect-figure` and regenerated the PDF with `bgcscape render-figure` —
+with the database connection unset, proving the figure is genuinely
+self-describing. Confirmed the visible caption reads:
+`BGC-scape 0.1.0 · 2026-08-24 · 3 genomes, 3 BGCs · Sources: BiG-SCAPE 2.0.0; GTDB R11-RS232; antiSMASH 7.1.0`
 
 ## Explicitly deferred / not yet built
 
-Publication-grade SVG/PDF export (Phase 4) · CORASON integration · novelty
-scoring (Phase 5) · user uploads (Phase 5) · full per-field multi-source
-provenance · `similarity_score` on family memberships (column exists;
-BiG-SCAPE's clustering TSV doesn't carry pairwise distances — they're in a
-separate network file, not yet ingested).
+Phase 5 (user uploads, novelty prioritization scoring) · CORASON
+integration · full per-field multi-source provenance · `similarity_score`
+on family memberships (column exists; BiG-SCAPE's clustering TSV doesn't
+carry pairwise distances — they're in a separate network file).
 
 ## Known constraints from this build environment
 
-- **No browser** — the frontend's actual visual rendering has still never
-  been seen by anything in this build process, only its HTML content and
-  logic. With Postgres now closed out, **this is the single most important
-  unverified thing left**, and it's grown more significant as the UI has
-  gained a filter rail, family rail, detail panel, and now a comparison
-  table competing for the same screen.
+- **No browser.** The frontend's actual visual rendering has still never
+  been seen by anything in this build process — only HTML content and
+  logic. This remains the single most important unverified thing, and it
+  now includes the export button's download behavior (`URL.createObjectURL`
+  + synthetic click), which is exercised only by unit tests of the pure
+  functions around it, not the browser path itself.
 - Real bulk data has never been ingested — only schema-accurate synthetic
-  fixtures. "Verified format" ≠ "verified at volume."
+  fixtures.
+- The `export` extra needs Cairo system libraries (`libcairo2`). Present in
+  this sandbox; verify on any deployment target.
 - Postgres runs from a sandbox-local cluster on port 5433 (`/tmp/pgdata`),
   not docker-compose, and does not persist between chunks. Restart with:
   `su postgres -c "/usr/lib/postgresql/16/bin/pg_ctl -D /tmp/pgdata -l /tmp/pg.log -o '-p 5433 -k /tmp' start"`
-  (install first if the sandbox is fresh: `apt-get update && apt-get install -y postgresql`)
-- GitHub Actions CI still hasn't run on a real runner, though what it runs
-  is now verified correct in substance.
+  (fresh sandbox: `apt-get update && apt-get install -y postgresql`, then `initdb`)
+- GitHub Actions CI still hasn't run on a real runner.
 
 ## How to resume
 
-Say "continue" and, absent other direction, this project will proceed with
-**Phase 4: publication-grade export** — SVG/PDF export of the tree and
-comparison views, plus the declarative JSON view-configuration the
-original brief calls for ("visualizations must be reproducible via
-declarative configuration and exportable to publication-ready vector
-formats"). It's the last major piece of the original brief's core
-principles that remains entirely unbuilt, and it's what makes the tool
-citable rather than merely usable.
+Say "continue" and this project will proceed with **Phase 5** — the last
+phase in the roadmap: user-uploaded genomes/MAGs and the BGC
+prioritization score (report §8).
 
-Alternatives: **look at the UI yourself and redirect** (the highest-value
-thing only you can do right now); **ingest real data at volume**; or
-**Phase 5 novelty prioritization scoring**, though that one benefits from
-real data existing first.
+A note on that scoring feature, worth deciding deliberately rather than
+by momentum: the original report is explicit that it must be presented as
+a **prioritization score, never a novelty claim**, and it depends on
+several signals (phylogenetic rarity, distance from MIBiG, unusual domain
+architecture) whose weighting is a scientific judgement call, not a
+technical one. It's also the feature that most benefits from real data
+existing first — a scoring formula tuned against three synthetic fixture
+genomes would be meaningless. Consider whether ingesting real data at
+volume should come first.

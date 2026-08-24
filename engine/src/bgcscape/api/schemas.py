@@ -7,6 +7,7 @@ descendant, which has no equivalent column anywhere in bgcscape.models.
 from __future__ import annotations
 
 import uuid
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -14,6 +15,7 @@ from bgcscape.models.base import EvidenceLevel
 from bgcscape.models.bgc import BGCClass
 from bgcscape.models.genome import AssemblyLevel
 from bgcscape.models.taxonomy import TaxonRank
+from bgcscape.schemas.source import SourceRead
 
 
 class BGCSummary(BaseModel):
@@ -182,3 +184,29 @@ class CladeComparison(BaseModel):
     support a claim about biology. The response is still returned — the UI
     should present it descriptively rather than as evidence."""
     caveats: list[str]
+
+
+class DatasetProvenanceResponse(BaseModel):
+    """What the current database actually contains, for figure captions
+    and `ViewConfig.dataset`. Fetched rather than assembled client-side so
+    a figure's recorded provenance always reflects the real database
+    state, not the frontend's possibly-stale idea of it."""
+
+    sources: list[SourceRead]
+    genome_count: int
+    bgc_count: int
+    taxon_count: int
+    family_count: int
+    engine_version: str
+
+
+class ExportRequest(BaseModel):
+    """SVG produced by the frontend, plus the view state that made it."""
+
+    svg: str
+    view_config: dict
+    """The ViewConfig as JSON. Typed as dict here and validated by
+    ViewConfig itself in the endpoint, so validation lives in one place
+    (bgcscape.export.view_config) rather than being duplicated into the
+    API schema and drifting."""
+    format: Literal["svg", "pdf"] = "pdf"

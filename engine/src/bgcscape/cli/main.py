@@ -171,6 +171,73 @@ def ingest_bigscape_cmd(
         )
 
 
+@app.command("inspect-figure")
+def inspect_figure(
+    path: Path = typer.Argument(..., help="An SVG previously exported by BGC-scape."),
+) -> None:
+    """Report what produced a figure — the payoff for embedding the view
+    config in exported SVGs. Given a figure attached to a paper, this
+    answers "which data versions and filters made this?" without needing
+    the original session.
+    """
+    from bgcscape.export import extract_view_config
+
+    config = extract_view_config(path.read_text(encoding="utf-8"))
+    if config is None:
+        typer.echo(f"{path.name} carries no BGC-scape view config (not exported by this tool).", err=True)
+        raise typer.Exit(1)
+
+    typer.echo(f"Title:          {config.title or '(untitled)'}")
+    typer.echo(f"View type:      {config.view_type}")
+    typer.echo(f"Config version: {config.config_version}")
+    typer.echo(f"Exported:       {config.dataset.exported_at.isoformat()}")
+    typer.echo(f"Engine:         BGC-scape {config.dataset.engine_version}")
+    typer.echo("Dataset:")
+    typer.echo(f"    {config.dataset.genome_count} genomes, {config.dataset.bgc_count} BGCs, "
+               f"{config.dataset.taxon_count} taxa, {config.dataset.family_count} families")
+    typer.echo("Sources:")
+    for source in config.dataset.sources:
+        version = f" {source.version}" if source.version else ""
+        license_note = f"  [{source.license}]" if source.license else ""
+        typer.echo(f"    {source.name}{version} ({source.source_type}){license_note}")
+    state = config.tree_state
+    typer.echo("View state:")
+    typer.echo(f"    BGC class filter: {', '.join(state.active_bgc_classes) or '(none — all classes shown)'}")
+    typer.echo(f"    Collapsed nodes:  {len(state.collapsed_node_ids)}")
+    if state.selected_family_id:
+        typer.echo(f"    Highlighted family: {state.selected_family_id}")
+    if state.comparison_taxon_ids:
+        typer.echo(f"    Compared clades:  {len(state.comparison_taxon_ids)}")
+    if state.search_query:
+        typer.echo(f"    Search query:     {state.search_query!r}")
+
+
+@app.command("render-figure")
+def render_figure(
+    svg_path: Path = typer.Argument(..., help="An SVG exported by BGC-scape (carrying its view config)."),
+    output: Path = typer.Option(Path("figure.pdf"), help="Where to write the PDF."),
+) -> None:
+    """Re-render an exported SVG to vector PDF, headlessly.
+
+    Uses the config already embedded in the SVG, so a figure can be
+    regenerated from the file alone — no running database or browser
+    session needed. Requires the `export` extra.
+    """
+    from bgcscape.export import SvgRenderError, extract_view_config, render_pdf
+
+    svg = svg_path.read_text(encoding="utf-8")
+    config = extract_view_config(svg)
+    if config is None:
+        typer.echo(f"{svg_path.name} carries no BGC-scape view config; rendering it as plain SVG.", err=True)
+
+    try:
+        output.write_bytes(render_pdf(svg))
+    except SvgRenderError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(f"Wrote {output} ({output.stat().st_size} bytes)")
+
+
 @app.command("dump-openapi-schema")
 def dump_openapi_schema(
     output: Path = typer.Option(Path("openapi.json"), help="Where to write the OpenAPI schema JSON."),

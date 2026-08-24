@@ -21,6 +21,7 @@ export type CladeComparison = components["schemas"]["CladeComparison"];
 export type CladeSummary = components["schemas"]["CladeSummary"];
 export type ClassProfileEntry = components["schemas"]["ClassProfileEntry"];
 export type FamilyRef = components["schemas"]["FamilyRef"];
+export type DatasetProvenanceResponse = components["schemas"]["DatasetProvenanceResponse"];
 export type BGCClass = components["schemas"]["BGCClass"];
 export type TaxonRank = components["schemas"]["TaxonRank"];
 export type EvidenceLevel = components["schemas"]["EvidenceLevel"];

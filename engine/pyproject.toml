@@ -27,6 +27,12 @@ api = [
     "fastapi>=0.111",
     "uvicorn[standard]>=0.30",
 ]
+export = [
+    # PDF rendering. Needs Cairo system libraries (libcairo2) present —
+    # heavier than everything else here combined, hence its own extra and
+    # a lazy import in bgcscape/export/renderer.py.
+    "cairosvg>=2.7",
+]
 
 [project.scripts]
 bgcscape = "bgcscape.cli.main:app"

@@ -33,7 +33,7 @@ bgc-scape/
 ```bash
 # 1. Engine + database
 cd engine
-pip install -e ".[dev,api]"
+pip install -e ".[dev,api,export]"   # export extra needs libcairo2
 docker compose -f ../docker-compose.yml up -d postgres   # or use SQLite, see .env.example
 cp ../.env.example ../.env
 alembic upgrade head
@@ -56,8 +56,8 @@ cp .env.local.example .env.local
 npm run dev                              # http://localhost:3000
 
 # Tests
-cd ../engine && pytest -v          # 104 tests
-cd ../web && npm test               # 30 tests
+cd ../engine && pytest -v          # 127 tests
+cd ../web && npm test               # 45 tests
 
 # Run the engine suite against real Postgres instead of SQLite:
 #   BGCSCAPE_TEST_DATABASE_URL=postgresql+psycopg://user:pass@localhost:5432/bgcscape_test pytest -v
@@ -69,7 +69,8 @@ cd ../web && npm test               # 30 tests
 ## Status
 
 Phases 1a/1b/1c (data model; MIBiG, GTDB, antiSMASH, BiG-SCAPE ingestion),
-Phase 2 (visualization API + production frontend), and Phase 3 (BGC-family
-highlighting + comparative clade analysis) are complete and tested —
-**against both SQLite and real PostgreSQL 16**. See `PROGRESS.md` for the
-full phase tracker and what's next.
+Phase 2 (visualization API + production frontend), Phase 3 (BGC-family
+highlighting + comparative clade analysis), and Phase 4 (publication-grade
+SVG/PDF export with embedded, replayable view configs) are complete and
+tested — **against both SQLite and real PostgreSQL 16**. See `PROGRESS.md`
+for the full phase tracker and what's next.

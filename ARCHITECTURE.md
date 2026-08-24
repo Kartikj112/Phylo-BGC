@@ -659,3 +659,70 @@ Hybrid BGCs are attributed to each component class in clade profiles,
 matching how the frontend's filter rail counts them — otherwise the same
 BGC would be counted one way in the comparison table and another way in
 the sidebar of the same screen.
+
+---
+
+## Phase 4: publication-grade export
+
+The original brief requires visualizations be "reproducible via
+declarative configuration (JSON) and exportable to publication-ready
+vector formats (SVG, PDF)." Both halves matter, and the first is the
+scientific one.
+
+### The figure carries its own provenance
+
+`ViewConfig` (`engine/src/bgcscape/export/view_config.py`) is a versioned,
+validated description of everything that determines what a figure shows —
+filters, collapsed nodes, highlighted family, compared clades, search
+query — plus **required** dataset provenance: which MIBiG/GTDB/antiSMASH
+versions produced the underlying data.
+
+`dataset` is required rather than optional deliberately. A config
+recording the filters but not the data versions would be reproducible in
+appearance only; the same filters over a newer GTDB release is a different
+figure making a different claim.
+
+That config is embedded in the exported SVG as a `<metadata>` element —
+part of the SVG spec, ignored by renderers, survives round-tripping
+through Illustrator/Inkscape. Six months later, `bgcscape inspect-figure
+figure3.svg` answers "which data versions and filters made this?" without
+the original session, database, or browser. A visible caption line carries
+the same information for readers encountering the figure in print.
+
+### PDF conversion is server-side, deliberately
+
+Browser print-to-PDF varies by browser and platform and silently
+rasterizes some SVG features; journals reject raster figures at these
+sizes. Converting via cairosvg in the engine gives a deterministic vector
+pipeline, and means a figure can be regenerated headlessly (`bgcscape
+render-figure`) from the SVG file alone. There's a test asserting the
+output contains no `/Subtype /Image`, i.e. that it really is vector.
+
+`/api/v1/export` is the only non-GET endpoint in this API. It isn't a
+write — nothing is persisted — but an SVG document doesn't fit in a query
+string. cairosvg is a lazy import behind the `export` extra, since Cairo's
+system libraries are heavier than everything else in the engine combined.
+
+### Version checking refuses rather than degrades
+
+A config written by a newer BGC-scape is rejected outright, not partially
+applied. A filter this version doesn't understand would silently change
+what the regenerated figure shows — which is exactly the failure this
+whole mechanism exists to prevent.
+
+### Two frontend decisions worth recording
+
+**"All classes selected" is recorded as an empty filter list**, not as all
+eight class names. The UI's default state is everything-selected, so
+recording the full list would make every default export look deliberately
+filtered. Empty means "no filter applied", which is what selecting
+everything actually means.
+
+**Only font properties are inlined during SVG serialization.** The tree is
+styled by Tailwind classes that exist only in the page stylesheet, so an
+SVG lifted straight from the DOM renders as unstyled black text elsewhere.
+But `fill`/`stroke` are already SVG attributes set by the D3 code, and
+copying the browser's full computed style would add hundreds of
+irrelevant declarations per node. There are tests asserting the live SVG
+in the page isn't mutated by serialization, and that monospace treatment
+lands only on the elements that had `font-mono`.

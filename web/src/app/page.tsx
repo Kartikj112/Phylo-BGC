@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { ClassFilterRail } from "@/components/ClassFilterRail";
 import { ComparisonPanel } from "@/components/ComparisonPanel";
+import { ExportButton } from "@/components/ExportButton";
 import { DetailPanel, type Selection } from "@/components/DetailPanel";
 import { FamilyRail } from "@/components/FamilyRail";
 import { Header } from "@/components/Header";
@@ -19,6 +20,7 @@ export default function HomePage() {
   const [selection, setSelection] = useState<Selection>(null);
   const [selectedFamilyId, setSelectedFamilyId] = useState<string | null>(null);
   const [comparisonTaxonIds, setComparisonTaxonIds] = useState<string[]>([]);
+  const svgRef = useRef<SVGSVGElement | null>(null);
 
   function toggleComparisonTaxon(taxonId: string): void {
     setComparisonTaxonIds((prev) =>
@@ -50,7 +52,16 @@ export default function HomePage() {
 
   return (
     <div className="flex h-screen w-full flex-col bg-paper">
-      <Header query={query} onQueryChange={setQuery} genomeCount={genomeCount} />
+      <Header query={query} onQueryChange={setQuery} genomeCount={genomeCount}>
+        <ExportButton
+          svgRef={svgRef}
+          collapsed={collapsed}
+          activeClasses={activeClasses}
+          selectedFamilyId={selectedFamilyId}
+          comparisonTaxonIds={comparisonTaxonIds}
+          searchQuery={query}
+        />
+      </Header>
 
       <div className="flex min-h-0 flex-1">
         <div className="w-52 flex-shrink-0 overflow-y-auto border-r border-line p-4">
@@ -85,6 +96,7 @@ export default function HomePage() {
               onToggleComparisonTaxon={toggleComparisonTaxon}
               onSelectGenome={(id) => setSelection({ kind: "genome", id })}
               onSelectBgc={(id) => setSelection({ kind: "bgc", id })}
+              svgRef={svgRef}
             />
           )}
         </div>

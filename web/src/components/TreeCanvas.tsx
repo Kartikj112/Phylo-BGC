@@ -27,6 +27,7 @@ interface TreeCanvasProps {
   onToggleComparisonTaxon: (taxonId: string) => void;
   onSelectGenome: (id: string) => void;
   onSelectBgc: (id: string) => void;
+  svgRef?: React.Ref<SVGSVGElement>;
 }
 
 const TREE_WIDTH = 760;
@@ -44,6 +45,7 @@ export function TreeCanvas({
   onToggleComparisonTaxon,
   onSelectGenome,
   onSelectBgc,
+  svgRef,
 }: TreeCanvasProps) {
   const { nodes, links, height } = useMemo(() => computeTreeLayout(root, collapsed, TREE_WIDTH), [root, collapsed]);
 
@@ -59,7 +61,7 @@ export function TreeCanvas({
   const dimAll = activeClasses.size < Object.keys(BGC_CLASS_COLORS).length;
 
   return (
-    <svg width="100%" height={height} viewBox={`0 0 ${SVG_VIEWBOX_WIDTH} ${height}`}>
+    <svg ref={svgRef} width="100%" height={height} viewBox={`0 0 ${SVG_VIEWBOX_WIDTH} ${height}`}>
       <g transform="translate(30,20)">
         {links.map((link, i) => (
           <path key={i} d={linkGenerator(link) ?? undefined} fill="none" stroke={COLORS.lineStrong} strokeWidth={1.25} />
