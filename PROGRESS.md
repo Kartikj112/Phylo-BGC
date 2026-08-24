@@ -2,7 +2,7 @@
 
 **Read this file first when resuming work in a new chunk.**
 
-_Last updated: Chunk 5 (Phase 1c) — 2026-08-24_
+_Last updated: Chunk 6 (Phase 3 + Postgres verification) — 2026-08-24_
 
 ## Status at a glance
 
@@ -10,132 +10,129 @@ _Last updated: Chunk 5 (Phase 1c) — 2026-08-24_
 |---|---|---|
 | 1a | Core scientific data model | ✅ Done |
 | 1b | Curated reference ingestion (MIBiG, GTDB) | ✅ Done |
-| 1c | **antiSMASH + BiG-SCAPE ingestion** | ✅ **Done (this chunk)** |
+| 1c | antiSMASH + BiG-SCAPE ingestion | ✅ Done |
 | 2 | Visualization API + production Next.js frontend | ✅ Done |
-| 3 | BGC-family highlighting, comparative clade analysis | ⏭️ Next candidate |
+| 3 | **BGC-family highlighting** | ✅ **Done (this chunk)** |
+| 3 | Comparative clade analysis | ⏭️ Remaining Phase 3 work |
 | 4 | Publication-grade export suite | Not started |
 | 5 | User uploads + novelty prioritization scoring | Not started |
 
-**The backend data layer is now complete.** All four data sources from the
-original report's MVP v1+v2 scope ingest correctly, are idempotent, and
-link to each other properly: curated references (MIBiG, GTDB), predicted
-BGCs at genome scale (antiSMASH), and computed family groupings
-(BiG-SCAPE). Every scientific entity in the model now has at least one
-real ingestion path populating it.
+**Postgres is no longer an untested assumption** — see below. That was the
+project's longest-standing known risk, carried across four chunks, and
+it's now closed.
 
-**84 engine tests + 24 frontend tests = 108 total, all passing.**
+**91 engine tests (passing on BOTH SQLite and real Postgres) + 30 frontend
+tests = 121 total.**
 
-## What's new this chunk
+## The big one this chunk: real Postgres verification
+
+Every database check in this project had run against SQLite. Postgres 16
+turned out to be installable in the build sandbox, so it got tested
+properly:
+
+- Both migrations apply cleanly via Postgres's real transactional-DDL path
+  (a genuinely different code path from SQLite's batch/recreate strategy).
+- The schema is really Postgres-native: `uuid` columns, `jsonb` (not plain
+  `json`), all 12 CHECK constraints present in `pg_constraint`. The
+  dual-dialect design from Phase 1a did exactly what it claimed.
+- Full four-source ingestion produces byte-identical results to SQLite.
+- **The entire test suite passes on both dialects.**
+
+### …which exposed that CI had been verifying nothing
+
+The "Run test suite against real Postgres" CI step has existed since Chunk
+1. It set `BGCSCAPE_DATABASE_URL` — but `conftest.py` hardcoded SQLite and
+ignored it. That step re-ran the SQLite suite and reported success: **a
+green check mark verifying nothing, for four chunks.**
+
+Fixed via a new `BGCSCAPE_TEST_DATABASE_URL` variable that conftest
+actually honors. Deliberately a different name from the app's variable, so
+pointing the app at a database can never cause a test run to
+`DROP SCHEMA public CASCADE` on it.
+
+Worth keeping in mind generally: a CI step that *can't* fail is worse than
+no CI step, because it converts "untested" into "believed tested."
+
+## Phase 3 (family features) — what's new
 
 ```
-engine/src/bgcscape/
-├── models/
-│   ├── bgc.py                  + BGC.external_ref (the antiSMASH↔BiG-SCAPE join key)
-│   └── genome.py               + AssemblyLevel.UNKNOWN
-├── ingest/
-│   ├── antismash.py            NEW — region parser + loader
-│   └── bigscape.py             NEW — family-clustering parser + loader
-├── cli/main.py                 + `bgcscape ingest antismash|bigscape`
-└── migrations/
-    ├── env.py                  + render_as_batch for SQLite (see bug #2 below)
-    └── versions/fd9be...py     NEW — hand-written incremental migration
+engine/src/bgcscape/api/
+├── schemas.py       + BGCFamilySummary / BGCFamilyMember / BGCFamilyDetail
+│                    + BGCSummary.family_ids
+├── app.py           + GET /api/v1/families, GET /api/v1/families/{id}
+└── tree_builder.py  + family_ids threaded through the tree response
 
-engine/tests/
-├── fixtures/mibig/             MIBiG fixtures moved into their own subdir (bug #3)
-├── fixtures/antismash_test_result.json    NEW
-├── fixtures/mix_clustering_c0.3.tsv       NEW
-├── test_ingest_antismash.py    NEW — 14 tests
-└── test_ingest_bigscape.py     NEW — 10 tests
+web/src/
+├── components/FamilyRail.tsx    NEW — family list + selection
+├── components/TreeCanvas.tsx    + family highlighting (dim + ring)
+└── lib/tree-logic.ts            + bgcInFamily / genomeHasFamily / nodeHasFamily
 ```
 
-## Real bugs found and fixed this chunk
+Design notes (fuller reasoning in ARCHITECTURE.md):
 
-Full detail in ARCHITECTURE.md; the short version, because two of these
-matter well beyond this chunk:
+1. **`family_ids` is a list, not a single value** — the same BGC is
+   legitimately in different families at different BiG-SCAPE cutoffs.
+2. **`taxon_names` on the family summary** answers the report's core
+   question directly (confined to one clade, or scattered across distant
+   organisms?) — visible in the list, not behind a click.
+3. **Family highlight uses a ring, not a color change** — the tick's fill
+   already encodes BGC class and must stay readable.
+4. **Membership predicates are pure, unit-tested functions** — the
+   hybrid-class bug in Phase 2 happened precisely because one decision
+   lived in two places that drifted.
 
-1. **BGC class was being mapped from the wrong antiSMASH field.**
-   `area["products"]` sounds like the product category but actually holds
-   antiSMASH's fine-grained *rule names* ("T1PKS", "NRPS-like"). The real
-   7-value category vocabulary lives on each protocluster's `category`.
-   Caught by a test expecting `"NRPS+PKS"` and getting `"NRPS+T1PKS"`.
-   Left unfixed, this would have silently misclassified a large fraction
-   of real antiSMASH regions as `OTHER`.
-2. **An autogenerated Alembic migration would have silently destroyed
-   every CHECK constraint in the database.** It detected all named CHECK
-   constraints across every table as "removed," emitted drops for all of
-   them, and recreated none — undoing the Phase 1b constraint fix
-   entirely. Fixed with `render_as_batch=True` for SQLite plus
-   hand-writing the migration. **Standing takeaway: in this project,
-   never apply an autogenerated migration touching CHECK constraints
-   without reading it first.**
-3. **A fixture-directory collision that exposed a real code fragility.**
-   Adding an antiSMASH fixture broke MIBiG's directory ingestion, which
-   globbed `*.json` indiscriminately and fed foreign JSON to the MIBiG
-   parser. Fixed on both sides — fixtures reorganized per-source, and
-   `read_mibig_entries_from_path()` now skips non-MIBiG files with a
-   warning instead of producing confusing parse errors. The second half
-   matters for real users pointing at mixed directories, not just tests.
+## Also found this chunk
 
-## Key design decisions made this chunk
-
-1. **`BGC.external_ref` stores antiSMASH's own per-region filename stem**
-   — because that's already exactly what BiG-SCAPE's output keys on. The
-   join key is real and shared between the tools, not invented here.
-2. **`--genome-accession` is required for antiSMASH ingestion**, not
-   guessed. antiSMASH's JSON genuinely has no assembly-accession field;
-   inferring one would manufacture a provenance claim the source data
-   doesn't support.
-3. **`AssemblyLevel.UNKNOWN`** — an explicit "not known" for
-   antiSMASH-created genome stubs, rather than a plausible-looking default.
-   Combined with `update_existing=False`, so placeholder values can never
-   overwrite real GTDB metadata.
-4. **Families are keyed on `(source_id, label, clustering_cutoff)`** —
-   `FAM_00001` at cutoff 0.3 and at 0.7 are different groupings that
-   merely share a label.
-5. **Unmatched BiG-SCAPE rows count as `skipped`, not errors** —
-   expected when a run included MIBiG reference clusters.
+**A test that had been passing by accident.**
+`test_bgc_detail_includes_compounds` grabbed "the first BGC in the tree"
+and asserted it had compounds — true only while the fixture was
+MIBiG-only. Adding antiSMASH data (which predicts boundaries and class but
+says nothing about products) broke it correctly. Now two explicit tests:
+MIBiG BGCs must carry curated compounds; antiSMASH BGCs must report an
+empty list rather than anything invented.
 
 ## Verified end-to-end this chunk
 
-The full four-source pipeline run through the real CLI against a real
-database: GTDB → MIBiG → antiSMASH → BiG-SCAPE. Confirmed by direct SQL
-that antiSMASH's BGCs attached to GTDB's *existing* genome row (preserving
-`completeness_pct=99.87` rather than overwriting it), and that BiG-SCAPE's
-families joined the right BGCs. Then confirmed via a live API server that
-the taxonomy tree endpoint returns the combined result — curated MIBiG and
-predicted antiSMASH BGCs on the same tree.
+Against **real Postgres**, not SQLite: migrations → four-source ingestion →
+live `uvicorn` API → production `next build` + `next start` → real HTTP.
+Confirmed the families endpoints return correct rolled-up data, the page
+renders the family rail, and CORS permits the frontend origin (with a real
+GET, after an initial `curl -I` 405 turned out to be just HEAD-vs-GET).
 
 ## Explicitly deferred / not yet built
 
-CORASON integration · BGC-family highlighting in the frontend (the data
-now exists; the UI doesn't use it yet) · comparative clade analysis ·
-publication-grade export · novelty scoring · user uploads · full per-field
-multi-source provenance · `similarity_score` on family memberships (the
-column exists but BiG-SCAPE's clustering TSV doesn't carry pairwise
-distances — they're in a separate network file, not yet ingested).
+Comparative clade analysis (the rest of Phase 3) · CORASON integration ·
+publication-grade SVG/PDF export · novelty scoring · user uploads · full
+per-field multi-source provenance · `similarity_score` on family
+memberships (column exists; BiG-SCAPE's clustering TSV doesn't carry
+pairwise distances — they're in a separate network file, not yet ingested).
 
 ## Known constraints from this build environment
 
-- All prior chunks' constraints still apply. Notably: **no browser**, so
-  the frontend's actual visual rendering has still never been seen by
-  anything in this build process.
-- Real bulk data (actual MIBiG/GTDB downloads, real antiSMASH runs) has
-  never been ingested — only schema-accurate synthetic fixtures. The
-  parsers are written against verified real formats, but "verified format"
-  and "verified against real data at volume" are different claims.
-- Postgres has still never been tested — every database check across all
-  five chunks has been SQLite. `docker-compose.yml` exists for this;
-  it's the single biggest untested assumption in the project.
+- **No browser** — the frontend's actual visual rendering has still never
+  been seen by anything in this build process, only its HTML content and
+  logic. This is now the single most important unverified thing left.
+- Real bulk data has never been ingested — only schema-accurate synthetic
+  fixtures. The parsers are written against verified real formats, but
+  "verified format" ≠ "verified at volume against real data."
+- Postgres runs from a sandbox-local cluster on port 5433
+  (`/tmp/pgdata`), not the docker-compose setup. It does not persist
+  between chunks; restart with:
+  `su postgres -c "/usr/lib/postgresql/16/bin/pg_ctl -D /tmp/pgdata -l /tmp/pg.log -o '-p 5433 -k /tmp' start"`
+- GitHub Actions CI still hasn't run on an actual runner, though what it
+  runs is now verified correct in substance.
 
 ## How to resume
 
 Say "continue" and, absent other direction, this project will proceed with
-**frontend BGC-family features (Phase 3)** — the family data now exists
-end-to-end but nothing in the UI surfaces it, which is the most visible
-gap between what the backend knows and what a user can see.
+**comparative clade analysis** — selecting two or more clades and asking
+what biosynthetic capabilities distinguish them (report §4.7). It's the
+natural next step now that families exist end-to-end, and it's the last
+substantial piece of Phase 3.
 
-Reasonable alternatives if you'd prefer: **test against real Postgres**
-(the biggest untested assumption, and cheap to check); **ingest real data
-at volume** (would validate the parsers against reality rather than
-fixtures); or **publication-grade SVG/PDF export** (Phase 4 — the original
-report's "Publication-First" principle, still entirely unbuilt).
+Alternatives worth considering: **publication-grade SVG/PDF export**
+(Phase 4 — the report's "Publication-First" principle, still entirely
+unbuilt, and arguably what makes this tool citable); or **ingesting real
+data at volume** (would validate the parsers against reality rather than
+fixtures, and is the kind of thing best done where there's real network
+access and real compute).

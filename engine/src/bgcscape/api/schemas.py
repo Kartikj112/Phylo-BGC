@@ -22,6 +22,11 @@ class BGCSummary(BaseModel):
     subtype: str | None = None
     mibig_accession: str | None = None
     evidence_level: EvidenceLevel
+    family_ids: list[uuid.UUID] = []
+    """Families this BGC belongs to. A list, not a single value: the same
+    BGC is legitimately a member of different families at different
+    BiG-SCAPE clustering cutoffs (see ingest/bigscape.py), so collapsing
+    this to one id would silently pick an arbitrary cutoff's answer."""
 
 
 class GenomeSummary(BaseModel):
@@ -94,3 +99,38 @@ class SearchResult(BaseModel):
     label: str
     rank: TaxonRank | None = None
     accession: str | None = None
+
+
+class BGCFamilySummary(BaseModel):
+    """A Gene Cluster Family, with enough rolled-up context for the
+    frontend to show why it's interesting without a second request.
+
+    `taxon_names` powers the report's core question — is this family
+    confined to one clade, or scattered across distant organisms? A family
+    spanning several distinct taxa is exactly the horizontal-transfer /
+    convergent-evolution signal the product is meant to surface.
+    """
+
+    id: uuid.UUID
+    label: str
+    clustering_method: str | None = None
+    clustering_cutoff: float | None = None
+    member_count: int
+    bgc_classes: list[str]
+    taxon_names: list[str]
+    evidence_level: EvidenceLevel
+
+
+class BGCFamilyMember(BaseModel):
+    bgc_id: uuid.UUID
+    bgc_class: BGCClass
+    subtype: str | None = None
+    genome_id: uuid.UUID
+    genome_accession: str
+    taxon_name: str | None = None
+    evidence_level: EvidenceLevel
+    similarity_score: float | None = None
+
+
+class BGCFamilyDetail(BGCFamilySummary):
+    members: list[BGCFamilyMember]

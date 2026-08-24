@@ -5,10 +5,12 @@ import { useMemo } from "react";
 import type { DisplayNode, TaxonDisplayNode } from "@/lib/api-types";
 import { BGC_CLASS_COLORS, COLORS, classColor } from "@/lib/colors";
 import {
+  bgcInFamily,
   computeTreeLayout,
   genomeMatchesActiveClasses,
   hiddenChildrenCount,
   matchesQuery,
+  nodeHasFamily,
   nodeKey,
   nodeVisibleClasses,
 } from "@/lib/tree-logic";
@@ -20,6 +22,7 @@ interface TreeCanvasProps {
   activeClasses: Set<string>;
   searchQuery: string;
   selectedId: string | null;
+  selectedFamilyId: string | null;
   onSelectGenome: (id: string) => void;
   onSelectBgc: (id: string) => void;
 }
@@ -34,6 +37,7 @@ export function TreeCanvas({
   activeClasses,
   searchQuery,
   selectedId,
+  selectedFamilyId,
   onSelectGenome,
   onSelectBgc,
 }: TreeCanvasProps) {
@@ -68,13 +72,22 @@ export function TreeCanvas({
             dimAll && !isGenome && ![...nodeVisibleClasses(node)].some((c) => activeClasses.has(c));
           const genomeDimmed = dimAll && isGenome && !genomeMatchesActiveClasses(node, activeClasses);
 
+          // Family selection dims everything the family doesn't reach, so
+          // its distribution across the tree reads at a glance. Stacked
+          // with (not replacing) class filtering — both can be active.
+          const familyDimmed = selectedFamilyId !== null && !nodeHasFamily(node, selectedFamilyId);
+          const inSelectedFamily = selectedFamilyId !== null && nodeHasFamily(node, selectedFamilyId);
+
+          const opacity = dimmed || genomeDimmed || familyDimmed ? 0.2 : 1;
+
           return (
-            <g key={key} transform={`translate(${n.y},${n.x})`} opacity={dimmed || genomeDimmed ? 0.25 : 1}>
+            <g key={key} transform={`translate(${n.y},${n.x})`} opacity={opacity}>
               {!isGenome && (
                 <TaxonNode
                   node={node}
                   hiddenCount={hidden}
                   matched={isMatch}
+                  inSelectedFamily={inSelectedFamily}
                   onToggleCollapse={() => onToggleCollapse(key)}
                 />
               )}
@@ -83,6 +96,7 @@ export function TreeCanvas({
                   node={node}
                   matched={isMatch}
                   dimmedBySelection={selectedId !== null && selectedId !== node.id}
+                  selectedFamilyId={selectedFamilyId}
                   onSelectGenome={() => onSelectGenome(node.id)}
                   onSelectBgc={onSelectBgc}
                 />
@@ -99,11 +113,13 @@ function TaxonNode({
   node,
   hiddenCount,
   matched,
+  inSelectedFamily,
   onToggleCollapse,
 }: {
   node: Extract<DisplayNode, { _kind: "taxon" }>;
   hiddenCount: number;
   matched: boolean;
+  inSelectedFamily: boolean;
   onToggleCollapse: () => void;
 }) {
   const isHighRank = node.rank === "domain" || node.rank === "phylum";
@@ -123,8 +139,8 @@ function TaxonNode({
         dy="0.32em"
         fontStyle={node.rank === "species" ? "italic" : "normal"}
         fontSize={isHighRank ? 13 : 12}
-        fontWeight={isHighRank ? 600 : 400}
-        fill={matched ? COLORS.signal : COLORS.ink}
+        fontWeight={isHighRank || inSelectedFamily ? 600 : 400}
+        fill={matched || inSelectedFamily ? COLORS.signal : COLORS.ink}
       >
         {node.name}
         {hiddenCount > 0 ? ` (+${hiddenCount})` : ""}
@@ -140,12 +156,14 @@ function GenomeNode({
   node,
   matched,
   dimmedBySelection,
+  selectedFamilyId,
   onSelectGenome,
   onSelectBgc,
 }: {
   node: Extract<DisplayNode, { _kind: "genome" }>;
   matched: boolean;
   dimmedBySelection: boolean;
+  selectedFamilyId: string | null;
   onSelectGenome: () => void;
   onSelectBgc: (id: string) => void;
 }) {
@@ -158,6 +176,7 @@ function GenomeNode({
         const colors = classColor(b.bgc_class, b.subtype);
         const x = BARCODE_START_X + i * BARCODE_TICK_WIDTH;
         const primary = colors[0] ?? COLORS.inkFaint;
+        const inFamily = bgcInFamily(b, selectedFamilyId);
         return (
           <g
             key={b.id}
@@ -166,6 +185,21 @@ function GenomeNode({
               onSelectBgc(b.id);
             }}
           >
+            {/* A ring rather than a color change: the tick's fill already
+                encodes BGC class, which must stay readable while a family
+                is selected. */}
+            {inFamily && (
+              <rect
+                x={x - 2}
+                y={-7.5}
+                width={11}
+                height={15}
+                fill="none"
+                stroke={COLORS.signal}
+                strokeWidth={1.5}
+                rx={2}
+              />
+            )}
             {colors.length === 1 ? (
               <rect x={x} y={-5} width={7} height={10} fill={primary} rx={1} />
             ) : (

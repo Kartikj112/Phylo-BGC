@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { ClassFilterRail } from "@/components/ClassFilterRail";
 import { DetailPanel, type Selection } from "@/components/DetailPanel";
+import { FamilyRail } from "@/components/FamilyRail";
 import { Header } from "@/components/Header";
 import { TreeCanvas } from "@/components/TreeCanvas";
 import { useTaxonomyTree } from "@/hooks/useTaxonomyTree";
@@ -15,6 +16,7 @@ export default function HomePage() {
   const [activeClasses, setActiveClasses] = useState<Set<string>>(new Set(CLASS_ORDER));
   const [query, setQuery] = useState("");
   const [selection, setSelection] = useState<Selection>(null);
+  const [selectedFamilyId, setSelectedFamilyId] = useState<string | null>(null);
 
   const root = useMemo(() => (tree ? toRootDisplayNode(tree) : null), [tree]);
   const classCounts = useMemo(() => (root ? countBgcClasses(root) : {}), [root]);
@@ -43,12 +45,15 @@ export default function HomePage() {
       <Header query={query} onQueryChange={setQuery} genomeCount={genomeCount} />
 
       <div className="flex min-h-0 flex-1">
-        <ClassFilterRail
-          activeClasses={activeClasses}
-          counts={classCounts}
-          onToggle={toggleClass}
-          onReset={() => setActiveClasses(new Set(CLASS_ORDER))}
-        />
+        <div className="w-52 flex-shrink-0 overflow-y-auto border-r border-line p-4">
+          <ClassFilterRail
+            activeClasses={activeClasses}
+            counts={classCounts}
+            onToggle={toggleClass}
+            onReset={() => setActiveClasses(new Set(CLASS_ORDER))}
+          />
+          <FamilyRail selectedFamilyId={selectedFamilyId} onSelectFamily={setSelectedFamilyId} />
+        </div>
 
         <div className="flex-1 overflow-auto p-6">
           {loading && <div className="text-sm text-ink-muted">Loading taxonomy tree…</div>}
@@ -67,6 +72,7 @@ export default function HomePage() {
               activeClasses={activeClasses}
               searchQuery={query}
               selectedId={selection?.id ?? null}
+              selectedFamilyId={selectedFamilyId}
               onSelectGenome={(id) => setSelection({ kind: "genome", id })}
               onSelectBgc={(id) => setSelection({ kind: "bgc", id })}
             />

@@ -4,7 +4,14 @@
  * deliberately minimal until there's a real usage pattern to design
  * around, per the "avoid overengineering" principle.
  */
-import type { BGCDetail, GenomeDetail, SearchResult, TaxonTreeNode } from "./api-types";
+import type {
+  BGCDetail,
+  BGCFamilyDetail,
+  BGCFamilySummary,
+  GenomeDetail,
+  SearchResult,
+  TaxonTreeNode,
+} from "./api-types";
 
 export class ApiError extends Error {
   constructor(
@@ -53,4 +60,12 @@ export function fetchBgc(bgcId: string): Promise<BGCDetail> {
 
 export function search(query: string): Promise<SearchResult[]> {
   return getJson<SearchResult[]>(`/api/v1/search?q=${encodeURIComponent(query)}`);
+}
+
+export function fetchFamilies(): Promise<BGCFamilySummary[]> {
+  return getJson<BGCFamilySummary[]>("/api/v1/families");
+}
+
+export function fetchFamily(familyId: string): Promise<BGCFamilyDetail> {
+  return getJson<BGCFamilyDetail>(`/api/v1/families/${familyId}`);
 }

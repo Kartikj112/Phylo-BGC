@@ -14,6 +14,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from bgcscape.ingest.antismash import ingest_antismash_result, read_antismash_result
+from bgcscape.ingest.bigscape import ingest_bigscape_clustering, read_bigscape_clustering_tsv
 from bgcscape.ingest.gtdb import ingest_gtdb_metadata, read_gtdb_metadata_tsv
 from bgcscape.ingest.mibig import ingest_mibig_entries, read_mibig_entries_from_path
 from bgcscape.models import Base, Source, SourceType
@@ -47,11 +49,30 @@ def api_client(monkeypatch) -> Iterator[TestClient]:
     with Session(engine, future=True) as seed_session:
         mibig_source = Source(name="MIBiG", source_type=SourceType.REFERENCE_DATABASE, version="4.0")
         gtdb_source = Source(name="GTDB", source_type=SourceType.REFERENCE_DATABASE, version="R11-RS232")
-        seed_session.add_all([mibig_source, gtdb_source])
+        antismash_source = Source(name="antiSMASH", source_type=SourceType.TOOL_RUN, version="7.1.0")
+        bigscape_source = Source(name="BiG-SCAPE", source_type=SourceType.TOOL_RUN, version="2.0.0")
+        seed_session.add_all([mibig_source, gtdb_source, antismash_source, bigscape_source])
         seed_session.commit()
 
+        # Full four-source pipeline, in the order a real deployment would
+        # run it — so API tests exercise a realistic dataset including the
+        # cross-source Taxon merge and the antiSMASH→BiG-SCAPE family join,
+        # not a hand-built single row.
         ingest_gtdb_metadata(seed_session, gtdb_source, read_gtdb_metadata_tsv(GTDB_TSV))
         ingest_mibig_entries(seed_session, mibig_source, read_mibig_entries_from_path(MIBIG_FIXTURES))
+        ingest_antismash_result(
+            seed_session,
+            antismash_source,
+            read_antismash_result(FIXTURES / "antismash_test_result.json"),
+            genome_accession="GCF_TEST900001.1",
+        )
+        ingest_bigscape_clustering(
+            seed_session,
+            bigscape_source,
+            read_bigscape_clustering_tsv(FIXTURES / "mix_clustering_c0.3.tsv"),
+            cutoff=0.3,
+            clustering_method="BiG-SCAPE 2.0.0",
+        )
 
     # Patch the API's session factory to use this exact engine, rather than
     # whatever BGCSCAPE_DATABASE_URL happens to be set to.
@@ -89,9 +110,11 @@ def test_taxonomy_tree_bgc_class_counts_aggregate_up(api_client):
     response = api_client.get("/api/v1/taxonomy-tree")
     root = response.json()
 
-    # 2 active MIBiG entries: one NRPS, one NRPS+PKS hybrid.
-    assert root["bgc_class_counts"].get("nrps") == 1
-    assert root["bgc_class_counts"].get("hybrid") == 1
+    # 2 active MIBiG entries (one NRPS, one NRPS+PKS hybrid) plus the 3
+    # antiSMASH regions (NRPS, NRPS+PKS hybrid, terpene).
+    assert root["bgc_class_counts"].get("nrps") == 2
+    assert root["bgc_class_counts"].get("hybrid") == 2
+    assert root["bgc_class_counts"].get("terpene") == 1
 
 
 def test_taxonomy_tree_reaches_species_with_direct_genomes(api_client):
@@ -117,7 +140,8 @@ def test_taxonomy_tree_reaches_species_with_direct_genomes(api_client):
 def test_bgc_classes_endpoint(api_client):
     response = api_client.get("/api/v1/bgc-classes")
     assert response.status_code == 200
-    assert set(response.json()) == {"nrps", "hybrid"}
+    # MIBiG contributes nrps + hybrid; antiSMASH adds terpene.
+    assert set(response.json()) == {"nrps", "hybrid", "terpene"}
 
 
 def test_genome_detail_not_found(api_client):
@@ -148,30 +172,49 @@ def test_genome_detail_found(api_client):
 
 
 def test_bgc_detail_includes_compounds(api_client):
-    classes = api_client.get("/api/v1/bgc-classes").json()
-    assert classes  # sanity: fixtures produced at least one BGC
+    """A MIBiG-derived BGC should carry its curated compound links.
 
+    Deliberately selects a BGC *with* a mibig_accession rather than just
+    taking the first one found: now that antiSMASH-predicted regions are
+    in the fixture dataset too, "the first BGC in the tree" is no longer
+    guaranteed to be one that has compounds — antiSMASH output carries no
+    compound information at all. The original version of this test passed
+    only by accident of ordering.
+    """
     tree = api_client.get("/api/v1/taxonomy-tree").json()
 
-    def first_bgc_id(node):
+    def first_mibig_bgc_id(node):
         for g in node["direct_genomes"]:
-            if g["bgcs"]:
-                return g["bgcs"][0]["id"]
+            for b in g["bgcs"]:
+                if b["mibig_accession"]:
+                    return b["id"]
         for child in node["children"]:
-            found = first_bgc_id(child)
+            found = first_mibig_bgc_id(child)
             if found:
                 return found
         return None
 
-    bgc_id = first_bgc_id(tree)
+    bgc_id = first_mibig_bgc_id(tree)
     assert bgc_id is not None
 
     response = api_client.get(f"/api/v1/bgcs/{bgc_id}")
     assert response.status_code == 200
     body = response.json()
     assert body["id"] == bgc_id
-    assert isinstance(body["compounds"], list)
     assert len(body["compounds"]) >= 1
+
+
+def test_antismash_bgc_detail_has_no_compounds(api_client):
+    """The complementary case: antiSMASH predicts cluster boundaries and
+    class, but says nothing about products. An antiSMASH-derived BGC
+    should report an empty compound list rather than anything invented."""
+    families = api_client.get("/api/v1/families").json()
+    family_detail = api_client.get(f"/api/v1/families/{families[0]['id']}").json()
+    bgc_id = family_detail["members"][0]["bgc_id"]
+
+    body = api_client.get(f"/api/v1/bgcs/{bgc_id}").json()
+    assert body["evidence_level"] == "predicted"
+    assert body["compounds"] == []
 
 
 def test_search_by_organism_name(api_client):
@@ -192,3 +235,97 @@ def test_search_short_query_returns_empty(api_client):
     response = api_client.get("/api/v1/search", params={"q": "a"})
     assert response.status_code == 200
     assert response.json() == []
+
+
+# --- BGC family endpoints (Phase 3) ----------------------------------------------
+
+
+def test_list_families(api_client):
+    response = api_client.get("/api/v1/families")
+    assert response.status_code == 200
+    families = response.json()
+
+    # The BiG-SCAPE fixture defines FAM_00001 (2 members) and FAM_00002 (1).
+    assert len(families) == 2
+    labels = [f["label"] for f in families]
+    assert labels == ["FAM_00001", "FAM_00002"]  # sorted most-members-first
+    assert families[0]["member_count"] == 2
+    assert families[1]["member_count"] == 1
+    assert families[0]["clustering_cutoff"] == 0.3
+    assert families[0]["evidence_level"] == "computed"
+
+
+def test_family_summary_rolls_up_classes_and_taxa(api_client):
+    families = api_client.get("/api/v1/families").json()
+    fam1 = next(f for f in families if f["label"] == "FAM_00001")
+
+    # FAM_00001 holds an nrps region and a hybrid region.
+    assert set(fam1["bgc_classes"]) == {"nrps", "hybrid"}
+    # Both are on GCF_TEST900001.1, which GTDB classified as this species.
+    assert fam1["taxon_names"] == ["Streptomyces testomycini"]
+
+
+def test_family_detail_lists_members_with_genome_and_taxon(api_client):
+    families = api_client.get("/api/v1/families").json()
+    fam1_id = next(f["id"] for f in families if f["label"] == "FAM_00001")
+
+    response = api_client.get(f"/api/v1/families/{fam1_id}")
+    assert response.status_code == 200
+    detail = response.json()
+
+    assert detail["label"] == "FAM_00001"
+    assert len(detail["members"]) == 2
+    for member in detail["members"]:
+        assert member["genome_accession"] == "GCF_TEST900001.1"
+        assert member["taxon_name"] == "Streptomyces testomycini"
+        assert member["evidence_level"] == "predicted"  # antiSMASH-derived
+    assert {m["bgc_class"] for m in detail["members"]} == {"nrps", "hybrid"}
+
+
+def test_family_detail_not_found(api_client):
+    response = api_client.get("/api/v1/families/00000000-0000-0000-0000-000000000000")
+    assert response.status_code == 404
+
+
+def test_tree_bgc_summaries_carry_family_ids(api_client):
+    tree = api_client.get("/api/v1/taxonomy-tree").json()
+    families = api_client.get("/api/v1/families").json()
+    known_family_ids = {f["id"] for f in families}
+
+    found_with_family = []
+
+    def walk(node):
+        for genome in node["direct_genomes"]:
+            for bgc in genome["bgcs"]:
+                if bgc["family_ids"]:
+                    found_with_family.append(bgc)
+        for child in node["children"]:
+            walk(child)
+
+    walk(tree)
+
+    # The 3 antiSMASH regions are family members; the 2 MIBiG BGCs aren't.
+    assert len(found_with_family) == 3
+    for bgc in found_with_family:
+        assert set(bgc["family_ids"]) <= known_family_ids
+
+
+def test_mibig_bgcs_have_no_family_ids(api_client):
+    """MIBiG-derived BGCs have no antiSMASH region filename, so BiG-SCAPE
+    ingestion can't match them — they should carry an empty family list,
+    not be silently attached to something."""
+    tree = api_client.get("/api/v1/taxonomy-tree").json()
+
+    mibig_bgcs = []
+
+    def walk(node):
+        for genome in node["direct_genomes"]:
+            for bgc in genome["bgcs"]:
+                if bgc["mibig_accession"]:
+                    mibig_bgcs.append(bgc)
+        for child in node["children"]:
+            walk(child)
+
+    walk(tree)
+    assert len(mibig_bgcs) == 2
+    assert all(b["family_ids"] == [] for b in mibig_bgcs)

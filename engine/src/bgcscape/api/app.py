@@ -19,6 +19,9 @@ from sqlalchemy.orm import Session, selectinload
 
 from bgcscape.api.schemas import (
     BGCDetail,
+    BGCFamilyDetail,
+    BGCFamilyMember,
+    BGCFamilySummary,
     BGCSummary,
     CompoundSummary,
     GenomeDetail,
@@ -27,7 +30,7 @@ from bgcscape.api.schemas import (
 )
 from bgcscape.api.tree_builder import build_taxonomy_tree
 from bgcscape.db.session import get_sessionmaker
-from bgcscape.models import BGC, BGCCompoundLink, Genome, Taxon
+from bgcscape.models import BGC, BGCCompoundLink, BGCFamily, BGCFamilyMembership, Genome, Taxon
 
 app = FastAPI(
     title="BGC-scape API",
@@ -76,7 +79,10 @@ def get_bgc_classes(session: Session = Depends(get_session)) -> list[str]:
 def get_genome(genome_id: uuid.UUID, session: Session = Depends(get_session)) -> GenomeDetail:
     genome = (
         session.query(Genome)
-        .options(selectinload(Genome.bgcs), selectinload(Genome.taxon))
+        .options(
+            selectinload(Genome.bgcs).selectinload(BGC.family_memberships),
+            selectinload(Genome.taxon),
+        )
         .filter_by(id=genome_id)
         .one_or_none()
     )
@@ -101,6 +107,7 @@ def get_genome(genome_id: uuid.UUID, session: Session = Depends(get_session)) ->
                 subtype=b.subtype,
                 mibig_accession=b.mibig_accession,
                 evidence_level=b.evidence_level,
+                family_ids=[m.family_id for m in b.family_memberships],
             )
             for b in genome.bgcs
         ],
@@ -143,6 +150,82 @@ def get_bgc(bgc_id: uuid.UUID, session: Session = Depends(get_session)) -> BGCDe
             for link in bgc.compound_links
         ],
     )
+
+
+@app.get("/api/v1/families", response_model=list[BGCFamilySummary])
+def list_families(session: Session = Depends(get_session)) -> list[BGCFamilySummary]:
+    """All Gene Cluster Families, most-members-first — the ordering that
+    puts the widely-distributed families a user most likely wants to look
+    at (and the strongest horizontal-transfer candidates) at the top."""
+    families = (
+        session.query(BGCFamily)
+        .options(
+            selectinload(BGCFamily.memberships)
+            .selectinload(BGCFamilyMembership.bgc)
+            .selectinload(BGC.genome)
+            .selectinload(Genome.taxon)
+        )
+        .all()
+    )
+    summaries = [_family_summary(f) for f in families]
+    summaries.sort(key=lambda f: (-f.member_count, f.label))
+    return summaries
+
+
+def _family_summary(family: BGCFamily) -> BGCFamilySummary:
+    bgc_classes: set[str] = set()
+    taxon_names: set[str] = set()
+    for membership in family.memberships:
+        bgc = membership.bgc
+        bgc_classes.add(bgc.bgc_class.value)
+        taxon = bgc.genome.taxon if bgc.genome else None
+        if taxon is not None:
+            taxon_names.add(taxon.name)
+
+    return BGCFamilySummary(
+        id=family.id,
+        label=family.label,
+        clustering_method=family.clustering_method,
+        clustering_cutoff=family.clustering_cutoff,
+        member_count=len(family.memberships),
+        bgc_classes=sorted(bgc_classes),
+        taxon_names=sorted(taxon_names),
+        evidence_level=family.evidence_level,
+    )
+
+
+@app.get("/api/v1/families/{family_id}", response_model=BGCFamilyDetail)
+def get_family(family_id: uuid.UUID, session: Session = Depends(get_session)) -> BGCFamilyDetail:
+    family = (
+        session.query(BGCFamily)
+        .options(
+            selectinload(BGCFamily.memberships)
+            .selectinload(BGCFamilyMembership.bgc)
+            .selectinload(BGC.genome)
+            .selectinload(Genome.taxon)
+        )
+        .filter_by(id=family_id)
+        .one_or_none()
+    )
+    if family is None:
+        raise HTTPException(status_code=404, detail=f"BGC family {family_id} not found")
+
+    summary = _family_summary(family)
+    members = [
+        BGCFamilyMember(
+            bgc_id=m.bgc.id,
+            bgc_class=m.bgc.bgc_class,
+            subtype=m.bgc.subtype,
+            genome_id=m.bgc.genome.id,
+            genome_accession=m.bgc.genome.accession,
+            taxon_name=m.bgc.genome.taxon.name if m.bgc.genome.taxon else None,
+            evidence_level=m.bgc.evidence_level,
+            similarity_score=m.similarity_score,
+        )
+        for m in family.memberships
+    ]
+    members.sort(key=lambda m: (m.taxon_name or "", m.genome_accession))
+    return BGCFamilyDetail(**summary.model_dump(), members=members)
 
 
 @app.get("/api/v1/search", response_model=list[SearchResult])

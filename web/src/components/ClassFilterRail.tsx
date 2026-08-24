@@ -11,7 +11,7 @@ interface ClassFilterRailProps {
 
 export function ClassFilterRail({ activeClasses, counts, onToggle, onReset }: ClassFilterRailProps) {
   return (
-    <div className="flex w-52 flex-shrink-0 flex-col gap-1 border-r border-line p-4">
+    <div className="flex flex-col gap-1">
       <div className="mb-2 flex items-center justify-between">
         <span className="text-xs uppercase tracking-wider text-ink-muted">BGC class</span>
         <button onClick={onReset} className="text-xs text-signal hover:underline">

@@ -3,13 +3,14 @@ import type { BGCSummary, GenomeSummary, TaxonTreeNode } from "./api-types";
 let counter = 0;
 const nid = (prefix: string): string => `${prefix}-${counter++}`;
 
-function bgc(bgc_class: string, subtype: string | null): BGCSummary {
+function bgc(bgc_class: string, subtype: string | null, family_ids: string[] = []): BGCSummary {
   return {
     id: nid("bgc"),
     bgc_class: bgc_class as BGCSummary["bgc_class"],
     subtype,
     mibig_accession: null,
     evidence_level: "predicted",
+    family_ids,
   };
 }
 
@@ -58,13 +59,19 @@ function taxon(
  * tree-logic.ts's bgcComponentClasses docstring), a MAG genome, and a
  * genus with only one species (no branching) for layout variety.
  */
+export const FAM_SHARED = "fam-shared-across-genera";
+export const FAM_LOCAL = "fam-local-to-one-species";
+
 export function buildFixtureTree(): TaxonTreeNode {
   const avermitilisGenome = genome("GCF_TEST_AVERMITILIS.1", false, [
     bgc("pks", "type I"),
-    bgc("terpene", null),
+    bgc("terpene", null, [FAM_LOCAL]),
     bgc("hybrid", "nrps+pks"),
   ]);
-  const coelicolorGenome = genome("GCF_TEST_COELICOLOR.1", false, [bgc("nrps", null), bgc("pks", "type II")]);
+  const coelicolorGenome = genome("GCF_TEST_COELICOLOR.1", false, [
+    bgc("nrps", null, [FAM_SHARED]),
+    bgc("pks", "type II"),
+  ]);
   const venezuelaeGenome = genome("GCA_TEST_VENEZUELAE.1", true, [bgc("ripp", "lanthipeptide")]);
 
   const streptomyces = taxon("Streptomyces", "genus", [
@@ -73,7 +80,11 @@ export function buildFixtureTree(): TaxonTreeNode {
     taxon("Streptomyces venezuelae", "species", [], [venezuelaeGenome]),
   ]);
 
-  const kitasatosporaGenome = genome("GCF_TEST_SETAE.1", false, [bgc("saccharide", null)]);
+  // Deliberately places FAM_SHARED in a *different genus* too — the
+  // scattered-distribution case the product exists to surface (a family
+  // spanning phylogenetically separated organisms), as opposed to
+  // FAM_LOCAL which sits in exactly one species.
+  const kitasatosporaGenome = genome("GCF_TEST_SETAE.1", false, [bgc("saccharide", null, [FAM_SHARED])]);
   const kitasatospora = taxon("Kitasatospora", "genus", [
     taxon("Kitasatospora setae", "species", [], [kitasatosporaGenome]),
   ]);

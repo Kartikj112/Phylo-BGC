@@ -497,3 +497,93 @@ values), and that BiG-SCAPE's families joined to the right BGCs via
 `external_ref`. Then confirmed the API surfaces the result — the taxonomy
 tree endpoint now returns `{'nrps': 2, 'hybrid': 2, 'terpene': 1}`,
 mixing curated MIBiG and predicted antiSMASH BGCs on the same tree.
+
+---
+
+## Postgres verification (finally done)
+
+For four chunks, every database check in this project ran against SQLite,
+with Postgres listed in PROGRESS.md as "the single biggest untested
+assumption." It turned out to be installable in the build sandbox from the
+Ubuntu archive, so it got tested properly against **PostgreSQL 16.15**:
+
+- Both Alembic migrations apply cleanly (`Context impl PostgresqlImpl`,
+  transactional DDL — a genuinely different code path from SQLite's
+  batch/recreate strategy).
+- The schema is really Postgres-native, not a lowest-common-denominator
+  fallback: `id` columns are true `uuid` type, `raw_annotation` and
+  `sample_metadata` are `jsonb` (not plain `json`), and all 12 named CHECK
+  constraints exist in `pg_constraint`. The `JSONVariant` and
+  `sqlalchemy.Uuid` decisions from Phase 1a did exactly what they claimed.
+- The full four-source ingestion pipeline produces byte-identical results
+  to SQLite, including the cross-source merge preserving GTDB's
+  `completeness_pct=99.87` when antiSMASH later touches the same genome.
+- **The entire test suite passes on both dialects.**
+
+### The CI workflow had been silently testing SQLite twice
+
+`.github/workflows/ci.yml` has had a "Run test suite against real
+Postgres" step since Chunk 1. It set `BGCSCAPE_DATABASE_URL` — but
+`tests/conftest.py` hardcoded `sqlite+pysqlite:///:memory:` and ignored
+the environment entirely. That step re-ran the SQLite suite and reported
+success: a green check mark verifying nothing, for four chunks.
+
+Fixed by making `conftest.py` honor `BGCSCAPE_TEST_DATABASE_URL`.
+Deliberately a *different* variable name from the application's
+`BGCSCAPE_DATABASE_URL`, so that pointing the app at a database can never
+cause a test run to drop and recreate that database's schema — the test
+fixture does `DROP SCHEMA public CASCADE` between tests, which would be
+catastrophic if it ever pointed somewhere real.
+
+General lesson worth keeping: a CI step that *can't fail* is worse than no
+CI step, because it converts "untested" into "believed tested."
+
+---
+
+## Phase 3: BGC family features
+
+### API
+
+`GET /api/v1/families` and `GET /api/v1/families/{id}`, plus `family_ids`
+threaded onto every `BGCSummary` in the tree response so the frontend can
+highlight family membership without a second round-trip per BGC.
+
+`family_ids` is a **list**, not a single value, because the same BGC is
+legitimately in different families at different BiG-SCAPE cutoffs (see
+`ingest/bigscape.py`). Collapsing it to one id would silently pick an
+arbitrary cutoff's answer.
+
+`BGCFamilySummary.taxon_names` is the deliberate design choice here. It
+rolls up which organisms a family actually spans, which is what makes the
+list answer the original report's core question directly — *is this family
+confined to one clade, or scattered across phylogenetically distant
+organisms?* A family spanning several taxa is exactly the
+horizontal-transfer / convergent-evolution signal the product exists to
+surface, so it's visible in the list itself rather than behind a click.
+
+### Frontend
+
+Family selection dims everything in the tree the family doesn't reach, so
+its distribution reads at a glance. This **stacks with** class filtering
+rather than replacing it — both can be active at once.
+
+Family-member BGC ticks get a **ring**, not a color change: the tick's fill
+already encodes BGC class, and that has to stay readable while a family is
+selected. Same principle as the hybrid split-marker from Phase 2 — don't
+overload a channel that's already carrying information.
+
+The membership predicates (`bgcInFamily`, `genomeHasFamily`,
+`nodeHasFamily`) live in `tree-logic.ts` as pure functions, unit-tested,
+for the same reason the class-filtering logic does: the hybrid-class bug
+in Phase 2 happened precisely because one decision was implemented in two
+places that drifted apart.
+
+### A test that had been passing by accident
+
+`test_bgc_detail_includes_compounds` grabbed "the first BGC in the tree"
+and asserted it had compounds. That held only while the API fixture was
+MIBiG-only. Adding antiSMASH data to the fixture (antiSMASH predicts
+cluster boundaries and class but says nothing about products) broke it —
+correctly. Now split into two explicit tests: a MIBiG-derived BGC *must*
+carry curated compounds, and an antiSMASH-derived one *must* report an
+empty list rather than anything invented.

@@ -1,18 +1,45 @@
 from __future__ import annotations
 
+import os
 import uuid
 from collections.abc import Iterator
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
 from bgcscape.models import Base, Source, SourceType
 
+# Tests default to in-memory SQLite (fast, zero setup). Setting
+# BGCSCAPE_TEST_DATABASE_URL points the same suite at another database —
+# which is how it gets run against real Postgres, both locally and in CI
+# (.github/workflows/ci.yml).
+#
+# This exists because the CI workflow *claimed* to run the suite twice,
+# once per dialect, by setting BGCSCAPE_DATABASE_URL — but conftest
+# hardcoded SQLite, so that second job silently tested SQLite again.
+# Verified fixed by actually running the suite against a real Postgres 16
+# instance. A deliberately distinct variable name from the application's
+# BGCSCAPE_DATABASE_URL, so that pointing the *app* at a database can
+# never cause a test run to drop and recreate its tables.
+_TEST_DATABASE_URL = os.environ.get("BGCSCAPE_TEST_DATABASE_URL")
+
 
 @pytest.fixture()
 def engine():
-    eng = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    if _TEST_DATABASE_URL:
+        eng = create_engine(_TEST_DATABASE_URL, future=True)
+        # A real server-backed database persists between tests, unlike a
+        # fresh :memory: SQLite per test — so each test needs a clean slate
+        # explicitly. DROP SCHEMA is used rather than drop_all() because it
+        # also clears alembic_version, keeping a test-created schema from
+        # colliding with a migration-created one in the same database.
+        with eng.begin() as conn:
+            conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
+            conn.execute(text("CREATE SCHEMA public"))
+    else:
+        eng = create_engine("sqlite+pysqlite:///:memory:", future=True)
+
     Base.metadata.create_all(eng)
     yield eng
     eng.dispose()

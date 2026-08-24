@@ -25,7 +25,7 @@ from collections import defaultdict
 from sqlalchemy.orm import Session, selectinload
 
 from bgcscape.api.schemas import BGCSummary, GenomeSummary, TaxonTreeNode
-from bgcscape.models import Genome, Taxon
+from bgcscape.models import BGC, Genome, Taxon
 
 
 def _genome_summary(genome: Genome) -> GenomeSummary:
@@ -41,6 +41,7 @@ def _genome_summary(genome: Genome) -> GenomeSummary:
                 subtype=bgc.subtype,
                 mibig_accession=bgc.mibig_accession,
                 evidence_level=bgc.evidence_level,
+                family_ids=[m.family_id for m in bgc.family_memberships],
             )
             for bgc in genome.bgcs
         ],
@@ -49,7 +50,11 @@ def _genome_summary(genome: Genome) -> GenomeSummary:
 
 def build_taxonomy_tree(session: Session) -> TaxonTreeNode:
     taxa = session.query(Taxon).all()
-    genomes = session.query(Genome).options(selectinload(Genome.bgcs)).all()
+    genomes = (
+        session.query(Genome)
+        .options(selectinload(Genome.bgcs).selectinload(BGC.family_memberships))
+        .all()
+    )
 
     children_by_parent: dict[uuid.UUID | None, list[Taxon]] = defaultdict(list)
     for taxon in taxa:

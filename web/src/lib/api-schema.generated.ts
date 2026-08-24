@@ -89,6 +89,45 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/families": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Families
+         * @description All Gene Cluster Families, most-members-first — the ordering that
+         *     puts the widely-distributed families a user most likely wants to look
+         *     at (and the strongest horizontal-transfer candidates) at the top.
+         */
+        get: operations["list_families_api_v1_families_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/families/{family_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Family */
+        get: operations["get_family_api_v1_families__family_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/search": {
         parameters: {
             query?: never;
@@ -114,7 +153,7 @@ export interface components {
          * AssemblyLevel
          * @enum {string}
          */
-        AssemblyLevel: "complete_genome" | "chromosome" | "scaffold" | "contig" | "mag" | "locus";
+        AssemblyLevel: "complete_genome" | "chromosome" | "scaffold" | "contig" | "mag" | "locus" | "unknown";
         /**
          * BGCClass
          * @description High-level biosynthetic class, aligned to antiSMASH's rule categories
@@ -155,6 +194,82 @@ export interface components {
             /** Compounds */
             compounds: components["schemas"]["CompoundSummary"][];
         };
+        /** BGCFamilyDetail */
+        BGCFamilyDetail: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Label */
+            label: string;
+            /** Clustering Method */
+            clustering_method?: string | null;
+            /** Clustering Cutoff */
+            clustering_cutoff?: number | null;
+            /** Member Count */
+            member_count: number;
+            /** Bgc Classes */
+            bgc_classes: string[];
+            /** Taxon Names */
+            taxon_names: string[];
+            evidence_level: components["schemas"]["EvidenceLevel"];
+            /** Members */
+            members: components["schemas"]["BGCFamilyMember"][];
+        };
+        /** BGCFamilyMember */
+        BGCFamilyMember: {
+            /**
+             * Bgc Id
+             * Format: uuid
+             */
+            bgc_id: string;
+            bgc_class: components["schemas"]["BGCClass"];
+            /** Subtype */
+            subtype?: string | null;
+            /**
+             * Genome Id
+             * Format: uuid
+             */
+            genome_id: string;
+            /** Genome Accession */
+            genome_accession: string;
+            /** Taxon Name */
+            taxon_name?: string | null;
+            evidence_level: components["schemas"]["EvidenceLevel"];
+            /** Similarity Score */
+            similarity_score?: number | null;
+        };
+        /**
+         * BGCFamilySummary
+         * @description A Gene Cluster Family, with enough rolled-up context for the
+         *     frontend to show why it's interesting without a second request.
+         *
+         *     `taxon_names` powers the report's core question — is this family
+         *     confined to one clade, or scattered across distant organisms? A family
+         *     spanning several distinct taxa is exactly the horizontal-transfer /
+         *     convergent-evolution signal the product is meant to surface.
+         */
+        BGCFamilySummary: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Label */
+            label: string;
+            /** Clustering Method */
+            clustering_method?: string | null;
+            /** Clustering Cutoff */
+            clustering_cutoff?: number | null;
+            /** Member Count */
+            member_count: number;
+            /** Bgc Classes */
+            bgc_classes: string[];
+            /** Taxon Names */
+            taxon_names: string[];
+            evidence_level: components["schemas"]["EvidenceLevel"];
+        };
         /** BGCSummary */
         BGCSummary: {
             /**
@@ -168,6 +283,11 @@ export interface components {
             /** Mibig Accession */
             mibig_accession?: string | null;
             evidence_level: components["schemas"]["EvidenceLevel"];
+            /**
+             * Family Ids
+             * @default []
+             */
+            family_ids: string[];
         };
         /** CompoundSummary */
         CompoundSummary: {
@@ -431,6 +551,57 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BGCDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_families_api_v1_families_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BGCFamilySummary"][];
+                };
+            };
+        };
+    };
+    get_family_api_v1_families__family_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                family_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BGCFamilyDetail"];
                 };
             };
             /** @description Validation Error */

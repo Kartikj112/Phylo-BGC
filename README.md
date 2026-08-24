@@ -56,13 +56,20 @@ cp .env.local.example .env.local
 npm run dev                              # http://localhost:3000
 
 # Tests
-cd ../engine && pytest -v          # 84 tests
-cd ../web && npm test               # 24 tests
+cd ../engine && pytest -v          # 91 tests
+cd ../web && npm test               # 30 tests
+
+# Run the engine suite against real Postgres instead of SQLite:
+#   BGCSCAPE_TEST_DATABASE_URL=postgresql+psycopg://user:pass@localhost:5432/bgcscape_test pytest -v
+# (Note the _TEST_ in the variable name — it's deliberately distinct from
+# BGCSCAPE_DATABASE_URL, because the test fixture drops and recreates the
+# schema between tests.)
 ```
 
 ## Status
 
-Phases 1a/1b/1c (data model; MIBiG, GTDB, antiSMASH, BiG-SCAPE ingestion)
-and Phase 2 (visualization API + production frontend) are complete and
-tested. The backend data layer is done end-to-end. See `PROGRESS.md` for
-the full phase tracker and what's next.
+Phases 1a/1b/1c (data model; MIBiG, GTDB, antiSMASH, BiG-SCAPE ingestion),
+Phase 2 (visualization API + production frontend), and BGC-family
+highlighting from Phase 3 are complete and tested — **against both SQLite
+and real PostgreSQL 16**. See `PROGRESS.md` for the full phase tracker and
+what's next.

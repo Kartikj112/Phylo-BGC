@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   bgcComponentClasses,
+  bgcInFamily,
+  genomeHasFamily,
+  nodeHasFamily,
   bgcMatchesActiveClasses,
   computeTreeLayout,
   countBgcClasses,
@@ -13,7 +16,7 @@ import {
   toDisplayChildren,
   toRootDisplayNode,
 } from "./tree-logic";
-import { buildFixtureTree, findTaxonByName } from "./test-fixtures";
+import { FAM_LOCAL, FAM_SHARED, buildFixtureTree, findTaxonByName } from "./test-fixtures";
 import type { GenomeDisplayNode } from "./api-types";
 
 describe("nodeKey", () => {
@@ -262,5 +265,57 @@ describe("computeTreeLayout", () => {
 
     expect(full.height).toBeGreaterThan(200 + 40); // sanity: actually clears the floor
     expect(collapsed.height).toBeLessThan(full.height);
+  });
+});
+
+describe("family highlighting", () => {
+  it("bgcInFamily matches only BGCs carrying that family id", () => {
+    const tree = buildFixtureTree();
+    const coelicolor = findTaxonByName(tree, "Streptomyces coelicolor")!;
+    const bgcs = coelicolor.direct_genomes[0]!.bgcs;
+    const inFamily = bgcs.filter((b) => bgcInFamily(b, FAM_SHARED));
+    expect(inFamily).toHaveLength(1);
+    expect(inFamily[0]!.bgc_class).toBe("nrps");
+  });
+
+  it("bgcInFamily is false for a null selection (nothing highlighted by default)", () => {
+    const tree = buildFixtureTree();
+    const coelicolor = findTaxonByName(tree, "Streptomyces coelicolor")!;
+    expect(coelicolor.direct_genomes[0]!.bgcs.some((b) => bgcInFamily(b, null))).toBe(false);
+  });
+
+  it("genomeHasFamily finds a genome via any of its BGCs", () => {
+    const tree = buildFixtureTree();
+    const setae = findTaxonByName(tree, "Kitasatospora setae")!;
+    const g: GenomeDisplayNode = { ...setae.direct_genomes[0]!, _kind: "genome" };
+    expect(genomeHasFamily(g, FAM_SHARED)).toBe(true);
+    expect(genomeHasFamily(g, FAM_LOCAL)).toBe(false);
+  });
+
+  it("nodeHasFamily reaches down through several taxonomic levels", () => {
+    const tree = buildFixtureTree();
+    const family = findTaxonByName(tree, "Streptomycetaceae")!;
+    // FAM_LOCAL lives on one genome three levels below this node.
+    expect(nodeHasFamily({ ...family, _kind: "taxon" }, FAM_LOCAL)).toBe(true);
+  });
+
+  it("THE POINT: a scattered family is detected in BOTH genera, a local one in only one", () => {
+    const tree = buildFixtureTree();
+    const streptomyces = findTaxonByName(tree, "Streptomyces")!;
+    const kitasatospora = findTaxonByName(tree, "Kitasatospora")!;
+
+    // FAM_SHARED spans two different genera — the horizontal-transfer /
+    // scattered-distribution signal the product exists to surface.
+    expect(nodeHasFamily({ ...streptomyces, _kind: "taxon" }, FAM_SHARED)).toBe(true);
+    expect(nodeHasFamily({ ...kitasatospora, _kind: "taxon" }, FAM_SHARED)).toBe(true);
+
+    // FAM_LOCAL is confined to one species inside Streptomyces.
+    expect(nodeHasFamily({ ...streptomyces, _kind: "taxon" }, FAM_LOCAL)).toBe(true);
+    expect(nodeHasFamily({ ...kitasatospora, _kind: "taxon" }, FAM_LOCAL)).toBe(false);
+  });
+
+  it("nodeHasFamily is false for an unknown family id", () => {
+    const root = toRootDisplayNode(buildFixtureTree());
+    expect(nodeHasFamily(root, "no-such-family")).toBe(false);
   });
 });

@@ -81,6 +81,36 @@ export function genomeMatchesActiveClasses(genome: GenomeDisplayNode, activeClas
   return genome.bgcs.some((b) => bgcMatchesActiveClasses(b, activeClasses));
 }
 
+/**
+ * Family highlighting: given a selected family id, which BGCs belong to
+ * it. Kept as pure predicates here (rather than inline in the D3
+ * component) for the same reason the class-filtering logic is —
+ * hybrid-class filtering was a real bug precisely because the same
+ * decision was made in two places that then drifted apart.
+ */
+export function bgcInFamily(bgc: BGCSummary, familyId: string | null): boolean {
+  if (!familyId) return false;
+  return bgc.family_ids.includes(familyId);
+}
+
+export function genomeHasFamily(genome: GenomeDisplayNode, familyId: string | null): boolean {
+  if (!familyId) return false;
+  return genome.bgcs.some((b) => bgcInFamily(b, familyId));
+}
+
+/**
+ * Whether any genome at or below this node carries a member of the given
+ * family. Drives the "which parts of the tree does this family reach"
+ * highlight — the report's core distribution question ("is this family
+ * confined to one clade, or scattered across distant organisms?").
+ */
+export function nodeHasFamily(node: DisplayNode, familyId: string | null): boolean {
+  if (!familyId) return false;
+  if (node._kind === "genome") return genomeHasFamily(node, familyId);
+  if (node.direct_genomes.some((g) => genomeHasFamily({ ...g, _kind: "genome" }, familyId))) return true;
+  return node.children.some((c) => nodeHasFamily({ ...c, _kind: "taxon" }, familyId));
+}
+
 /** All component BGC classes reachable from this node (any depth) —
  * used to decide whether an internal taxon node should be dimmed when a
  * filter is active but none of its descendants match. */
