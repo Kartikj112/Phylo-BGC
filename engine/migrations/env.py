@@ -39,6 +39,7 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        render_as_batch=url.startswith("sqlite"),
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -53,7 +54,21 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
+        # SQLite has no real ALTER TABLE DROP/ADD CONSTRAINT — Alembic's
+        # autogenerate needs batch mode (recreate-table-and-copy) to
+        # actually implement a constraint change on SQLite at all.
+        # Without this, a real bug this project's own migration caught:
+        # autogenerate happily emits plain op.drop_constraint() calls that
+        # don't work on SQLite, and — worse — doesn't recreate the
+        # constraint afterward in upgrade() at all, silently discarding
+        # every CHECK constraint's enforcement rather than erroring. Only
+        # matters for SQLite; Postgres supports real ALTER TABLE ADD/DROP
+        # CONSTRAINT and doesn't need batch mode.
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            render_as_batch=connection.dialect.name == "sqlite",
+        )
         with context.begin_transaction():
             context.run_migrations()
 

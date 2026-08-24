@@ -26,6 +26,16 @@ class AssemblyLevel(str, enum.Enum):
     # — are not meaningful here and should be left null; genome_size_bp may
     # still be populated with the locus span.
     LOCUS = "locus"
+    # No real assembly-level metadata is known — e.g. a Genome stub
+    # created by antiSMASH ingestion (see ingest/antismash.py), which has
+    # no way to know completeness/contamination/assembly-level facts about
+    # a genome it wasn't given. Distinct from simply leaving the field
+    # unset: this is an explicit statement that the value is unknown,
+    # not an accidental omission. Defaulting silently to e.g. CONTIG in
+    # that situation would be asserting something not actually known —
+    # exactly the kind of thing this project's "never fabricate data"
+    # principle exists to catch, even in a small case like this.
+    UNKNOWN = "unknown"
 
 
 class Genome(Base, TimestampMixin, ProvenanceMixin):

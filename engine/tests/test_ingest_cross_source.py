@@ -23,10 +23,11 @@ from bgcscape.ingest.mibig import ingest_mibig_entries
 from bgcscape.models import Taxon
 
 FIXTURES = Path(__file__).parent / "fixtures"
+MIBIG_FIXTURES = FIXTURES / "mibig"
 
 
 def test_gtdb_after_mibig_does_not_erase_ncbi_taxid(session, mibig_source, gtdb_source):
-    mibig_entry = json.loads((FIXTURES / "mibig_test_entry_active_single_class.json").read_text())
+    mibig_entry = json.loads((MIBIG_FIXTURES / "mibig_test_entry_active_single_class.json").read_text())
     ingest_mibig_entries(session, mibig_source, [mibig_entry])
 
     taxon = session.query(Taxon).filter_by(name="Streptomyces testomycini").one()
@@ -69,7 +70,7 @@ def test_mibig_after_gtdb_does_not_erase_gtdb_taxonomy_string(session, mibig_sou
     assert taxon_after_gtdb.gtdb_taxonomy_string is not None
     assert taxon_after_gtdb.ncbi_taxid is None
 
-    mibig_entry = json.loads((FIXTURES / "mibig_test_entry_active_single_class.json").read_text())
+    mibig_entry = json.loads((MIBIG_FIXTURES / "mibig_test_entry_active_single_class.json").read_text())
     ingest_mibig_entries(session, mibig_source, [mibig_entry])
 
     # Must still be exactly one row for this species — not a duplicate.

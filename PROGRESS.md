@@ -2,163 +2,140 @@
 
 **Read this file first when resuming work in a new chunk.**
 
-_Last updated: Chunk 4 (Phase 2 complete) — 2026-08-23_
+_Last updated: Chunk 5 (Phase 1c) — 2026-08-24_
 
 ## Status at a glance
 
 | Phase | Scope | Status |
 |---|---|---|
 | 1a | Core scientific data model | ✅ Done |
-| 1b | Curated reference dataset ingestion (MIBiG, GTDB) | ✅ Done |
-| 2 | Visualization API | ✅ Done |
-| 2 | Design prototype (interactive, sample data) | ✅ Done |
-| 2 | **Production Next.js frontend** | ✅ **Done (this chunk)** |
-| 1c | antiSMASH ingestion + BiG-SCAPE family clustering | ⏭️ Next candidate |
-| 3 | BGC-family highlighting, comparative clade analysis | Not started |
+| 1b | Curated reference ingestion (MIBiG, GTDB) | ✅ Done |
+| 1c | **antiSMASH + BiG-SCAPE ingestion** | ✅ **Done (this chunk)** |
+| 2 | Visualization API + production Next.js frontend | ✅ Done |
+| 3 | BGC-family highlighting, comparative clade analysis | ⏭️ Next candidate |
 | 4 | Publication-grade export suite | Not started |
 | 5 | User uploads + novelty prioritization scoring | Not started |
 
-**MVP v1 is now fully end-to-end**: real ingestion (MIBiG + GTDB) → real
-API → real, running, tested frontend that renders an actual taxonomy tree
-with BGC-class overlays, search, filtering, and a detail panel. This was
-verified with both servers running simultaneously against real ingested
-data — not just "the pieces exist," but "they actually talk to each other
-correctly," including a real CORS check.
+**The backend data layer is now complete.** All four data sources from the
+original report's MVP v1+v2 scope ingest correctly, are idempotent, and
+link to each other properly: curated references (MIBiG, GTDB), predicted
+BGCs at genome scale (antiSMASH), and computed family groupings
+(BiG-SCAPE). Every scientific entity in the model now has at least one
+real ingestion path populating it.
 
-## What exists right now (additions since Chunk 3 in bold)
+**84 engine tests + 24 frontend tests = 108 total, all passing.**
+
+## What's new this chunk
 
 ```
-bgc-scape/
-├── README.md, ARCHITECTURE.md, PROGRESS.md (this file) — all updated
-├── engine/                                    (unchanged from Chunk 3)
-│   └── src/bgcscape/cli/main.py                + **dump-openapi-schema command**
-└── web/
-    ├── design-prototype/                       (unchanged — the prototype
-    │                                             this chunk ported from)
-    ├── **package.json, tsconfig.json, next.config.mjs,**
-    ├── **tailwind.config.ts, postcss.config.mjs, vitest.config.ts**
-    ├── **src/fonts/**                           **self-hosted IBM Plex woff2 files**
-    ├── **src/app/**
-    │   ├── **layout.tsx**                        root layout, next/font/local
-    │   ├── **page.tsx**                          main page, wires everything together
-    │   └── **globals.css**
-    ├── **src/components/**
-    │   ├── **Header.tsx**                        wordmark + search
-    │   ├── **ClassFilterRail.tsx**                BGC class filter checkboxes
-    │   ├── **DetailPanel.tsx**                    fetches genome/BGC detail on selection
-    │   └── **TreeCanvas.tsx**                     D3 tree rendering (the core visualization)
-    ├── **src/hooks/useTaxonomyTree.ts**           data-fetching hook
-    └── **src/lib/**
-        ├── **api-schema.generated.ts**            generated from real OpenAPI, not hand-written
-        ├── **api-types.ts**                       convenience aliases + DisplayNode union
-        ├── **api-client.ts**                      typed fetch wrapper
-        ├── **colors.ts**                           design tokens, ported from the prototype
-        ├── **tree-logic.ts**                       pure tree/filter logic, ported + improved
-        ├── **tree-logic.test.ts**                  **24 tests**, incl. the hybrid-filter regression
-        └── **test-fixtures.ts**                    test data matching the real API shape
+engine/src/bgcscape/
+├── models/
+│   ├── bgc.py                  + BGC.external_ref (the antiSMASH↔BiG-SCAPE join key)
+│   └── genome.py               + AssemblyLevel.UNKNOWN
+├── ingest/
+│   ├── antismash.py            NEW — region parser + loader
+│   └── bigscape.py             NEW — family-clustering parser + loader
+├── cli/main.py                 + `bgcscape ingest antismash|bigscape`
+└── migrations/
+    ├── env.py                  + render_as_batch for SQLite (see bug #2 below)
+    └── versions/fd9be...py     NEW — hand-written incremental migration
+
+engine/tests/
+├── fixtures/mibig/             MIBiG fixtures moved into their own subdir (bug #3)
+├── fixtures/antismash_test_result.json    NEW
+├── fixtures/mix_clustering_c0.3.tsv       NEW
+├── test_ingest_antismash.py    NEW — 14 tests
+└── test_ingest_bigscape.py     NEW — 10 tests
 ```
 
-**59 engine tests + 24 frontend tests = 83 tests total, all passing.**
+## Real bugs found and fixed this chunk
 
-## What was actually verified this chunk, in order
+Full detail in ARCHITECTURE.md; the short version, because two of these
+matter well beyond this chunk:
 
-Every step below was run for real, not assumed:
-
-1. `npm install` — resolved to 0 vulnerabilities after upgrading
-   Next.js 14→16 (14.x had no further stable patches) and force-upgrading
-   Vitest to close a dev-only esbuild advisory.
-2. `npx tsc --noEmit` — clean, after fixing one real type mismatch (see
-   ARCHITECTURE.md).
-3. `npx vitest run` — 24/24, including a direct automated regression test
-   for the hybrid-BGC filtering bug found last chunk (previously only
-   caught by manual verification of the prototype).
-4. `next build` (production) — succeeded, after solving a real font-hosting
-   problem (see below).
-5. **Full end-to-end**: real `uvicorn` + real `next start`, both running
-   simultaneously against real ingested fixture data, hit with real `curl`
-   — confirmed correct HTML content, confirmed self-hosted fonts resolve,
-   confirmed the API's CORS config actually permits the frontend's origin.
-
-## Real problems found and fixed this chunk
-
-1. **`next/font/google` can't build in this sandbox.** It fetches font
-   files from `fonts.googleapis.com` at *build time* to self-host them —
-   that domain isn't in this sandbox's network allow-list, so the first
-   `next build` failed outright. Same *class* of issue as MIBiG/GTDB not
-   being reachable from `bash_tool` in earlier chunks, hit again in a
-   different subsystem. Fixed by fetching the real IBM Plex Sans/Mono
-   `.woff2` files from IBM's own open-source GitHub repo and switching to
-   `next/font/local` — the functional equivalent of what
-   `next/font/google` would have produced, actually verified to build.
-2. **A real TypeScript type mismatch**: `classColor()`'s `subtype`
-   parameter was typed `string | null`, but the generated OpenAPI type for
-   an `Optional[str] = None` Pydantic field is `string | null |
-   undefined` (optional property, not just nullable). Fixed by widening
-   the function signature to match the real generated type.
-3. **A test-design bug, not a code bug**: the first version of a
-   "collapsing reduces tree height" test used a fixture tree too small to
-   clear the layout's `MIN_TREE_HEIGHT` floor in either state, so both
-   sides of the comparison were equal by coincidence. Rewritten with a
-   purpose-sized tree so the test actually exercises the scaling logic.
+1. **BGC class was being mapped from the wrong antiSMASH field.**
+   `area["products"]` sounds like the product category but actually holds
+   antiSMASH's fine-grained *rule names* ("T1PKS", "NRPS-like"). The real
+   7-value category vocabulary lives on each protocluster's `category`.
+   Caught by a test expecting `"NRPS+PKS"` and getting `"NRPS+T1PKS"`.
+   Left unfixed, this would have silently misclassified a large fraction
+   of real antiSMASH regions as `OTHER`.
+2. **An autogenerated Alembic migration would have silently destroyed
+   every CHECK constraint in the database.** It detected all named CHECK
+   constraints across every table as "removed," emitted drops for all of
+   them, and recreated none — undoing the Phase 1b constraint fix
+   entirely. Fixed with `render_as_batch=True` for SQLite plus
+   hand-writing the migration. **Standing takeaway: in this project,
+   never apply an autogenerated migration touching CHECK constraints
+   without reading it first.**
+3. **A fixture-directory collision that exposed a real code fragility.**
+   Adding an antiSMASH fixture broke MIBiG's directory ingestion, which
+   globbed `*.json` indiscriminately and fed foreign JSON to the MIBiG
+   parser. Fixed on both sides — fixtures reorganized per-source, and
+   `read_mibig_entries_from_path()` now skips non-MIBiG files with a
+   warning instead of producing confusing parse errors. The second half
+   matters for real users pointing at mixed directories, not just tests.
 
 ## Key design decisions made this chunk
 
-1. **Generated, not hand-maintained, API types** — `openapi-typescript`
-   against the real FastAPI schema, via a new `bgcscape dump-openapi-schema`
-   CLI command. Direct response to this project's own history of
-   shape-assumption bugs (see ARCHITECTURE.md).
-2. **`d3.hierarchy(root, childrenAccessor)` instead of pre-pruning** — an
-   architecture improvement found *while porting* the prototype, not a
-   mechanical copy. The accessor function checks collapse state itself,
-   avoiding a parallel "pruned tree" data shape recomputed on every toggle.
-3. **Self-hosted local fonts** over `next/font/google`, for the reason
-   above — also arguably the more genuinely "production-grade" choice
-   regardless of this sandbox's constraints (no runtime dependency on
-   Google's font CDN).
-4. **`bgcscape dump-openapi-schema` is a lazy-imported CLI command** — so
-   the core CLI keeps working without the `api` extra installed; only this
-   one command needs it.
+1. **`BGC.external_ref` stores antiSMASH's own per-region filename stem**
+   — because that's already exactly what BiG-SCAPE's output keys on. The
+   join key is real and shared between the tools, not invented here.
+2. **`--genome-accession` is required for antiSMASH ingestion**, not
+   guessed. antiSMASH's JSON genuinely has no assembly-accession field;
+   inferring one would manufacture a provenance claim the source data
+   doesn't support.
+3. **`AssemblyLevel.UNKNOWN`** — an explicit "not known" for
+   antiSMASH-created genome stubs, rather than a plausible-looking default.
+   Combined with `update_existing=False`, so placeholder values can never
+   overwrite real GTDB metadata.
+4. **Families are keyed on `(source_id, label, clustering_cutoff)`** —
+   `FAM_00001` at cutoff 0.3 and at 0.7 are different groupings that
+   merely share a label.
+5. **Unmatched BiG-SCAPE rows count as `skipped`, not errors** —
+   expected when a run included MIBiG reference clusters.
+
+## Verified end-to-end this chunk
+
+The full four-source pipeline run through the real CLI against a real
+database: GTDB → MIBiG → antiSMASH → BiG-SCAPE. Confirmed by direct SQL
+that antiSMASH's BGCs attached to GTDB's *existing* genome row (preserving
+`completeness_pct=99.87` rather than overwriting it), and that BiG-SCAPE's
+families joined the right BGCs. Then confirmed via a live API server that
+the taxonomy tree endpoint returns the combined result — curated MIBiG and
+predicted antiSMASH BGCs on the same tree.
 
 ## Explicitly deferred / not yet built
 
-antiSMASH/BiG-SCAPE ingestion · BGC-family highlighting in the tree ·
-comparative clade analysis · publication-grade SVG/PDF export · Web Worker
-offloading (premature at current data scale) · novelty scoring · user
-uploads · full per-field multi-source provenance.
+CORASON integration · BGC-family highlighting in the frontend (the data
+now exists; the UI doesn't use it yet) · comparative clade analysis ·
+publication-grade export · novelty scoring · user uploads · full per-field
+multi-source provenance · `similarity_score` on family memberships (the
+column exists but BiG-SCAPE's clustering TSV doesn't carry pairwise
+distances — they're in a separate network file, not yet ingested).
 
 ## Known constraints from this build environment
 
-- Everything from Chunks 1–3 still applies.
-- **No browser in this sandbox** — actual visual rendering has never been
-  seen by anything in this build process, only HTML content correctness
-  and logical behavior. This is the single most important thing to check
-  yourself before trusting the visual result.
-- `next dev`/`uvicorn --reload` weren't left running as persistent
-  services — background processes don't survive across separate tool
-  calls in this environment (confirmed directly: an E2E check split across
-  two calls failed with "connection refused" on the second, because the
-  first call's background servers had already been torn down when that
-  call's shell session ended). All multi-service verification this chunk
-  was done within single, combined tool calls for exactly this reason.
+- All prior chunks' constraints still apply. Notably: **no browser**, so
+  the frontend's actual visual rendering has still never been seen by
+  anything in this build process.
+- Real bulk data (actual MIBiG/GTDB downloads, real antiSMASH runs) has
+  never been ingested — only schema-accurate synthetic fixtures. The
+  parsers are written against verified real formats, but "verified format"
+  and "verified against real data at volume" are different claims.
+- Postgres has still never been tested — every database check across all
+  five chunks has been SQLite. `docker-compose.yml` exists for this;
+  it's the single biggest untested assumption in the project.
 
 ## How to resume
 
-MVP v1 is functionally complete end-to-end. Reasonable next directions,
-genuinely different in kind:
-
-- **antiSMASH + BiG-SCAPE ingestion (Phase 1c)** — completes the MVP v2
-  backend data layer (predicted BGCs at scale, family clustering), which
-  the frontend's BGC-family-highlighting features would then have
-  something real to render.
-- **Frontend polish** — the production app covers MVP v1's core loop but
-  not everything the prototype demonstrated (e.g. refined interaction
-  details); worth comparing the two side by side.
-- **Deploy something** — Postgres via docker-compose has still never been
-  tested against real Postgres (only SQLite, repeatedly, in this sandbox);
-  worth doing before trusting the Postgres path.
-
 Say "continue" and, absent other direction, this project will proceed with
-antiSMASH + BiG-SCAPE ingestion — it's the more clearly-scoped unit of
-work and unblocks real (if still fixture-scale) predicted-BGC data at
-volume, which several already-built frontend pieces (the class filter
-rail, especially) would benefit from having more of to work with.
+**frontend BGC-family features (Phase 3)** — the family data now exists
+end-to-end but nothing in the UI surfaces it, which is the most visible
+gap between what the backend knows and what a user can see.
+
+Reasonable alternatives if you'd prefer: **test against real Postgres**
+(the biggest untested assumption, and cheap to check); **ingest real data
+at volume** (would validate the parsers against reality rather than
+fixtures); or **publication-grade SVG/PDF export** (Phase 4 — the original
+report's "Publication-First" principle, still entirely unbuilt).

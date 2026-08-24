@@ -19,6 +19,7 @@ from bgcscape.ingest.mibig import ingest_mibig_entries, read_mibig_entries_from_
 from bgcscape.models import Base, Source, SourceType
 
 FIXTURES = Path(__file__).parent / "fixtures"
+MIBIG_FIXTURES = FIXTURES / "mibig"
 GTDB_TSV = FIXTURES / "gtdb_metadata_test.tsv"
 
 
@@ -50,7 +51,7 @@ def api_client(monkeypatch) -> Iterator[TestClient]:
         seed_session.commit()
 
         ingest_gtdb_metadata(seed_session, gtdb_source, read_gtdb_metadata_tsv(GTDB_TSV))
-        ingest_mibig_entries(seed_session, mibig_source, read_mibig_entries_from_path(FIXTURES))
+        ingest_mibig_entries(seed_session, mibig_source, read_mibig_entries_from_path(MIBIG_FIXTURES))
 
     # Patch the API's session factory to use this exact engine, rather than
     # whatever BGCSCAPE_DATABASE_URL happens to be set to.

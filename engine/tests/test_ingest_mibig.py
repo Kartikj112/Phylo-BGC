@@ -16,7 +16,7 @@ from bgcscape.models import BGC, BGCClass, Compound, Genome, Taxon
 from bgcscape.models.base import EvidenceLevel
 from bgcscape.models.genome import AssemblyLevel
 
-FIXTURES = Path(__file__).parent / "fixtures"
+FIXTURES = Path(__file__).parent / "fixtures" / "mibig"
 
 
 def _load_fixture(name: str) -> dict:
@@ -186,6 +186,22 @@ def test_read_mibig_entries_from_fixtures_directory():
     entries = list(read_mibig_entries_from_path(FIXTURES))
     accessions = {e["accession"] for e in entries}
     assert accessions == {"BGC-TEST0000001", "BGC-TEST0000002", "BGC-TEST0000003"}
+
+
+def test_read_mibig_entries_skips_non_mibig_json_in_a_mixed_directory(tmp_path):
+    """A directory holding another tool's JSON alongside MIBiG entries
+    should yield only the MIBiG ones, not feed foreign JSON into the
+    parser and produce confusing "missing required field" errors. This
+    project hit exactly that when an antiSMASH fixture landed in a shared
+    fixture directory.
+    """
+    import shutil
+
+    shutil.copy(FIXTURES / "mibig_test_entry_active_single_class.json", tmp_path)
+    shutil.copy(FIXTURES.parent / "antismash_test_result.json", tmp_path)
+
+    entries = list(read_mibig_entries_from_path(tmp_path))
+    assert [e["accession"] for e in entries] == ["BGC-TEST0000001"]
 
 
 def test_ingest_full_fixture_directory_end_to_end(session, mibig_source):

@@ -19,6 +19,7 @@ class BGCBase(BaseModel):
     subtype: str | None = None
     predicted_by_tool: str | None = None
     mibig_accession: str | None = None
+    external_ref: str | None = None
     raw_annotation: dict | None = None
     source_id: uuid.UUID
     evidence_level: EvidenceLevel

@@ -31,6 +31,7 @@ never lets one bad entry abort the whole run.
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -59,6 +60,8 @@ _MIBIG_CLASS_TO_BGC_CLASS: dict[str, BGCClass] = {
 }
 
 ACTIVE_STATUS = "active"
+
+logger = logging.getLogger(__name__)
 
 
 class MibigParseError(ValueError):
@@ -308,12 +311,26 @@ def load_mibig_entry(session: Session, parsed: ParsedMibigEntry, source: Source)
 def read_mibig_entries_from_path(path: str | Path) -> Iterator[dict[str, Any]]:
     """Yield raw entry dicts from a path: a single `.json` file, or a
     directory of them (MIBiG's own bulk download is one file per entry).
+
+    Directory mode globs `*.json` indiscriminately, so a directory holding
+    *other* tools' JSON alongside MIBiG entries will feed those in too —
+    they'll then fail `parse_mibig_entry` with a confusing "missing
+    required field: 'accession'" rather than anything pointing at the real
+    problem. This project hit exactly that when an antiSMASH result
+    fixture was added to a shared test-fixture directory. Files lacking
+    MIBiG's two mandatory top-level keys are therefore skipped with a
+    warning rather than yielded, so a mixed directory degrades to "ignored
+    the irrelevant files" instead of "reported spurious parse errors."
     """
     path = Path(path)
     files = sorted(path.glob("*.json")) if path.is_dir() else [path]
     for file_path in files:
         with open(file_path, encoding="utf-8") as fh:
-            yield json.load(fh)
+            raw = json.load(fh)
+        if not isinstance(raw, dict) or "accession" not in raw or "biosynthesis" not in raw:
+            logger.warning("Skipping %s: does not look like a MIBiG entry JSON", file_path)
+            continue
+        yield raw
 
 
 def ingest_mibig_entries(

@@ -1,6 +1,8 @@
-"""Ingestion parsers and loaders for curated reference datasets.
+"""Ingestion parsers and loaders for curated reference datasets and
+predicted/computed analysis outputs.
 
-Each source module (mibig.py, gtdb.py, ...) follows the same shape:
+Each source module (mibig.py, gtdb.py, antismash.py, bigscape.py) follows
+the same shape:
   parse_*()   pure function, raw external format -> a plain dataclass. No
               database access — unit-testable in isolation.
   load_*()    dataclass + Session + Source -> idempotent upsert of ORM
@@ -9,7 +11,7 @@ Each source module (mibig.py, gtdb.py, ...) follows the same shape:
               filtering, and never lets one bad record abort the run — see
               ingest/_util.py's IngestReport.
 
-antiSMASH region-JSON ingestion is intentionally not here yet — see
-PROGRESS.md for why (it's MVP v2 in the original product report, and this
-chunk stayed scoped to MVP v1: MIBiG + GTDB).
+antismash.py and bigscape.py are linked by a real, verified join key
+(antiSMASH's own per-region GenBank filename convention, stored as
+`BGC.external_ref`) — see either module's docstring for the detail.
 """

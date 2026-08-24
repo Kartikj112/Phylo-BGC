@@ -59,8 +59,38 @@ of this repo.
   subprocess/service and to store only its *output* (predictions), not its
   code.
 - **Data (antiSMASH DB predictions):** predicted, not curated — every BGC
-  row ingested from antiSMASH output should carry
+  row ingested from antiSMASH output carries
   `evidence_level = PREDICTED`, never `OBSERVED_CURATED`.
+- **BGC-scape does not vendor any antiSMASH code** —
+  `engine/src/bgcscape/ingest/antismash.py` is an independently-written
+  parser for antiSMASH's *output format*, not a derivative of the
+  AGPL-licensed program itself.
+- **Output format, verified 2026-08-24** against the `antismash/antismash`
+  GitHub source (read directly, not assumed from an older version):
+  - Top-level result JSON: `version`, `input_file`, `taxon`, `schema`
+    (currently 4), `records[]` — defined in
+    `antismash/common/serialiser.py`.
+  - Per-record: `id`, `description`, `areas[]` (the regions).
+  - Per-area: `start`, `end`, `products[]`, `protoclusters{}`,
+    `candidates[]`, `subregions[]`.
+  - **Important, and a real trap:** `area["products"]` holds antiSMASH's
+    *specific rule names* ("T1PKS", "NRPS-like", "lanthipeptide-class-i",
+    …) — dozens of possible values. The broad 7-value category vocabulary
+    that maps onto `BGCClass` lives one level down, on each protocluster's
+    `category` field, defined in
+    `antismash/detection/hmm_detection/data/categories.json`: PKS, NRPS,
+    RiPP, terpene, saccharide, alkaloid, other. Mapping from `products`
+    instead produces wrong classifications — this project made exactly
+    that mistake and caught it in testing.
+  - **antiSMASH's JSON has no assembly-accession field at all.** Its
+    output is organized per-run over input sequences, not per-assembly.
+    Linking a run back to a `GCA_`/`GCF_` accession is the caller's job;
+    `bgcscape ingest antismash` therefore requires `--genome-accession`
+    explicitly rather than guessing.
+  - Per-region GenBank filename convention:
+    `f"{record.id}.region{number:03d}.gbk"`, from
+    `antismash/common/secmet/features/region/structures.py`. This is the
+    join key to BiG-SCAPE output (see below).
 
 ## NCBI / GenBank
 
@@ -69,14 +99,36 @@ of this repo.
   for automated retrieval — flagged in the original report and still
   relevant for any Phase 1b ingestion at scale).
 
-## BiG-SCAPE / CORASON
+## BiG-SCAPE
 
-- Analysis tools invoked as external dependencies, per the architecture's
-  separation-of-concerns principle. Their *outputs* (family assignments,
-  BGC-family phylogenies) are stored as `evidence_level = COMPUTED` rows
-  with `Source.source_type = TOOL_RUN`, carrying the specific tool version
-  and parameters used, since a re-run with different parameters is a
-  materially different scientific claim.
+- Analysis tool invoked as an external dependency, per the architecture's
+  separation-of-concerns principle. Its *outputs* (family assignments) are
+  stored as `evidence_level = COMPUTED` rows with
+  `Source.source_type = TOOL_RUN`, carrying the specific tool version and
+  cutoff used, since a re-run at a different cutoff is a materially
+  different scientific claim.
+- **Output format, verified 2026-08-24** against the
+  `medema-group/BiG-SCAPE` GitHub source
+  (`big_scape/output/legacy_output.py`):
+  - Clustering file: `{bin_label}_clustering_c{cutoff}.tsv`, columns
+    `Record`, `GBK`, `Record_Type`, `Record_Number`, `CC`, `Family`.
+  - `GBK` is the per-region GenBank filename *stem* — i.e. exactly
+    antiSMASH's `{record_id}.region{NNN:03d}` convention above. This is
+    the real cross-tool join key, stored on `BGC.external_ref` by
+    antiSMASH ingestion and matched directly by BiG-SCAPE ingestion. No
+    transformation needed, and no convention invented by BGC-scape.
+  - A `Family` label is only meaningful **within one cutoff** — the same
+    label at a different cutoff is a different grouping. BGC-scape keys
+    families on `(source_id, label, clustering_cutoff)` accordingly.
+  - Real BiG-SCAPE runs commonly mix in MIBiG reference BGCs for
+    comparison. Those rows won't match any `external_ref` (MIBiG
+    ingestion has no antiSMASH filename to derive one from), so they're
+    reported as `skipped`, distinctly from errors.
+
+## CORASON
+
+- Analysis tool invoked as an external dependency, same treatment as
+  BiG-SCAPE above. Not yet integrated.
 
 ## Search provenance for this document
 

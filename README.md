@@ -41,7 +41,10 @@ alembic upgrade head
 # 2. Ingest some data (curated test fixtures ship with the repo; real
 #    MIBiG/GTDB downloads are a separate step — see docs/DATA_SOURCES.md)
 bgcscape ingest gtdb tests/fixtures/gtdb_metadata_test.tsv
-bgcscape ingest mibig tests/fixtures/
+bgcscape ingest mibig tests/fixtures/mibig/
+bgcscape ingest antismash tests/fixtures/antismash_test_result.json \
+    --genome-accession GCF_TEST900001.1
+bgcscape ingest bigscape tests/fixtures/mix_clustering_c0.3.tsv
 
 # 3. API
 uvicorn bgcscape.api.app:app --reload   # http://127.0.0.1:8000
@@ -53,12 +56,13 @@ cp .env.local.example .env.local
 npm run dev                              # http://localhost:3000
 
 # Tests
-cd ../engine && pytest -v          # 59 tests
+cd ../engine && pytest -v          # 84 tests
 cd ../web && npm test               # 24 tests
 ```
 
 ## Status
 
-Phases 1a/1b (data model, MIBiG+GTDB ingestion) and Phase 2 (visualization
-API + production frontend) are complete and tested. See `PROGRESS.md` for
+Phases 1a/1b/1c (data model; MIBiG, GTDB, antiSMASH, BiG-SCAPE ingestion)
+and Phase 2 (visualization API + production frontend) are complete and
+tested. The backend data layer is done end-to-end. See `PROGRESS.md` for
 the full phase tracker and what's next.

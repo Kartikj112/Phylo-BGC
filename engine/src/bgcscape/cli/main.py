@@ -10,6 +10,12 @@ import bgcscape.models as models  # noqa: F401 - ensures all models are register
 from bgcscape import __version__
 from bgcscape.db.session import get_engine, session_scope
 from bgcscape.ingest._util import IngestReport
+from bgcscape.ingest.antismash import ingest_antismash_result, read_antismash_result
+from bgcscape.ingest.bigscape import (
+    ingest_bigscape_clustering,
+    parse_cutoff_from_filename,
+    read_bigscape_clustering_tsv,
+)
 from bgcscape.ingest.gtdb import ingest_gtdb_metadata, read_gtdb_metadata_tsv
 from bgcscape.ingest.mibig import ingest_mibig_entries, read_mibig_entries_from_path
 from bgcscape.models import Source, SourceType
@@ -95,6 +101,74 @@ def ingest_gtdb_cmd(
         rows = read_gtdb_metadata_tsv(path)
         report = ingest_gtdb_metadata(session, source, rows)
     _echo_report(report)
+
+
+@ingest_app.command("antismash")
+def ingest_antismash_cmd(
+    path: Path = typer.Argument(..., help="An antiSMASH result JSON file (the whole-run output)."),
+    genome_accession: str = typer.Option(
+        ...,
+        help=(
+            "The genome accession this antiSMASH run was performed on. Required, and deliberately "
+            "not guessed: antiSMASH's JSON has no assembly-accession field at all (its output is "
+            "organized per-run, not per-assembly), so only the caller knows this."
+        ),
+    ),
+    version: str = typer.Option("7.1.0", help="antiSMASH version label to record on the Source row."),
+) -> None:
+    """Ingest predicted BGC regions from an antiSMASH result JSON."""
+    with session_scope() as session:
+        source = _get_or_create_source(
+            session, name="antiSMASH", source_type=SourceType.TOOL_RUN, version=version
+        )
+        raw = read_antismash_result(path)
+        report = ingest_antismash_result(session, source, raw, genome_accession=genome_accession)
+    _echo_report(report)
+
+
+@ingest_app.command("bigscape")
+def ingest_bigscape_cmd(
+    path: Path = typer.Argument(..., help="A BiG-SCAPE *_clustering_c{cutoff}.tsv file."),
+    cutoff: float = typer.Option(
+        None,
+        help=(
+            "Similarity cutoff this clustering was run at. Inferred from the filename "
+            "(BiG-SCAPE's own '..._clustering_c0.3.tsv' convention) when omitted. Required, "
+            "because a family label is only meaningful within a single cutoff."
+        ),
+    ),
+    version: str = typer.Option("2.0.0", help="BiG-SCAPE version label to record on the Source row."),
+) -> None:
+    """Ingest BGC family assignments from a BiG-SCAPE clustering TSV.
+
+    Requires the referenced BGCs to already exist (via `bgcscape ingest
+    antismash`) — rows that don't match a known BGC are counted as
+    skipped, which is expected when the BiG-SCAPE run included MIBiG
+    reference clusters for comparison.
+    """
+    resolved_cutoff = cutoff if cutoff is not None else parse_cutoff_from_filename(path)
+    if resolved_cutoff is None:
+        typer.echo(
+            f"Couldn't infer a cutoff from filename '{path.name}' — pass --cutoff explicitly.",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    with session_scope() as session:
+        source = _get_or_create_source(
+            session, name="BiG-SCAPE", source_type=SourceType.TOOL_RUN, version=version
+        )
+        rows = read_bigscape_clustering_tsv(path)
+        report = ingest_bigscape_clustering(
+            session, source, rows, cutoff=resolved_cutoff, clustering_method=f"BiG-SCAPE {version}"
+        )
+    typer.echo(f"Cutoff: {resolved_cutoff}")
+    _echo_report(report)
+    if report.skipped:
+        typer.echo(
+            f"  ({report.skipped} row(s) referenced a BGC not in the database — expected if the "
+            "BiG-SCAPE run included MIBiG reference clusters, or if antiSMASH ingestion hasn't run yet.)"
+        )
 
 
 @app.command("dump-openapi-schema")

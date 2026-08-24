@@ -1,0 +1,83 @@
+{
+  "version": "7.1.0-test",
+  "input_file": "GCF_TEST900001.1.gbk",
+  "taxon": "bacteria",
+  "schema": 4,
+  "records": [
+    {
+      "id": "NZ_TEST0000001.1",
+      "description": "synthetic fixture contig 1, not a real antiSMASH result",
+      "areas": [
+        {
+          "start": 104200,
+          "end": 128650,
+          "products": ["NRPS"],
+          "protoclusters": {
+            "0": {
+              "category": "NRPS",
+              "start": 104200,
+              "end": 128650,
+              "core_start": 106000,
+              "core_end": 126000,
+              "product": "NRPS",
+              "tool": "rule-based-clusters"
+            }
+          },
+          "candidates": [],
+          "subregions": []
+        },
+        {
+          "start": 250000,
+          "end": 288400,
+          "products": ["NRPS", "T1PKS"],
+          "protoclusters": {
+            "0": {
+              "category": "NRPS",
+              "start": 250000,
+              "end": 270000,
+              "core_start": 252000,
+              "core_end": 268000,
+              "product": "NRPS",
+              "tool": "rule-based-clusters"
+            },
+            "1": {
+              "category": "PKS",
+              "start": 265000,
+              "end": 288400,
+              "core_start": 267000,
+              "core_end": 286000,
+              "product": "T1PKS",
+              "tool": "rule-based-clusters"
+            }
+          },
+          "candidates": [],
+          "subregions": []
+        }
+      ]
+    },
+    {
+      "id": "NZ_TEST0000002.1",
+      "description": "synthetic fixture contig 2, not a real antiSMASH result",
+      "areas": [
+        {
+          "start": 5100,
+          "end": 24800,
+          "products": ["terpene"],
+          "protoclusters": {
+            "0": {
+              "category": "terpene",
+              "start": 5100,
+              "end": 24800,
+              "core_start": 6000,
+              "core_end": 23000,
+              "product": "terpene",
+              "tool": "rule-based-clusters"
+            }
+          },
+          "candidates": [],
+          "subregions": []
+        }
+      ]
+    }
+  ]
+}
