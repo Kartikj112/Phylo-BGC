@@ -177,3 +177,146 @@ export function computeTreeLayout(root: TaxonDisplayNode, collapsed: ReadonlySet
     height: innerHeight + HEIGHT_MARGIN,
   };
 }
+
+/**
+ * Search support.
+ *
+ * The first implementation only recolored matching labels, which failed
+ * three ways at realistic scale: the highlight colour (signal teal) sits
+ * too close to body ink to read at 12px; a match inside a collapsed node
+ * isn't rendered at all; and with ~150 nodes a match is usually off the
+ * visible scroll. The result looked completely inert even when it was
+ * working. These helpers fix the first two structurally — the third is a
+ * rendering concern (dimming non-matches so the eye finds them).
+ */
+export function collectMatchKeys(root: TaxonDisplayNode, query: string): Set<string> {
+  const matches = new Set<string>();
+  if (!query.trim()) return matches;
+
+  function walk(node: DisplayNode): void {
+    if (matchesQuery(node, query)) matches.add(nodeKey(node));
+    if (node._kind === "genome") return;
+    node.direct_genomes.forEach((g) => walk({ ...g, _kind: "genome" }));
+    node.children.forEach((c) => walk({ ...c, _kind: "taxon" }));
+  }
+  walk(root);
+  return matches;
+}
+
+/** Keys of every ancestor of a match, so the path to it can be forced
+ * open. Without this, searching for something inside a collapsed clade
+ * silently finds nothing. */
+export function ancestorsOfMatches(root: TaxonDisplayNode, query: string): Set<string> {
+  const needed = new Set<string>();
+  if (!query.trim()) return needed;
+
+  function walk(node: DisplayNode, path: string[]): boolean {
+    const selfMatches = matchesQuery(node, query);
+    let descendantMatches = false;
+
+    if (node._kind === "taxon") {
+      const nextPath = [...path, nodeKey(node)];
+      for (const g of node.direct_genomes) {
+        if (walk({ ...g, _kind: "genome" }, nextPath)) descendantMatches = true;
+      }
+      for (const c of node.children) {
+        if (walk({ ...c, _kind: "taxon" }, nextPath)) descendantMatches = true;
+      }
+    }
+
+    if (selfMatches || descendantMatches) {
+      path.forEach((key) => needed.add(key));
+    }
+    return selfMatches || descendantMatches;
+  }
+
+  walk(root, []);
+  return needed;
+}
+
+/** Collapse state with the paths to search matches forced open. */
+export function effectiveCollapsed(
+  root: TaxonDisplayNode,
+  collapsed: ReadonlySet<string>,
+  query: string,
+): Set<string> {
+  if (!query.trim()) return new Set(collapsed);
+  const mustOpen = ancestorsOfMatches(root, query);
+  return new Set([...collapsed].filter((key) => !mustOpen.has(key)));
+}
+
+/** Whether a node is a match or contains one — used to keep whole
+ * branches visible rather than dimming the context around a hit. */
+export function nodeMatchesOrContains(node: DisplayNode, query: string): boolean {
+  if (!query.trim()) return false;
+  if (matchesQuery(node, query)) return true;
+  if (node._kind === "genome") return false;
+  return (
+    node.direct_genomes.some((g) => matchesQuery({ ...g, _kind: "genome" }, query)) ||
+    node.children.some((c) => nodeMatchesOrContains({ ...c, _kind: "taxon" }, query))
+  );
+}
+
+/**
+ * Branch weighting.
+ *
+ * Every branch was a 1.25px hairline carrying no information, which is
+ * the main reason the tree read as thin and diagrammatic rather than as a
+ * data figure. Scaling stroke width by the BGC count in the subtree a
+ * branch leads to makes the tree's visual mass *be* the biosynthetic
+ * signal — thick branches lead somewhere biosynthetically rich.
+ *
+ * Deliberately NOT a Sankey: a real Sankey needs conserved flow, and
+ * ribbon widths on a phylogeny would compete with branch length for the
+ * same visual channel. This keeps the tree a tree and adds one honest
+ * encoding on top. (The root → phylum → class flow IS conserved and would
+ * make a legitimate Sankey — but as a separate view, not grafted onto
+ * ancestry.)
+ *
+ * Uses a sqrt scale, not linear: BGC counts span roughly two orders of
+ * magnitude across a real corpus, and a linear map makes the trunk a slab
+ * while every tip vanishes. sqrt keeps small clades legible while the
+ * ordering still reads correctly.
+ */
+export const MIN_BRANCH_WIDTH = 1;
+export const MAX_BRANCH_WIDTH = 11;
+
+export function subtreeBgcCount(node: DisplayNode): number {
+  if (node._kind === "genome") return node.bgcs.length;
+  // Taxon nodes already carry rolled-up counts from the API, so this
+  // avoids re-walking the whole subtree per branch on every render.
+  return Object.values(node.bgc_class_counts).reduce((sum, n) => sum + n, 0);
+}
+
+export function branchWidth(node: DisplayNode, maxCount: number): number {
+  const count = subtreeBgcCount(node);
+  if (count <= 0 || maxCount <= 0) return MIN_BRANCH_WIDTH;
+  // Clamped, not merely scaled. Without this the width is unbounded
+  // whenever a node's count exceeds `maxCount` — which happens if a
+  // caller passes a stale or wrongly-scoped max, and produced a 27px
+  // branch in testing. A rendering bug that draws a slab across the
+  // figure is worth making structurally impossible rather than relying
+  // on callers to pass the right maximum.
+  const scaled = Math.min(1, Math.sqrt(count) / Math.sqrt(maxCount));
+  return MIN_BRANCH_WIDTH + scaled * (MAX_BRANCH_WIDTH - MIN_BRANCH_WIDTH);
+}
+
+/** The BGC class contributing most to a subtree, for branch tinting.
+ * Returns null on ties or when empty — a tinted branch should mean
+ * something, and "no clear dominant class" is a real answer. */
+export function dominantBgcClass(node: DisplayNode): string | null {
+  const counts: Record<string, number> =
+    node._kind === "genome"
+      ? node.bgcs.reduce<Record<string, number>>((acc, b) => {
+          for (const cls of bgcComponentClasses(b)) acc[cls] = (acc[cls] ?? 0) + 1;
+          return acc;
+        }, {})
+      : node.bgc_class_counts;
+
+  const entries = Object.entries(counts).filter(([, n]) => n > 0);
+  if (entries.length === 0) return null;
+  entries.sort((a, b) => b[1] - a[1]);
+  const [topClass, topCount] = entries[0]!;
+  if (entries.length > 1 && entries[1]![1] === topCount) return null; // genuine tie
+  return topClass;
+}

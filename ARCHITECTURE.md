@@ -842,3 +842,71 @@ artifact and to compare it only against similarly-scored clusters.
 
 That's the general principle this codebase keeps landing on: when the
 honest answer is a judgement call, surface it rather than pick silently.
+
+---
+
+## Fixes and visual weighting (post-review)
+
+Three problems surfaced by actually using the tool at 80-genome scale.
+
+### CORS: a bug that 24 passing API tests couldn't see
+
+`allow_methods=["GET"]` was set in Phase 2 when the API was read-only, and
+never revisited when `POST /api/v1/export` shipped in Phase 4. The browser
+preflight (`OPTIONS`) was rejected with 400, so SVG and PDF export failed
+in the UI while every server-side test passed.
+
+The interesting part is *why* it survived: the Phase 4 end-to-end check
+called the endpoint with `urllib` from Python, and FastAPI's `TestClient`
+doesn't issue preflight requests. So the endpoint was well covered and the
+*browser path to it* was not covered at all. There is now an explicit
+preflight test. General lesson: testing an endpoint is not the same as
+testing how the client actually reaches it.
+
+### Search looked inert because of three compounding failures
+
+Recolouring matched labels to `signal` teal against `ink` body text is
+nearly invisible at 12px; a match inside a collapsed clade never rendered;
+and at ~150 nodes a hit is usually off the visible scroll. Together these
+made a working search read as a broken one. Fixed structurally:
+
+- `effectiveCollapsed()` forces open the ancestor path to every match, so
+  hits inside collapsed clades appear. It opens *only* those paths, not
+  the whole tree.
+- Non-matching branches dim to 15%, so the eye finds hits without needing
+  to scan.
+- Matches get a highlighter wash (warm amber behind the label), which
+  reads at small sizes where a colour swap does not.
+- The header shows a match count, so "no matches" is distinguishable from
+  "search is broken" — precisely the confusion the original caused.
+
+### Weighted branches
+
+Every branch was a 1.25px hairline carrying no information, which is the
+main reason the tree read as thin and diagrammatic. Branch stroke width
+now scales with the BGC count of the subtree it leads to, tinted toward
+that subtree's dominant BGC class. Visual mass becomes the biosynthetic
+signal: thick branches lead somewhere rich.
+
+Details that matter:
+- **sqrt scale, not linear.** Counts span ~two orders of magnitude
+  (397 at the trunk, 0–13 at tips); linear makes the trunk a slab and
+  every tip vanish. Observed result: 11px trunk → 4–9px phyla → 3.5–7px
+  genera → 1–2.8px tips.
+- **Clamped, not merely scaled.** `branchWidth` was unbounded when a
+  node's count exceeded the passed maximum — testing produced a 27px
+  branch. Now `Math.min(1, …)`: a rendering bug that draws a slab across
+  the figure should be structurally impossible, not dependent on callers
+  passing the right maximum.
+- **Muted tint (45% opacity).** The branch is context; the BGC tick marks
+  carry the precise signal and shouldn't have to compete with saturated
+  colour behind them.
+- **`dominantBgcClass` returns null on ties.** A tinted branch should mean
+  something, and "no clear dominant class" is a real answer rather than a
+  reason to pick arbitrarily.
+
+**Deliberately not a Sankey.** A true Sankey needs conserved flow, and
+ribbon widths on a phylogeny would compete with branch length for the same
+visual channel. This keeps the tree a tree and adds one honest encoding.
+The root → phylum → class flow *is* conserved and would make a legitimate
+Sankey — but as a separate view, not grafted onto ancestry.

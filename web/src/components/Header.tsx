@@ -6,10 +6,11 @@ interface HeaderProps {
   query: string;
   onQueryChange: (query: string) => void;
   genomeCount: number;
+  matchCount?: number | null;
   children?: React.ReactNode;
 }
 
-export function Header({ query, onQueryChange, genomeCount, children }: HeaderProps) {
+export function Header({ query, onQueryChange, genomeCount, matchCount, children }: HeaderProps) {
   return (
     <div className="flex flex-shrink-0 items-center gap-4 border-b border-line bg-card px-4 py-3">
       <div className="flex items-center gap-2">
@@ -23,8 +24,19 @@ export function Header({ query, onQueryChange, genomeCount, children }: HeaderPr
           value={query}
           onChange={(e) => onQueryChange(e.target.value)}
           placeholder="Search organism or accession"
-          className="w-full rounded border border-line bg-paper py-1.5 pl-7 pr-2 text-sm text-ink outline-none focus:border-line-strong"
+          className="w-full rounded border border-line bg-paper py-1.5 pl-7 pr-16 text-sm text-ink outline-none focus:border-line-strong"
         />
+        {/* An explicit count so "no matches" is distinguishable from "search
+            is broken" — the failure mode the first version had. */}
+        {query.trim() !== "" && matchCount != null && (
+          <span
+            className={`absolute right-2 top-1/2 -translate-y-1/2 font-mono text-xs ${
+              matchCount === 0 ? "text-red-700" : "text-ink-faint"
+            }`}
+          >
+            {matchCount === 0 ? "no matches" : `${matchCount}`}
+          </span>
+        )}
       </div>
 
       {children}

@@ -498,3 +498,32 @@ def test_prioritization_reports_the_weights_it_used(api_client):
 def test_prioritization_respects_limit(api_client):
     body = api_client.get("/api/v1/prioritization", params={"limit": 2}).json()
     assert len(body["results"]) <= 2
+
+
+def test_export_endpoint_allows_browser_preflight(api_client):
+    """A browser sends OPTIONS before any POST with a JSON content-type.
+    This shipped broken — allow_methods was ["GET"] from when the API was
+    read-only — and every existing test missed it because TestClient calls
+    the endpoint directly without a preflight. So this test issues the
+    preflight explicitly.
+    """
+    response = api_client.options(
+        "/api/v1/export",
+        headers={
+            "Origin": "http://localhost:3000",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+    assert response.status_code == 200, f"preflight rejected: {response.text}"
+    allowed = response.headers.get("access-control-allow-methods", "")
+    assert "POST" in allowed
+    assert response.headers.get("access-control-allow-origin") is not None
+
+
+def test_get_endpoints_still_allow_preflight(api_client):
+    response = api_client.options(
+        "/api/v1/taxonomy-tree",
+        headers={"Origin": "http://localhost:3000", "Access-Control-Request-Method": "GET"},
+    )
+    assert response.status_code == 200

@@ -78,10 +78,17 @@ app = FastAPI(
 
 # Dev-friendly default. Tighten this (specific origins, not "*") before any
 # real deployment — not done here because there's no deployment target yet.
+# allow_methods must include POST for /api/v1/export, and OPTIONS for the
+# browser preflight that precedes any POST carrying a JSON content-type.
+# This was ["GET"] until the export endpoint shipped, which made SVG/PDF
+# download fail in the browser with a 400 on OPTIONS while every
+# server-side test passed — FastAPI's TestClient never issues preflight
+# requests, so 24 API tests covered the endpoint without covering the way
+# a browser actually reaches it. See test_export_endpoint_allows_browser_preflight.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 

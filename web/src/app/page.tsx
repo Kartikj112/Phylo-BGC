@@ -10,7 +10,7 @@ import { Header } from "@/components/Header";
 import { TreeCanvas } from "@/components/TreeCanvas";
 import { useTaxonomyTree } from "@/hooks/useTaxonomyTree";
 import { CLASS_ORDER } from "@/lib/colors";
-import { countBgcClasses, countTotalGenomes, toRootDisplayNode } from "@/lib/tree-logic";
+import { collectMatchKeys, countBgcClasses, countTotalGenomes, toRootDisplayNode } from "@/lib/tree-logic";
 
 export default function HomePage() {
   const { tree, loading, error } = useTaxonomyTree();
@@ -31,6 +31,10 @@ export default function HomePage() {
   const root = useMemo(() => (tree ? toRootDisplayNode(tree) : null), [tree]);
   const classCounts = useMemo(() => (root ? countBgcClasses(root) : {}), [root]);
   const genomeCount = useMemo(() => (root ? countTotalGenomes(root) : 0), [root]);
+  const matchCount = useMemo(
+    () => (root && query.trim() ? collectMatchKeys(root, query).size : null),
+    [root, query],
+  );
 
   function toggleCollapse(key: string): void {
     setCollapsed((prev) => {
@@ -52,7 +56,7 @@ export default function HomePage() {
 
   return (
     <div className="flex h-screen w-full flex-col bg-paper">
-      <Header query={query} onQueryChange={setQuery} genomeCount={genomeCount}>
+      <Header query={query} onQueryChange={setQuery} genomeCount={genomeCount} matchCount={matchCount}>
         <ExportButton
           svgRef={svgRef}
           collapsed={collapsed}

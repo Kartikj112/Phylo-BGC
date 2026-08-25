@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  MAX_BRANCH_WIDTH,
+  MIN_BRANCH_WIDTH,
+  ancestorsOfMatches,
   bgcComponentClasses,
+  branchWidth,
+  collectMatchKeys,
+  dominantBgcClass,
+  effectiveCollapsed,
+  nodeMatchesOrContains,
+  subtreeBgcCount,
   bgcInFamily,
   genomeHasFamily,
   nodeHasFamily,
@@ -317,5 +326,113 @@ describe("family highlighting", () => {
   it("nodeHasFamily is false for an unknown family id", () => {
     const root = toRootDisplayNode(buildFixtureTree());
     expect(nodeHasFamily(root, "no-such-family")).toBe(false);
+  });
+});
+
+describe("search: the failures that made it look inert", () => {
+  it("finds matches anywhere in the tree", () => {
+    const root = toRootDisplayNode(buildFixtureTree());
+    // Two hits: the species taxon and the genome accession that embeds
+    // the same string. Matching is case-insensitive across both label
+    // kinds, which is the intended behaviour.
+    expect(collectMatchKeys(root, "avermitilis").size).toBe(2);
+    expect(collectMatchKeys(root, "streptomyces").size).toBeGreaterThan(1);
+    expect(collectMatchKeys(root, "GCF_TEST_SETAE").size).toBe(1);
+  });
+
+  it("empty query matches nothing rather than everything", () => {
+    const root = toRootDisplayNode(buildFixtureTree());
+    expect(collectMatchKeys(root, "").size).toBe(0);
+    expect(collectMatchKeys(root, "   ").size).toBe(0);
+  });
+
+  it("THE BUG: a match inside a collapsed clade is force-opened", () => {
+    // Previously this rendered nothing at all, so search read as broken.
+    const tree = buildFixtureTree();
+    const root = toRootDisplayNode(tree);
+    const genus = findTaxonByName(tree, "Streptomyces")!;
+
+    const collapsed = new Set([genus.id!]);
+    expect(computeTreeLayout(root, collapsed, 800).nodes.some(
+      (n) => n.data._kind === "taxon" && n.data.name === "Streptomyces avermitilis",
+    )).toBe(false);
+
+    const opened = effectiveCollapsed(root, collapsed, "avermitilis");
+    expect(computeTreeLayout(root, opened, 800).nodes.some(
+      (n) => n.data._kind === "taxon" && n.data.name === "Streptomyces avermitilis",
+    )).toBe(true);
+  });
+
+  it("leaves collapse state untouched when not searching", () => {
+    const tree = buildFixtureTree();
+    const root = toRootDisplayNode(tree);
+    const collapsed = new Set([findTaxonByName(tree, "Streptomyces")!.id!]);
+    expect(effectiveCollapsed(root, collapsed, "")).toEqual(collapsed);
+  });
+
+  it("only opens the path to matches, not the whole tree", () => {
+    const tree = buildFixtureTree();
+    const root = toRootDisplayNode(tree);
+    const collapsed = new Set([
+      findTaxonByName(tree, "Streptomyces")!.id!,
+      findTaxonByName(tree, "Kitasatospora")!.id!,
+    ]);
+    const opened = effectiveCollapsed(root, collapsed, "avermitilis");
+    // Kitasatospora holds no match, so it stays collapsed.
+    expect(opened.has(findTaxonByName(tree, "Kitasatospora")!.id!)).toBe(true);
+    expect(opened.has(findTaxonByName(tree, "Streptomyces")!.id!)).toBe(false);
+  });
+
+  it("nodeMatchesOrContains keeps ancestor branches undimmed", () => {
+    const tree = buildFixtureTree();
+    const strep = findTaxonByName(tree, "Streptomyces")!;
+    const kita = findTaxonByName(tree, "Kitasatospora")!;
+    expect(nodeMatchesOrContains({ ...strep, _kind: "taxon" }, "avermitilis")).toBe(true);
+    expect(nodeMatchesOrContains({ ...kita, _kind: "taxon" }, "avermitilis")).toBe(false);
+  });
+});
+
+describe("branch weighting", () => {
+  it("thicker branches lead to biosynthetically richer subtrees", () => {
+    const tree = buildFixtureTree();
+    const strep = { ...findTaxonByName(tree, "Streptomyces")!, _kind: "taxon" as const };
+    const kita = { ...findTaxonByName(tree, "Kitasatospora")!, _kind: "taxon" as const };
+    expect(subtreeBgcCount(strep)).toBeGreaterThan(subtreeBgcCount(kita));
+    const max = subtreeBgcCount(strep);
+    expect(branchWidth(strep, max)).toBeGreaterThan(branchWidth(kita, max));
+  });
+
+  it("stays within legible bounds even when maxCount is wrong", () => {
+    const tree = buildFixtureTree();
+    const strep = { ...findTaxonByName(tree, "Streptomyces")!, _kind: "taxon" as const };
+    for (const max of [1, 10, 5000]) {
+      const w = branchWidth(strep, max);
+      expect(w).toBeGreaterThanOrEqual(MIN_BRANCH_WIDTH);
+      expect(w).toBeLessThanOrEqual(MAX_BRANCH_WIDTH);
+    }
+  });
+
+  it("an empty subtree gets the minimum width, not zero or NaN", () => {
+    const empty = toRootDisplayNode({
+      id: "e", name: "Empty", rank: "genus", genome_count: 0,
+      bgc_class_counts: {}, direct_genomes: [], children: [],
+    });
+    expect(branchWidth(empty, 100)).toBe(MIN_BRANCH_WIDTH);
+  });
+
+  it("dominantBgcClass returns null on a genuine tie rather than picking arbitrarily", () => {
+    const tied = toRootDisplayNode({
+      id: "t", name: "Tied", rank: "genus", genome_count: 2,
+      bgc_class_counts: { nrps: 3, pks: 3 }, direct_genomes: [], children: [],
+    });
+    expect(dominantBgcClass(tied)).toBeNull();
+  });
+
+  it("dominantBgcClass finds a clear winner", () => {
+    const clear = toRootDisplayNode({
+      id: "c", name: "Clear", rank: "genus", genome_count: 2,
+      bgc_class_counts: { nrps: 9, pks: 2 }, direct_genomes: [], children: [],
+    });
+    expect(dominantBgcClass(clear)).toBe("nrps");
   });
 });

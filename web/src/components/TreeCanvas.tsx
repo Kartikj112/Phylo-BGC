@@ -6,13 +6,18 @@ import type { DisplayNode, TaxonDisplayNode } from "@/lib/api-types";
 import { BGC_CLASS_COLORS, COLORS, classColor } from "@/lib/colors";
 import {
   bgcInFamily,
+  branchWidth,
+  dominantBgcClass,
   computeTreeLayout,
   genomeMatchesActiveClasses,
   hiddenChildrenCount,
+  effectiveCollapsed,
   matchesQuery,
   nodeHasFamily,
+  nodeMatchesOrContains,
   nodeKey,
   nodeVisibleClasses,
+  subtreeBgcCount,
 } from "@/lib/tree-logic";
 
 interface TreeCanvasProps {
@@ -47,7 +52,17 @@ export function TreeCanvas({
   onSelectBgc,
   svgRef,
 }: TreeCanvasProps) {
-  const { nodes, links, height } = useMemo(() => computeTreeLayout(root, collapsed, TREE_WIDTH), [root, collapsed]);
+  // Searching forces open the path to every match — a hit inside a
+  // collapsed clade would otherwise never render, which made search look
+  // broken rather than filtered.
+  const openCollapsed = useMemo(
+    () => effectiveCollapsed(root, collapsed, searchQuery),
+    [root, collapsed, searchQuery],
+  );
+  const { nodes, links, height } = useMemo(
+    () => computeTreeLayout(root, openCollapsed, TREE_WIDTH),
+    [root, openCollapsed],
+  );
 
   const linkGenerator = useMemo(
     () =>
@@ -60,19 +75,43 @@ export function TreeCanvas({
 
   const dimAll = activeClasses.size < Object.keys(BGC_CLASS_COLORS).length;
 
+  // Scale branch weight against the largest subtree actually on screen,
+  // so collapsing a clade rescales the rest rather than flattening it.
+  const maxSubtreeCount = useMemo(
+    () => Math.max(1, ...nodes.map((n) => subtreeBgcCount(n.data))),
+    [nodes],
+  );
+
   return (
     <svg ref={svgRef} width="100%" height={height} viewBox={`0 0 ${SVG_VIEWBOX_WIDTH} ${height}`}>
       <g transform="translate(30,20)">
-        {links.map((link, i) => (
-          <path key={i} d={linkGenerator(link) ?? undefined} fill="none" stroke={COLORS.lineStrong} strokeWidth={1.25} />
-        ))}
+        {links.map((link, i) => {
+          const target = link.target.data;
+          const width = branchWidth(target, maxSubtreeCount);
+          const dominant = dominantBgcClass(target);
+          // Tint toward the dominant class, but keep it muted: the branch
+          // is context, and saturated colour here would compete with the
+          // BGC tick marks that carry the precise signal.
+          const stroke = dominant ? (BGC_CLASS_COLORS[dominant] ?? COLORS.lineStrong) : COLORS.lineStrong;
+          return (
+            <path
+              key={i}
+              d={linkGenerator(link) ?? undefined}
+              fill="none"
+              stroke={stroke}
+              strokeWidth={width}
+              strokeOpacity={dominant ? 0.45 : 0.6}
+              strokeLinecap="round"
+            />
+          );
+        })}
 
         {nodes.map((n) => {
           const node = n.data;
           const key = nodeKey(node);
           const isGenome = node._kind === "genome";
           const isMatch = matchesQuery(node, searchQuery);
-          const hidden = hiddenChildrenCount(node, collapsed);
+          const hidden = hiddenChildrenCount(node, openCollapsed);
 
           const dimmed =
             dimAll && !isGenome && ![...nodeVisibleClasses(node)].some((c) => activeClasses.has(c));
@@ -84,7 +123,12 @@ export function TreeCanvas({
           const familyDimmed = selectedFamilyId !== null && !nodeHasFamily(node, selectedFamilyId);
           const inSelectedFamily = selectedFamilyId !== null && nodeHasFamily(node, selectedFamilyId);
 
-          const opacity = dimmed || genomeDimmed || familyDimmed ? 0.2 : 1;
+          // Dim everything off a matching branch, rather than only
+          // recolouring hits: at ~150 nodes the eye needs the surrounding
+          // noise removed to find them at all.
+          const searchDimmed = searchQuery.trim() !== "" && !nodeMatchesOrContains(node, searchQuery);
+
+          const opacity = dimmed || genomeDimmed || familyDimmed || searchDimmed ? 0.15 : 1;
 
           return (
             <g key={key} transform={`translate(${n.y},${n.x})`} opacity={opacity}>
@@ -148,14 +192,29 @@ function TaxonNode({
       {/* Shift-click adds/removes this clade from the comparison, leaving
           plain click as collapse/expand — the far more frequent action,
           which shouldn't get harder to reach because a second mode exists. */}
+      {/* A highlighter wash behind the label. Recolouring alone wasn't
+          enough: signal teal against body ink is nearly indistinguishable
+          at 12px, so a working search read as a dead one. */}
+      {matched && (
+        <rect
+          x={-9 - node.name.length * 6.6 - 4}
+          y={-8}
+          width={node.name.length * 6.6 + 8}
+          height={16}
+          fill="#FDF3C7"
+          stroke="#E8C84A"
+          strokeWidth={0.75}
+          rx={2}
+        />
+      )}
       <text
         x={-9}
         textAnchor="end"
         dy="0.32em"
         fontStyle={node.rank === "species" ? "italic" : "normal"}
         fontSize={isHighRank ? 13 : 12}
-        fontWeight={isHighRank || inSelectedFamily || inComparison ? 600 : 400}
-        fill={matched || inSelectedFamily || inComparison ? COLORS.signal : COLORS.ink}
+        fontWeight={matched || isHighRank || inSelectedFamily || inComparison ? 600 : 400}
+        fill={inSelectedFamily || inComparison ? COLORS.signal : COLORS.ink}
         className="cursor-pointer"
         onClick={(e) => {
           if (e.shiftKey) {
@@ -192,7 +251,26 @@ function GenomeNode({
 }) {
   return (
     <g className="cursor-pointer" onClick={onSelectGenome} opacity={dimmedBySelection ? 0.55 : 1}>
-      <text x={10} dy="0.32em" fontSize={11.5} fill={matched ? COLORS.signal : COLORS.inkMuted} className="font-mono">
+      {matched && (
+        <rect
+          x={6}
+          y={-8}
+          width={node.accession.length * 6.9 + 8}
+          height={16}
+          fill="#FDF3C7"
+          stroke="#E8C84A"
+          strokeWidth={0.75}
+          rx={2}
+        />
+      )}
+      <text
+        x={10}
+        dy="0.32em"
+        fontSize={11.5}
+        fontWeight={matched ? 600 : 400}
+        fill={matched ? COLORS.ink : COLORS.inkMuted}
+        className="font-mono"
+      >
         {node.accession}
       </text>
       {node.bgcs.map((b, i) => {
