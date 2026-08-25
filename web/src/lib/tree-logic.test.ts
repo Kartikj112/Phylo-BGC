@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   MAX_BRANCH_WIDTH,
   MIN_BRANCH_WIDTH,
+  MIN_LABEL_ARC_PX,
   RANK_ABBREVIATIONS,
   computeRadialTreeLayout,
+  hasRoomForLabel,
+  isAnchorRank,
   isLeftHalf,
   rankAbbreviation,
   ancestorsOfMatches,
@@ -487,11 +490,23 @@ describe("radial layout", () => {
   });
 
   it("grows the canvas with leaf count so tips don't crush together", () => {
-    const small = computeRadialTreeLayout(toRootDisplayNode(buildFixtureTree()), new Set());
+    // Both counts must clear RADIAL_MIN_RADIUS, or the floor makes them
+    // equal and the test proves nothing.
+    const small = computeRadialTreeLayout(
+      toRootDisplayNode({
+        id: null, name: "root", rank: null, genome_count: 90, bgc_class_counts: {},
+        direct_genomes: Array.from({ length: 90 }, (_, i) => ({
+          id: `s${i}`, accession: `SYN_${i}.1`, assembly_level: "complete_genome" as const,
+          is_mag: false, bgcs: [],
+        })),
+        children: [],
+      }),
+      new Set(),
+    );
     const big = computeRadialTreeLayout(
       toRootDisplayNode({
-        id: null, name: "root", rank: null, genome_count: 60, bgc_class_counts: {},
-        direct_genomes: Array.from({ length: 60 }, (_, i) => ({
+        id: null, name: "root", rank: null, genome_count: 300, bgc_class_counts: {},
+        direct_genomes: Array.from({ length: 300 }, (_, i) => ({
           id: `g${i}`, accession: `SYN_${i}.1`, assembly_level: "complete_genome" as const,
           is_mag: false, bgcs: [],
         })),
@@ -507,5 +522,57 @@ describe("radial layout", () => {
     expect(isLeftHalf(Math.PI / 2)).toBe(false);
     expect(isLeftHalf(Math.PI)).toBe(true);
     expect(isLeftHalf(1.5 * Math.PI)).toBe(true);
+  });
+});
+
+describe("semantic label management", () => {
+  it("hides a label when its arc is too small, shows it when zoomed in", () => {
+    const step = (2 * Math.PI) / 80; // 80 leaves
+    // An inner node at r=60 has ~4.7px of arc — nowhere near enough.
+    expect(hasRoomForLabel(60, step, 1)).toBe(false);
+    // Zooming 4x gives it ~19px, which fits.
+    expect(hasRoomForLabel(60, step, 4)).toBe(true);
+  });
+
+  it("gives outer leaves room at default zoom", () => {
+    const step = (2 * Math.PI) / 80;
+    expect(hasRoomForLabel(340, step, 1)).toBe(true);
+  });
+
+  it("always shows anchor ranks regardless of space", () => {
+    const step = (2 * Math.PI) / 400;
+    expect(hasRoomForLabel(5, step, 0.3)).toBe(false);
+    expect(hasRoomForLabel(5, step, 0.3, true)).toBe(true);
+    expect(isAnchorRank("domain")).toBe(true);
+    expect(isAnchorRank("phylum")).toBe(true);
+    expect(isAnchorRank("species")).toBe(false);
+  });
+
+  it("radius scales with leaf count so the outer ring keeps its spacing", () => {
+    const mk = (n: number) =>
+      computeRadialTreeLayout(
+        toRootDisplayNode({
+          id: null, name: "root", rank: null, genome_count: n, bgc_class_counts: {},
+          direct_genomes: Array.from({ length: n }, (_, i) => ({
+            id: `g${i}`, accession: `SYN_${i}.1`,
+            assembly_level: "complete_genome" as const, is_mag: false, bgcs: [],
+          })),
+          children: [],
+        }),
+        new Set(),
+      );
+    const small = mk(20);
+    const large = mk(200);
+    expect(large.radius).toBeGreaterThan(small.radius);
+
+    // The real guarantee: per-leaf arc never falls below the minimum,
+    // however many leaves there are. Small trees get MORE than the
+    // minimum because RADIAL_MIN_RADIUS floors the radius — generous
+    // spacing on a sparse tree is fine; collapsing spacing on a dense one
+    // is not, and that's what this protects against.
+    const arc = (l: ReturnType<typeof mk>) => l.radius * l.angularStep;
+    expect(arc(large)).toBeGreaterThanOrEqual(MIN_LABEL_ARC_PX);
+    expect(arc(mk(2000))).toBeGreaterThanOrEqual(MIN_LABEL_ARC_PX);
+    expect(arc(small)).toBeGreaterThan(arc(large)); // floor gives sparse trees room
   });
 });

@@ -349,10 +349,17 @@ export interface RadialTreeLayout {
   links: d3.HierarchyPointLink<DisplayNode>[];
   size: number;
   radius: number;
+  /** Angle between adjacent leaves, in radians. Multiplied by a node's
+   * radius this gives the arc length available to its label — which is
+   * what decides whether the label can be shown without colliding. */
+  angularStep: number;
 }
 
-const RADIAL_MIN_RADIUS = 260;
-const RADIAL_PADDING = 190; // room for labels radiating outward
+const RADIAL_MIN_RADIUS = 300;
+// Arc length each leaf gets on the outer ring. Below ~22px, genome
+// accessions in 11.5px mono start colliding with their neighbours.
+const ARC_PER_LEAF = 26;
+const RADIAL_PADDING = 210; // room for labels radiating outward
 
 /**
  * Radial layout. `x` becomes an angle in radians and `y` a radius, which
@@ -369,7 +376,11 @@ export function computeRadialTreeLayout(
 ): RadialTreeLayout {
   const hierarchy = d3.hierarchy<DisplayNode>(root, makeChildrenAccessor(collapsed));
   const leafCount = Math.max(hierarchy.leaves().length, 1);
-  const radius = Math.max(RADIAL_MIN_RADIUS, (leafCount * 15) / (2 * Math.PI) + RADIAL_MIN_RADIUS);
+  // Radius is derived from the arc each leaf needs, not chosen and hoped
+  // for: circumference = leafCount * ARC_PER_LEAF, so r = that / 2pi.
+  // Without this the outer ring stays fixed while leaves multiply, which
+  // is exactly how labels end up stacked on top of each other.
+  const radius = Math.max(RADIAL_MIN_RADIUS, (leafCount * ARC_PER_LEAF) / (2 * Math.PI));
 
   const layout = d3
     .tree<DisplayNode>()
@@ -384,6 +395,7 @@ export function computeRadialTreeLayout(
     links: positioned.links(),
     size: (radius + RADIAL_PADDING) * 2,
     radius,
+    angularStep: (2 * Math.PI) / leafCount,
   };
 }
 
@@ -391,4 +403,40 @@ export function computeRadialTreeLayout(
  * reads left-to-right rather than upside down. */
 export function isLeftHalf(angleRadians: number): boolean {
   return angleRadians >= Math.PI;
+}
+
+
+/**
+ * Semantic label management (the approach iTOL and Krona take).
+ *
+ * In a radial layout the space available to a label is an *arc*, so it
+ * shrinks toward the centre and with every additional leaf. Inner taxon
+ * nodes are the worst case: dozens of siblings sharing a small
+ * circumference. Rendering every label regardless produces the stacked,
+ * unreadable ring seen at 80 genomes.
+ *
+ * So a label is drawn only when its own arc — scaled by the current zoom —
+ * can actually hold it. Zooming in progressively reveals more labels
+ * rather than magnifying an unreadable tangle, and no label is ever
+ * silently dropped at a zoom level where it would have fit.
+ *
+ * High ranks are always drawn: there are few of them, they anchor
+ * orientation, and losing "Bacteria" to a spacing rule would be worse
+ * than a slight overlap.
+ */
+export const MIN_LABEL_ARC_PX = 11;
+
+export function hasRoomForLabel(
+  radiusAtNode: number,
+  angularStep: number,
+  zoomScale: number,
+  alwaysShow = false,
+): boolean {
+  if (alwaysShow) return true;
+  const arc = radiusAtNode * angularStep * Math.max(zoomScale, 0.01);
+  return arc >= MIN_LABEL_ARC_PX;
+}
+
+export function isAnchorRank(rank: string | null | undefined): boolean {
+  return rank === "domain" || rank === "phylum" || rank === "class";
 }

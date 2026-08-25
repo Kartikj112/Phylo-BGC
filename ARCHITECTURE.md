@@ -979,3 +979,67 @@ The absence caveat is returned by the API and rendered above the grid: an
 empty cell means no genome *in this dataset* was found to carry that
 class, not that the clade lacks it. Same reasoning as
 `only_in_this_clade` in the comparison endpoint.
+
+---
+
+## Radial canvas fixes
+
+### BGC ticks pointed inward on the left hemisphere
+
+`GenomeNode` wrapped its *entire* group in `rotate(180)` for left-half
+nodes. That correctly flipped the label so it reads left-to-right, but it
+also flipped the BGC tick marks — and in the parent frame (`rotate(angle −
+90) translate(radius, 0)`) the `+x` direction is radially **outward**
+regardless of hemisphere. So on the left half the barcode grew back toward
+the hub, crossing the branches.
+
+Fixed by scoping the flip to the label only: the ticks now stay in the
+unflipped frame at `+x`, which is outward everywhere. The general lesson
+is that in a radial layout, "flip the label so it reads correctly" and
+"mirror the geometry" are different operations, and a group transform
+does both.
+
+### Zoom and pan
+
+`d3.zoom` on the SVG, transform applied to a wrapper `<g>` (not the `<svg>`
+itself, so exported SVG geometry stays in figure coordinates). Wheel zooms
+about the cursor; middle-drag pans.
+
+The zoom filter deliberately excludes left-drag: that is click-to-select
+and shift-click-to-compare, and `d3.zoom` would swallow both. Middle-drag
+also gets an explicit `preventDefault` to suppress the browser's autoscroll
+cursor.
+
+### Label overlap: semantic zoom, not smaller type
+
+In a radial layout the space for a label is an *arc*, so it shrinks toward
+the centre and with every added leaf. Inner taxon nodes are the worst case
+— dozens of siblings sharing a small circumference. Two changes:
+
+**Radius is now derived, not guessed.** It comes from the arc each leaf
+needs (`r = leafCount × ARC_PER_LEAF / 2π`), so the outer ring keeps its
+spacing as leaves multiply instead of packing tighter into a fixed circle.
+A minimum radius floors it, which means sparse trees get *more* than the
+minimum spacing — fine, since the failure mode being guarded against is
+crowding, not generosity.
+
+**Labels render only when their own arc can hold them**, scaled by the
+current zoom — the approach iTOL and Krona take. Zooming in progressively
+reveals labels rather than magnifying an unreadable tangle. At 80 genomes:
+leaf labels show at 1×, crowded inner nodes appear by ~4×. Anchor ranks
+(domain/phylum/class) always render: there are few of them, they carry
+orientation, and losing "Bacteria" to a spacing rule would be worse than
+slight overlap.
+
+A counter reports how many labels are withheld, so hidden labels read as
+"withheld for space" rather than missing data — the same confusion the
+search fix addressed.
+
+### An unrelated bug this surfaced
+
+The frontend test count dropped from 63 to 52 without any test being
+deleted. `jsdom` had been installed with `--no-save` in an earlier chunk
+and was later pruned, so `export.test.ts` (15 tests) failed to collect —
+and **vitest still exited 0**, reporting the remaining file as passing. A
+silently shrinking suite is worse than a failing one. `jsdom` is now a
+saved devDependency; 67 tests run.

@@ -1,7 +1,7 @@
 "use client";
 
 import * as d3 from "d3";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { DisplayNode, TaxonDisplayNode } from "@/lib/api-types";
 import { BGC_CLASS_COLORS, COLORS, classColor } from "@/lib/colors";
 import {
@@ -18,6 +18,8 @@ import {
   nodeKey,
   nodeVisibleClasses,
   computeRadialTreeLayout,
+  hasRoomForLabel,
+  isAnchorRank,
   isLeftHalf,
   rankAbbreviation,
   subtreeBgcCount,
@@ -75,33 +77,46 @@ export function TreeCanvas({
   const links = isRadial ? radial.links : horizontal.links;
   const height = isRadial ? radial.size : horizontal.height;
 
-  // Middle-button pan. Left-drag is deliberately left alone: it's how
-  // text selection and click-to-select work, and hijacking it would break
-  // both. Middle-drag is the convention in map and graph tools.
-  const [pan, setPan] = useState({ x: 0, y: 0 });
-  const dragStart = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
-  const [dragging, setDragging] = useState(false);
+  // Zoom and pan via d3.zoom: wheel to zoom about the cursor, middle-drag
+  // to pan. Left-drag is deliberately excluded from the filter — it is
+  // click-to-select and shift-click-to-compare, and d3.zoom would swallow
+  // both. The transform is applied to a wrapper <g> rather than the <svg>
+  // so exported SVG geometry stays in figure coordinates.
+  const zoomLayerRef = useRef<SVGGElement | null>(null);
+  const localSvgRef = useRef<SVGSVGElement | null>(null);
+  const [zoom, setZoom] = useState({ k: 1, x: 0, y: 0 });
 
-  const onMouseDown = useCallback(
-    (e: React.MouseEvent<SVGSVGElement>) => {
-      if (e.button !== 1) return;
-      e.preventDefault(); // suppress the browser's autoscroll cursor
-      dragStart.current = { x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y };
-      setDragging(true);
-    },
-    [pan],
-  );
-
-  const onMouseMove = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
-    const start = dragStart.current;
-    if (!start) return;
-    setPan({ x: start.panX + (e.clientX - start.x), y: start.panY + (e.clientY - start.y) });
+  useEffect(() => {
+    const svgEl = localSvgRef.current;
+    if (!svgEl) return;
+    const behavior = d3
+      .zoom<SVGSVGElement, unknown>()
+      .scaleExtent([0.25, 8])
+      .filter((event: any) => event.type === "wheel" || event.button === 1)
+      .on("zoom", (event) => {
+        const t = event.transform;
+        setZoom({ k: t.k, x: t.x, y: t.y });
+      });
+    const selection = d3.select(svgEl);
+    selection.call(behavior);
+    // Middle-drag otherwise triggers the browser's autoscroll cursor.
+    const suppressAutoscroll = (e: MouseEvent) => {
+      if (e.button === 1) e.preventDefault();
+    };
+    svgEl.addEventListener("mousedown", suppressAutoscroll);
+    return () => {
+      selection.on(".zoom", null);
+      svgEl.removeEventListener("mousedown", suppressAutoscroll);
+    };
   }, []);
 
-  const endDrag = useCallback(() => {
-    dragStart.current = null;
-    setDragging(false);
-  }, []);
+  const setSvgRef = (el: SVGSVGElement | null) => {
+    localSvgRef.current = el;
+    if (typeof svgRef === "function") svgRef(el);
+    else if (svgRef && typeof svgRef === "object") {
+      (svgRef as React.MutableRefObject<SVGSVGElement | null>).current = el;
+    }
+  };
 
   const linkGenerator = useMemo(
     () =>
@@ -130,25 +145,27 @@ export function TreeCanvas({
     [nodes],
   );
 
+  const hiddenLabelCount = isRadial
+    ? nodes.filter(
+        (n) =>
+          !hasRoomForLabel(
+            n.y,
+            radial.angularStep,
+            zoom.k,
+            n.data._kind === "taxon" && isAnchorRank(n.data.rank),
+          ),
+      ).length
+    : 0;
+
   return (
     <svg
-      ref={svgRef}
+      ref={setSvgRef}
       width="100%"
       height={height}
       viewBox={`0 0 ${isRadial ? radial.size : SVG_VIEWBOX_WIDTH} ${height}`}
-      onMouseDown={onMouseDown}
-      onMouseMove={onMouseMove}
-      onMouseUp={endDrag}
-      onMouseLeave={endDrag}
-      style={{ cursor: dragging ? "grabbing" : undefined }}
     >
-      <g
-        transform={
-          isRadial
-            ? `translate(${radial.size / 2 + pan.x},${radial.size / 2 + pan.y})`
-            : `translate(${30 + pan.x},${20 + pan.y})`
-        }
-      >
+      <g ref={zoomLayerRef} transform={`translate(${zoom.x},${zoom.y}) scale(${zoom.k})`}>
+      <g transform={isRadial ? `translate(${radial.size / 2},${radial.size / 2})` : "translate(30,20)"}>
         {links.map((link, i) => {
           const target = link.target.data;
           const width = branchWidth(target, maxSubtreeCount);
@@ -209,6 +226,10 @@ export function TreeCanvas({
                   node={node}
                   isRadial={isRadial}
                   angle={n.x}
+                  showLabel={
+                    !isRadial ||
+                    hasRoomForLabel(n.y, radial.angularStep, zoom.k, isAnchorRank(node.rank))
+                  }
                   hiddenCount={hidden}
                   matched={isMatch}
                   inSelectedFamily={inSelectedFamily}
@@ -222,6 +243,7 @@ export function TreeCanvas({
                   node={node}
                   isRadial={isRadial}
                   angle={n.x}
+                  showLabel={!isRadial || hasRoomForLabel(n.y, radial.angularStep, zoom.k)}
                   matched={isMatch}
                   dimmedBySelection={selectedId !== null && selectedId !== node.id}
                   selectedFamilyId={selectedFamilyId}
@@ -233,6 +255,17 @@ export function TreeCanvas({
           );
         })}
       </g>
+      </g>
+
+      {/* Outside the zoom layer, so it stays legible at any scale. Tells
+          the user labels were withheld for space rather than missing — the
+          same confusion the search fix addressed. */}
+      {hiddenLabelCount > 0 && (
+        <text x={12} y={20} fontSize={11} fill={COLORS.inkFaint}>
+          {hiddenLabelCount} label{hiddenLabelCount === 1 ? "" : "s"} hidden for space · scroll to zoom in,
+          middle-drag to pan
+        </text>
+      )}
     </svg>
   );
 }
@@ -241,6 +274,7 @@ function TaxonNode({
   node,
   isRadial,
   angle,
+  showLabel,
   hiddenCount,
   matched,
   inSelectedFamily,
@@ -251,6 +285,7 @@ function TaxonNode({
   node: Extract<DisplayNode, { _kind: "taxon" }>;
   isRadial: boolean;
   angle: number;
+  showLabel: boolean;
   hiddenCount: number;
   matched: boolean;
   inSelectedFamily: boolean;
@@ -299,7 +334,7 @@ function TaxonNode({
       {/* Rank badge (D/P/C/O/F/G/S — GTDB has no kingdom rank, so no K).
           Rendered as its own glyph rather than prefixed into the label so
           it stays visually subordinate to the organism name. */}
-      {badge && (
+      {badge && showLabel && (
         <g transform={labelTransform}>
           <rect
             x={badgeX}
@@ -324,6 +359,7 @@ function TaxonNode({
         </g>
       )}
 
+      {showLabel && (
       <text
         x={labelX}
         textAnchor={labelAnchor}
@@ -345,6 +381,7 @@ function TaxonNode({
         {node.name}
         {hiddenCount > 0 ? ` (+${hiddenCount})` : ""}
       </text>
+      )}
     </>
   );
 }
@@ -356,6 +393,7 @@ function GenomeNode({
   node,
   isRadial,
   angle,
+  showLabel,
   matched,
   dimmedBySelection,
   selectedFamilyId,
@@ -365,6 +403,7 @@ function GenomeNode({
   node: Extract<DisplayNode, { _kind: "genome" }>;
   isRadial: boolean;
   angle: number;
+  showLabel: boolean;
   matched: boolean;
   dimmedBySelection: boolean;
   selectedFamilyId: string | null;
@@ -373,13 +412,14 @@ function GenomeNode({
 }) {
   const flip = isRadial && isLeftHalf(angle);
   return (
-    <g
-      className="cursor-pointer"
-      onClick={onSelectGenome}
-      opacity={dimmedBySelection ? 0.55 : 1}
-      transform={flip ? "rotate(180)" : undefined}
-    >
-      {matched && (
+    <g className="cursor-pointer" onClick={onSelectGenome} opacity={dimmedBySelection ? 0.55 : 1}>
+      {/* The label is the ONLY thing that gets flipped on the left half.
+          Wrapping the whole group in rotate(180) — as this did — also sent
+          the BGC tick marks inward toward the hub, because in the parent
+          frame +x is always radially outward regardless of hemisphere.
+          Ticks therefore stay in the unflipped frame below. */}
+      <g transform={flip ? "rotate(180)" : undefined}>
+      {matched && showLabel && (
         <rect
           x={flip ? -node.accession.length * 6.9 - 14 : 6}
           y={-8}
@@ -391,20 +431,23 @@ function GenomeNode({
           rx={2}
         />
       )}
-      <text
-        x={flip ? -10 : 10}
-        textAnchor={flip ? "end" : "start"}
-        dy="0.32em"
-        fontSize={11.5}
-        fontWeight={matched ? 600 : 400}
-        fill={matched ? COLORS.ink : COLORS.inkMuted}
-        className="font-mono"
-      >
-        {node.accession}
-      </text>
+      {showLabel && (
+        <text
+          x={flip ? -10 : 10}
+          textAnchor={flip ? "end" : "start"}
+          dy="0.32em"
+          fontSize={11.5}
+          fontWeight={matched ? 600 : 400}
+          fill={matched ? COLORS.ink : COLORS.inkMuted}
+          className="font-mono"
+        >
+          {node.accession}
+        </text>
+      )}
+      </g>
       {node.bgcs.map((b, i) => {
         const colors = classColor(b.bgc_class, b.subtype);
-        const x = BARCODE_START_X + i * BARCODE_TICK_WIDTH;
+        const x = (showLabel ? BARCODE_START_X : 12) + i * BARCODE_TICK_WIDTH;
         const primary = colors[0] ?? COLORS.inkFaint;
         const inFamily = bgcInFamily(b, selectedFamilyId);
         return (
@@ -441,8 +484,15 @@ function GenomeNode({
           </g>
         );
       })}
-      {node.is_mag && (
-        <text x={BARCODE_START_X + node.bgcs.length * BARCODE_TICK_WIDTH + 6} dy="0.32em" fontSize={9.5} fill={COLORS.inkFaint}>
+      {node.is_mag && showLabel && (
+        <text
+          x={(showLabel ? BARCODE_START_X : 12) + node.bgcs.length * BARCODE_TICK_WIDTH + 6}
+          dy="0.32em"
+          fontSize={9.5}
+          fill={COLORS.inkFaint}
+          transform={flip ? "rotate(180)" : undefined}
+          textAnchor={flip ? "end" : "start"}
+        >
           MAG
         </text>
       )}
