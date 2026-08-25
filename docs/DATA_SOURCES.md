@@ -137,3 +137,49 @@ of this repo.
   papers (PMC), plus the `mibig-secmet` GitHub organization.
 - GTDB release number and license: gtdb.ecogenomic.org (live site and
   `/licenses` page) and Wikipedia's Genome Taxonomy Database summary infobox.
+
+---
+
+## MIBiG: two live schemas, verified by ingesting the real repository
+
+**Verified 2026-08-26 by ingesting all 2,745 entries from
+`mibig-secmet/mibig-json` (commit 20979549, 2024-03).**
+
+The bulk repository ships **MIBiG 3.x**, while the website serves 4.0.
+Both are live, so the parser detects and handles both. The differences
+are not cosmetic:
+
+| | 3.x (bulk repo) | 4.0 (website) |
+|---|---|---|
+| envelope | `{changelog, cluster:{...}}` | flat |
+| accession | `cluster.mibig_accession` | `accession` |
+| classes | `biosyn_class: ["Polyketide","NRP"]` | `biosynthesis.classes[].class: ["PKS","NRPS"]` |
+| loci | single object | list |
+| taxid | `ncbi_tax_id` as **string** | `taxonomy.ncbiTaxId` as int |
+| compounds | `compound`/`chem_struct`/`molecular_formula` | `name`/`structure`/`formula` |
+
+Note the vocabulary shift: 3.x names the **product** ("Polyketide",
+"NRP"), 4.0 names the **machinery** ("PKS", "NRPS"). A parser that
+assumed one vocabulary silently classes the other as `OTHER`.
+
+Real distribution across 2,526 active entries: PKS 612, hybrid 476,
+NRPS 472, RiPP 331, other 302, terpene 150, saccharide 130, alkaloid 53.
+519 entries are multi-class. Only 51% carry coordinates, and coordinates
+can be **half-present** — 1,408 entries have `start_coord` but only 1,407
+have `end_coord`.
+
+### MIBiG alone gives no taxonomic hierarchy
+
+This is the finding that matters most for anyone loading real data.
+MIBiG records `organism_name` and `ncbi_tax_id` — a species name and
+nothing above it. Ingesting MIBiG by itself therefore produces **1,527
+species nodes all directly under the root, with a maximum tree depth of
+1**. It is not a tree; it is a fan.
+
+GTDB (or NCBI taxonomy) is what supplies domain → phylum → class → order
+→ family → genus. The two sources are complementary by design, and the
+cross-source merge built in Phase 1b is what joins them — MIBiG's
+`ncbi_taxid` against GTDB's `(rank, name)`.
+
+A useful real corpus therefore needs GTDB ingested *as well as* MIBiG,
+not instead of it.

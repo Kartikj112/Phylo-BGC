@@ -1082,3 +1082,59 @@ longer matches the preset and leaving it lit would claim a depth that
 isn't true. Levels absent from the loaded dataset are disabled rather
 than offered as no-op buttons — `ranksPresent()` derives that from the
 data instead of assuming the full seven-rank hierarchy exists.
+
+---
+
+## First contact with real data
+
+2,745 real MIBiG entries were ingested from `mibig-secmet/mibig-json`.
+The parsers had been written against formats read from the tools' own
+source, and this was the test of whether that survives reality.
+
+**It did not, in one important way — and that was the point of doing it.**
+
+### The bulk repository ships a different schema than the website
+
+MIBiG 3.x, not the 4.0 the parser targeted: payload nested under
+`cluster`, `mibig_accession` instead of `accession`, `biosyn_class` as a
+flat list, `loci` as a single object, `ncbi_tax_id` as a *string*, and a
+different class vocabulary naming the product ("Polyketide", "NRP")
+rather than the machinery ("PKS", "NRPS"). Both schemas are live, so the
+parser now detects and handles both rather than picking a side. Full
+field mapping in `docs/DATA_SOURCES.md`.
+
+Two edge cases only real data produced: **half-present coordinates**
+(1,408 entries have `start_coord`, 1,407 have `end_coord` — a start
+without an end implies a span that isn't known, so both are dropped), and
+**non-numeric tax IDs**, which now degrade to null rather than raising.
+
+Result: 2,526 active entries ingested in 23s with zero errors, 219
+retired/pending correctly skipped, 4,196 real compounds linked.
+
+### MIBiG alone is not a tree
+
+The structural finding. MIBiG records `organism_name` and `ncbi_tax_id` —
+a species and nothing above it. Ingested alone it yields **1,527 species
+nodes directly under the root, maximum depth 1**. GTDB is what supplies
+the hierarchy; the two sources are complementary, and the Phase 1b
+cross-source merge is what joins them.
+
+### The scoring guarantee held under real conditions
+
+On MIBiG-only data the prioritization scorer returned **no score at all**
+for every cluster — 1 of 5 components computable (no families ingested,
+so three are undefined; no genus-level taxonomy, so the fourth is too).
+
+This is the missing-evidence guarantee doing exactly its job on data it
+had never seen: rather than emitting a confident number derived from one
+surviving proxy, it declined and explained which components were missing
+and why. That property was designed against a hypothetical; this is the
+first evidence it survives contact with a real corpus.
+
+### Performance at 6x the synthetic scale
+
+2,526 BGCs: taxonomy-tree 0.87s (959 KB), flows 0.44s, heatmap 0.42s,
+prioritization 0.84s. Acceptable, but the 959 KB tree payload and 1,527
+sibling nodes are the first sign that the in-memory tree builder and the
+"render every node" frontend will need the CTE/virtualization work both
+have been flagged for since Phase 2.

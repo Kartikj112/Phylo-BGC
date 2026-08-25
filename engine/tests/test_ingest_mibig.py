@@ -215,3 +215,68 @@ def test_ingest_full_fixture_directory_end_to_end(session, mibig_source):
     assert session.query(BGC).count() == 2
     # Both active entries share an organism -> one Taxon, not two.
     assert session.query(Taxon).count() == 1
+
+
+# --- MIBiG 3.x format (the schema the public repository actually ships) ----------
+
+V3_FIXTURES = Path(__file__).parent / "fixtures" / "mibig_v3"
+
+
+def _v3(name: str) -> dict:
+    return json.loads((V3_FIXTURES / name).read_text())
+
+
+def test_detects_v3_and_v4_schemas():
+    from bgcscape.ingest.mibig import detect_mibig_schema
+
+    v3 = _v3(sorted(p.name for p in V3_FIXTURES.glob("*.json"))[0])
+    assert detect_mibig_schema(v3) == "v3"
+    assert detect_mibig_schema(_load_fixture("mibig_test_entry_active_single_class.json")) == "v4"
+
+
+def test_parses_real_v3_entries():
+    """Against real entries copied from mibig-secmet/mibig-json, not
+    hand-written approximations of the format."""
+    for path in sorted(V3_FIXTURES.glob("*.json")):
+        parsed = parse_mibig_entry(json.loads(path.read_text()))
+        assert parsed.mibig_accession.startswith("BGC")
+        assert parsed.locus_accession
+        assert parsed.bgc_class is not None
+        # 3.x stores ncbi_tax_id as a string; it must arrive as an int.
+        assert parsed.ncbi_taxid is None or isinstance(parsed.ncbi_taxid, int)
+
+
+def test_v3_multi_class_becomes_hybrid():
+    multi = [p for p in V3_FIXTURES.glob("multi_*.json")]
+    if not multi:
+        pytest.skip("no multi-class fixture available")
+    parsed = parse_mibig_entry(json.loads(multi[0].read_text()))
+    assert parsed.bgc_class is BGCClass.HYBRID
+    assert parsed.subtype and "+" in parsed.subtype
+
+
+def test_v3_half_present_coordinates_are_dropped_together():
+    """1,408 real entries carry start_coord but only 1,407 carry end_coord.
+    A start without an end implies a span that isn't known, so both go."""
+    from bgcscape.ingest.mibig import parse_mibig_entry_v3
+
+    base = json.loads(sorted(V3_FIXTURES.glob("*.json"))[0].read_text())
+    base["cluster"]["loci"]["start_coord"] = 100
+    base["cluster"]["loci"].pop("end_coord", None)
+    parsed = parse_mibig_entry_v3(base)
+    assert parsed.start_coord is None
+    assert parsed.end_coord is None
+
+
+def test_v3_non_numeric_taxid_does_not_crash():
+    from bgcscape.ingest.mibig import parse_mibig_entry_v3
+
+    base = json.loads(sorted(V3_FIXTURES.glob("*.json"))[0].read_text())
+    base["cluster"]["ncbi_tax_id"] = "not a number"
+    assert parse_mibig_entry_v3(base).ncbi_taxid is None
+
+
+def test_reader_accepts_a_directory_of_v3_entries():
+    entries = list(read_mibig_entries_from_path(V3_FIXTURES))
+    assert len(entries) == len(list(V3_FIXTURES.glob("*.json")))
+    assert all("cluster" in e for e in entries)

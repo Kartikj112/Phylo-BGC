@@ -61,6 +61,25 @@ _MIBIG_CLASS_TO_BGC_CLASS: dict[str, BGCClass] = {
 
 ACTIVE_STATUS = "active"
 
+# MIBiG 3.x used a different vocabulary AND a different JSON shape. Both
+# are live in the wild: the mibig-secmet/mibig-json repository publishes
+# 3.x, while the website serves 4.0. Ingesting the real repository turned
+# up 2,745 entries in this older format, so supporting it is not
+# backwards-compatibility housekeeping — it is the format most bulk MIBiG
+# data is actually distributed in today.
+#
+# Note "NRP" (not NRPS) and "Polyketide" (not PKS): the 3.x names describe
+# the *product*, the 4.0 names describe the *machinery*.
+_MIBIG_V3_CLASS_TO_BGC_CLASS: dict[str, BGCClass] = {
+    "NRP": BGCClass.NRPS,
+    "Polyketide": BGCClass.PKS,
+    "RiPP": BGCClass.RIPP,
+    "Terpene": BGCClass.TERPENE,
+    "Saccharide": BGCClass.SACCHARIDE,
+    "Alkaloid": BGCClass.ALKALOID,
+    "Other": BGCClass.OTHER,
+}
+
 logger = logging.getLogger(__name__)
 
 
@@ -117,11 +136,123 @@ def _map_bgc_class(class_names: list[str]) -> tuple[BGCClass, str | None]:
     return BGCClass.HYBRID, "+".join(class_names)
 
 
-def parse_mibig_entry(raw: dict[str, Any]) -> ParsedMibigEntry:
-    """Parse one MIBiG 4.0 JSON entry (matching `MibigEntry.to_json()`) into
-    a `ParsedMibigEntry`. Raises `MibigParseError` on structurally invalid
-    input.
+def detect_mibig_schema(raw: dict[str, Any]) -> str:
+    """Return "v3" or "v4" for a raw MIBiG entry.
+
+    Detected from structure rather than a version field, because 3.x
+    entries carry no usable top-level version marker — the `changelog`
+    holds per-release history, not the schema version. The 3.x wrapper
+    (`{"changelog": ..., "cluster": {...}}`) is unambiguous, so that's
+    what's keyed on.
     """
+    if "cluster" in raw and isinstance(raw.get("cluster"), dict):
+        return "v3"
+    return "v4"
+
+
+def parse_mibig_entry_v3(raw: dict[str, Any]) -> ParsedMibigEntry:
+    """Parse one MIBiG 3.x entry.
+
+    Differences from 4.0 that actually bite, all found by ingesting the
+    real 2,745-entry repository:
+      - the payload is nested under `cluster`
+      - `mibig_accession`, not `accession`
+      - `biosyn_class` is a flat list of product names, not
+        `biosynthesis.classes[].class`
+      - `loci` is a single object, not a list
+      - `ncbi_tax_id` is a STRING, not an int
+      - coordinates are optional and can be half-present: 1,408 entries
+        carry `start_coord` and only 1,407 carry `end_coord`
+      - compounds use `compound`/`chem_struct`/`molecular_formula`
+    """
+    cluster = raw.get("cluster")
+    if not isinstance(cluster, dict):
+        raise MibigParseError("MIBiG 3.x entry has no 'cluster' object")
+
+    try:
+        accession = cluster["mibig_accession"]
+        loci = cluster["loci"]
+    except KeyError as exc:
+        raise MibigParseError(f"MIBiG 3.x entry missing required field: {exc}") from exc
+
+    if not isinstance(loci, dict) or "accession" not in loci:
+        raise MibigParseError(f"{accession}: loci is not a usable object")
+
+    start = loci.get("start_coord")
+    end = loci.get("end_coord")
+    # Half-present coordinates are real in this dataset. A cluster with a
+    # start and no end has no meaningful span, so both are dropped rather
+    # than storing a boundary that implies a length it doesn't have.
+    if start is None or end is None:
+        start = end = None
+
+    raw_taxid = cluster.get("ncbi_tax_id")
+    try:
+        ncbi_taxid = int(raw_taxid) if raw_taxid not in (None, "") else None
+    except (TypeError, ValueError):
+        ncbi_taxid = None
+
+    class_names = [c for c in cluster.get("biosyn_class", []) if c]
+    mapped = [_MIBIG_V3_CLASS_TO_BGC_CLASS.get(name, BGCClass.OTHER) for name in class_names]
+    if not mapped:
+        bgc_class, subtype = BGCClass.OTHER, None
+    elif len(set(mapped)) == 1:
+        bgc_class = mapped[0]
+        subtype = "+".join(class_names) if len(class_names) > 1 else None
+    else:
+        bgc_class, subtype = BGCClass.HYBRID, "+".join(class_names)
+
+    compounds: list[ParsedMibigCompound] = []
+    for index, compound_raw in enumerate(cluster.get("compounds", [])):
+        name = compound_raw.get("compound")
+        if not name:
+            continue
+        pubchem_cid = None
+        for db_id in compound_raw.get("database_id", []) or []:
+            if isinstance(db_id, str) and db_id.startswith("pubchem:"):
+                try:
+                    pubchem_cid = int(db_id.split(":", 1)[1])
+                except ValueError:
+                    pubchem_cid = None
+                break
+        methods = [e for e in compound_raw.get("evidence", []) if isinstance(e, str)]
+        compounds.append(
+            ParsedMibigCompound(
+                name=name,
+                chemical_formula=compound_raw.get("molecular_formula"),
+                smiles=compound_raw.get("chem_struct"),
+                compound_class=", ".join(
+                    m.get("moiety", "") for m in compound_raw.get("chem_moieties", []) if m.get("moiety")
+                )
+                or None,
+                mibig_compound_ref=f"{accession}:{index}",
+                pubchem_cid=pubchem_cid,
+                link_reference="; ".join(methods) or None,
+            )
+        )
+
+    return ParsedMibigEntry(
+        mibig_accession=accession,
+        status=cluster.get("status", ACTIVE_STATUS),
+        locus_accession=loci["accession"],
+        start_coord=start,
+        end_coord=end,
+        organism_name=cluster.get("organism_name"),
+        ncbi_taxid=ncbi_taxid,
+        bgc_class=bgc_class,
+        subtype=subtype,
+        compounds=compounds,
+        raw=raw,
+    )
+
+
+def parse_mibig_entry(raw: dict[str, Any]) -> ParsedMibigEntry:
+    """Parse one MIBiG entry, auto-detecting 3.x vs 4.0 format.
+
+    Raises `MibigParseError` on structurally invalid input.
+    """
+    if detect_mibig_schema(raw) == "v3":
+        return parse_mibig_entry_v3(raw)
     try:
         accession = raw["accession"]
         status = raw["status"]
@@ -327,7 +458,15 @@ def read_mibig_entries_from_path(path: str | Path) -> Iterator[dict[str, Any]]:
     for file_path in files:
         with open(file_path, encoding="utf-8") as fh:
             raw = json.load(fh)
-        if not isinstance(raw, dict) or "accession" not in raw or "biosynthesis" not in raw:
+        # Accept either schema. The v4 check alone rejected every file in
+        # the real mibig-json repository, which publishes 3.x.
+        looks_like_v4 = isinstance(raw, dict) and "accession" in raw and "biosynthesis" in raw
+        looks_like_v3 = (
+            isinstance(raw, dict)
+            and isinstance(raw.get("cluster"), dict)
+            and "mibig_accession" in raw["cluster"]
+        )
+        if not (looks_like_v4 or looks_like_v3):
             logger.warning("Skipping %s: does not look like a MIBiG entry JSON", file_path)
             continue
         yield raw
