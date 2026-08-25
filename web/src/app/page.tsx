@@ -5,6 +5,7 @@ import { ClassFilterRail } from "@/components/ClassFilterRail";
 import { ComparisonPanel } from "@/components/ComparisonPanel";
 import { ExportButton } from "@/components/ExportButton";
 import { HeatmapView } from "@/components/HeatmapView";
+import { LevelControl } from "@/components/LevelControl";
 import { SankeyView } from "@/components/SankeyView";
 import { DetailPanel, type Selection } from "@/components/DetailPanel";
 import { FamilyRail } from "@/components/FamilyRail";
@@ -13,10 +14,13 @@ import { TreeCanvas } from "@/components/TreeCanvas";
 import { useTaxonomyTree } from "@/hooks/useTaxonomyTree";
 import { CLASS_ORDER } from "@/lib/colors";
 import {
+  collapseToLevel,
   collectMatchKeys,
   countBgcClasses,
   countTotalGenomes,
+  ranksPresent,
   toRootDisplayNode,
+  type CollapseLevel,
   type TreeOrientation,
 } from "@/lib/tree-logic";
 
@@ -31,6 +35,7 @@ export default function HomePage() {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [orientation, setOrientation] = useState<TreeOrientation>("horizontal");
   const [view, setView] = useState<"tree" | "flow" | "heatmap">("tree");
+  const [activeLevel, setActiveLevel] = useState<CollapseLevel | null>(null);
 
   function toggleComparisonTaxon(taxonId: string): void {
     setComparisonTaxonIds((prev) =>
@@ -40,13 +45,24 @@ export default function HomePage() {
 
   const root = useMemo(() => (tree ? toRootDisplayNode(tree) : null), [tree]);
   const classCounts = useMemo(() => (root ? countBgcClasses(root) : {}), [root]);
+  const availableRanks = useMemo(() => (root ? ranksPresent(root) : new Set<string>()), [root]);
   const genomeCount = useMemo(() => (root ? countTotalGenomes(root) : 0), [root]);
   const matchCount = useMemo(
     () => (root && query.trim() ? collectMatchKeys(root, query).size : null),
     [root, query],
   );
 
+  function selectLevel(level: CollapseLevel): void {
+    if (!root) return;
+    setActiveLevel(level);
+    setCollapsed(collapseToLevel(root, level));
+  }
+
   function toggleCollapse(key: string): void {
+    // Once a node is toggled by hand the tree no longer matches the
+    // preset, so the highlight is cleared rather than left claiming a
+    // depth that isn't true any more.
+    setActiveLevel(null);
     setCollapsed((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
@@ -110,6 +126,12 @@ export default function HomePage() {
 
       <div className="flex min-h-0 flex-1">
         <div className="w-52 flex-shrink-0 overflow-y-auto border-r border-line p-4">
+          <LevelControl
+            activeLevel={activeLevel}
+            availableRanks={availableRanks}
+            onSelectLevel={selectLevel}
+          />
+
           <ClassFilterRail
             activeClasses={activeClasses}
             counts={classCounts}

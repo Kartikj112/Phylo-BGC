@@ -1043,3 +1043,42 @@ and was later pruned, so `export.test.ts` (15 tests) failed to collect —
 and **vitest still exited 0**, reporting the remaining file as passing. A
 silently shrinking suite is worse than a failing one. `jsdom` is now a
 saved devDependency; 67 tests run.
+
+---
+
+## Rank-level collapse control
+
+A left-rail control ("Show down to…") sets the whole tree's depth in one
+click: Domain → Phylum → Class → Order → Family → Genus → Species →
+Genomes. On the 80-genome corpus this steps the visible node count
+2 → 5 → 9 → 13 → 19 → 26 → 78 → 158.
+
+This matters more than a convenience: on a dense tree, the node you want
+to collapse is frequently not on screen, so per-node clicking is a poor
+way to control depth.
+
+Three decisions worth recording:
+
+**Genomes is the deepest level.** BGCs render as tick marks *on* a genome
+rather than as tree nodes, so there is no BGC level to collapse to — they
+appear or don't with their genome. The control says so rather than
+offering a level that couldn't work.
+
+**Skipped ranks terminate the branch anyway.** Real taxonomies omit
+ranks — a genus can sit directly under a family with no order between.
+`collapseToLevel` collapses every taxon at or *below* the target depth,
+not only exact rank matches, so a branch missing the requested rank
+becomes a leaf at the shallowest rank it does have. Showing one rank
+deeper than asked is better than the alternative (matching on rank
+equality alone would leave such a branch fully expanded while its
+siblings collapsed).
+
+**Only the topmost node of a branch is collapsed**, not every descendant.
+Collapsing nodes beneath an already-collapsed one is redundant and would
+leave stale keys behind when the user re-expands by hand.
+
+Manual toggling clears the active level highlight, since the tree no
+longer matches the preset and leaving it lit would claim a depth that
+isn't true. Levels absent from the loaded dataset are disabled rather
+than offered as no-op buttons — `ranksPresent()` derives that from the
+data instead of assuming the full seven-rank hierarchy exists.

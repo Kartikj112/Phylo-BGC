@@ -440,3 +440,93 @@ export function hasRoomForLabel(
 export function isAnchorRank(rank: string | null | undefined): boolean {
   return rank === "domain" || rank === "phylum" || rank === "class";
 }
+
+/**
+ * Rank-level collapse presets.
+ *
+ * "Show the tree down to order" is a far more natural way to control
+ * depth than clicking individual nodes, especially on a large tree where
+ * the node you want to collapse may not even be on screen.
+ *
+ * Levels stop at genome (assembly). BGCs are rendered as tick marks *on*
+ * a genome rather than as tree nodes, so there is no BGC level to
+ * collapse to — they appear or don't with their genome.
+ */
+export const RANK_DEPTH_ORDER = [
+  "domain",
+  "phylum",
+  "class",
+  "order",
+  "family",
+  "genus",
+  "species",
+] as const;
+
+export type CollapseLevel = (typeof RANK_DEPTH_ORDER)[number] | "genome";
+
+export const COLLAPSE_LEVELS: { id: CollapseLevel; label: string; badge: string }[] = [
+  { id: "domain", label: "Domain", badge: "D" },
+  { id: "phylum", label: "Phylum", badge: "P" },
+  { id: "class", label: "Class", badge: "C" },
+  { id: "order", label: "Order", badge: "O" },
+  { id: "family", label: "Family", badge: "F" },
+  { id: "genus", label: "Genus", badge: "G" },
+  { id: "species", label: "Species", badge: "S" },
+  { id: "genome", label: "Genomes", badge: "⌾" },
+];
+
+function rankDepth(rank: string | null | undefined): number {
+  if (!rank) return -1;
+  const index = RANK_DEPTH_ORDER.indexOf(rank as (typeof RANK_DEPTH_ORDER)[number]);
+  return index === -1 ? -1 : index;
+}
+
+/**
+ * The collapse set that shows the tree down to `level` and no deeper.
+ *
+ * Collapses every taxon at or below the target depth, which makes nodes
+ * *at* the target the visible leaves. Real taxonomies skip ranks — a
+ * genus can sit directly under a family with no order in between — so
+ * when the exact rank is missing from a branch, the shallowest rank
+ * present below the target becomes that branch's leaf instead. Showing
+ * one rank deeper than asked is better than hiding the branch entirely,
+ * which is what matching on rank equality alone would do.
+ */
+export function collapseToLevel(root: TaxonDisplayNode, level: CollapseLevel): Set<string> {
+  const collapsed = new Set<string>();
+  if (level === "genome") return collapsed; // nothing collapsed: show everything
+
+  const targetDepth = rankDepth(level);
+
+  function walk(node: DisplayNode, parentCollapsed: boolean): void {
+    if (node._kind === "genome") return;
+    const depth = rankDepth(node.rank);
+    const shouldCollapse = depth >= targetDepth && depth !== -1;
+
+    if (shouldCollapse && !parentCollapsed) collapsed.add(nodeKey(node));
+
+    const nowCollapsed = parentCollapsed || shouldCollapse;
+    node.children.forEach((c) => walk({ ...c, _kind: "taxon" }, nowCollapsed));
+  }
+
+  walk(root, false);
+  return collapsed;
+}
+
+/** The deepest rank actually present in this tree — so the control can
+ * disable levels the data doesn't contain rather than offering a button
+ * that does nothing. */
+export function ranksPresent(root: TaxonDisplayNode): Set<string> {
+  const found = new Set<string>();
+  function walk(node: DisplayNode): void {
+    if (node._kind === "genome") {
+      found.add("genome");
+      return;
+    }
+    if (node.rank) found.add(node.rank);
+    node.direct_genomes.forEach(() => found.add("genome"));
+    node.children.forEach((c) => walk({ ...c, _kind: "taxon" }));
+  }
+  walk(root);
+  return found;
+}

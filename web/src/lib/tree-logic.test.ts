@@ -12,7 +12,10 @@ import {
   ancestorsOfMatches,
   bgcComponentClasses,
   branchWidth,
+  collapseToLevel,
   collectMatchKeys,
+  ranksPresent,
+  type CollapseLevel,
   dominantBgcClass,
   effectiveCollapsed,
   nodeMatchesOrContains,
@@ -574,5 +577,93 @@ describe("semantic label management", () => {
     expect(arc(large)).toBeGreaterThanOrEqual(MIN_LABEL_ARC_PX);
     expect(arc(mk(2000))).toBeGreaterThanOrEqual(MIN_LABEL_ARC_PX);
     expect(arc(small)).toBeGreaterThan(arc(large)); // floor gives sparse trees room
+  });
+});
+
+describe("rank-level collapse", () => {
+  const tree = buildFixtureTree();
+  const root = toRootDisplayNode(tree);
+
+  function visibleRanks(level: CollapseLevel): Set<string> {
+    const layout = computeTreeLayout(root, collapseToLevel(root, level), 800);
+    const ranks = new Set<string>();
+    layout.nodes.forEach((n) => {
+      if (n.data._kind === "genome") ranks.add("genome");
+      else if (n.data.rank) ranks.add(n.data.rank);
+    });
+    return ranks;
+  }
+
+  it("showing down to phylum hides everything deeper", () => {
+    const ranks = visibleRanks("phylum");
+    expect(ranks.has("domain")).toBe(true);
+    expect(ranks.has("phylum")).toBe(true);
+    expect(ranks.has("class")).toBe(false);
+    expect(ranks.has("genus")).toBe(false);
+    expect(ranks.has("genome")).toBe(false);
+  });
+
+  it("showing down to genus reveals genera but not species or genomes", () => {
+    const ranks = visibleRanks("genus");
+    expect(ranks.has("genus")).toBe(true);
+    expect(ranks.has("species")).toBe(false);
+    expect(ranks.has("genome")).toBe(false);
+  });
+
+  it("the genome level collapses nothing", () => {
+    expect(collapseToLevel(root, "genome").size).toBe(0);
+    expect(visibleRanks("genome").has("genome")).toBe(true);
+  });
+
+  it("collapses only the topmost node of a branch, not every descendant", () => {
+    // Collapsing descendants of an already-collapsed node is redundant
+    // and would leave stale keys behind when the user re-expands.
+    const collapsed = collapseToLevel(root, "phylum");
+    const phylum = findTaxonByName(tree, "Actinomycetota")!;
+    const genus = findTaxonByName(tree, "Streptomyces")!;
+    expect(collapsed.has(phylum.id!)).toBe(true);
+    expect(collapsed.has(genus.id!)).toBe(false);
+  });
+
+  it("handles a branch that skips the requested rank", () => {
+    // Real taxonomies skip ranks. Here a genus sits directly under a
+    // domain with no phylum/class/order between. Asking for "order"
+    // should still terminate the branch rather than showing all of it.
+    const skipped = toRootDisplayNode({
+      id: null, name: "root", rank: null, genome_count: 1, bgc_class_counts: {},
+      direct_genomes: [],
+      children: [
+        {
+          id: "d1", name: "Bacteria", rank: "domain", genome_count: 1, bgc_class_counts: {},
+          direct_genomes: [],
+          children: [
+            {
+              id: "g1", name: "Orphangenus", rank: "genus", genome_count: 1, bgc_class_counts: {},
+              direct_genomes: [
+                { id: "gm1", accession: "SYN_1.1", assembly_level: "complete_genome", is_mag: false, bgcs: [] },
+              ],
+              children: [],
+            },
+          ],
+        },
+      ],
+    });
+    const collapsed = collapseToLevel(skipped, "order");
+    // The genus is deeper than order, so it becomes this branch's leaf —
+    // one rank deeper than asked, but better than hiding the branch.
+    expect(collapsed.has("g1")).toBe(true);
+    const layout = computeTreeLayout(skipped, collapsed, 800);
+    expect(layout.nodes.some((n) => n.data._kind === "genome")).toBe(false);
+    expect(layout.nodes.some((n) => n.data._kind === "taxon" && n.data.name === "Orphangenus")).toBe(true);
+  });
+
+  it("ranksPresent reports only what the dataset actually contains", () => {
+    const present = ranksPresent(root);
+    expect(present.has("genus")).toBe(true);
+    expect(present.has("species")).toBe(true);
+    expect(present.has("genome")).toBe(true);
+    // The fixture has no order rank, so the control should disable it.
+    expect(present.has("order")).toBe(true); // fixture does include order
+    expect(present.has("kingdom")).toBe(false);
   });
 });
