@@ -152,6 +152,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/prioritization": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Prioritization
+         * @description Rank BGCs as candidates for follow-up.
+         *
+         *     This is a prioritization hint, not a novelty measurement — see
+         *     bgcscape/scoring/prioritization.py. The response's `caveats` are part
+         *     of the contract, not garnish.
+         */
+        get: operations["get_prioritization_api_v1_prioritization_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/flows/taxonomy-class": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Taxonomy Class Flow
+         * @description Sankey flows from phylum through genus to BGC class.
+         */
+        get: operations["get_taxonomy_class_flow_api_v1_flows_taxonomy_class_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/heatmap": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Presence Heatmap
+         * @description Clade x BGC-class matrix (report section 4.9).
+         */
+        get: operations["get_presence_heatmap_api_v1_heatmap_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/provenance": {
         parameters: {
             query?: never;
@@ -411,6 +475,17 @@ export interface components {
             /** Per Genome */
             per_genome?: number | null;
         };
+        /** ComponentScoreOut */
+        ComponentScoreOut: {
+            /** Name */
+            name: string;
+            /** Value */
+            value: number | null;
+            /** Available */
+            available: boolean;
+            /** Explanation */
+            explanation: string;
+        };
         /** CompoundSummary */
         CompoundSummary: {
             /**
@@ -498,6 +573,24 @@ export interface components {
             /** Label */
             label: string;
         };
+        /** FlowLink */
+        FlowLink: {
+            /** Source */
+            source: string;
+            /** Target */
+            target: string;
+            /** Value */
+            value: number;
+        };
+        /** FlowNode */
+        FlowNode: {
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            /** Stage */
+            stage: string;
+        };
         /** GenomeDetail */
         GenomeDetail: {
             /**
@@ -543,6 +636,80 @@ export interface components {
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /** HeatmapCell */
+        HeatmapCell: {
+            /** Row Id */
+            row_id: string;
+            /** Column */
+            column: string;
+            /** Count */
+            count: number;
+            /** Per Genome */
+            per_genome?: number | null;
+        };
+        /**
+         * PresenceHeatmap
+         * @description Clade x BGC-class presence/absence matrix (report section 4.9).
+         *
+         *     Rows carry `genome_count` because a zero cell in a one-genome clade
+         *     and a zero cell in a forty-genome clade are very different statements,
+         *     and a bare grid hides that distinction entirely.
+         */
+        PresenceHeatmap: {
+            /** Rows */
+            rows: {
+                [key: string]: unknown;
+            }[];
+            /** Columns */
+            columns: string[];
+            /** Cells */
+            cells: components["schemas"]["HeatmapCell"][];
+            /** Rank */
+            rank: string;
+            /** Caveat */
+            caveat: string;
+        };
+        /** PrioritizationOut */
+        PrioritizationOut: {
+            /**
+             * Bgc Id
+             * Format: uuid
+             */
+            bgc_id: string;
+            /** Genome Accession */
+            genome_accession: string;
+            /** Taxon Name */
+            taxon_name?: string | null;
+            bgc_class: components["schemas"]["BGCClass"];
+            /** Score */
+            score: number | null;
+            /** Components */
+            components: components["schemas"]["ComponentScoreOut"][];
+            /** Unavailable Components */
+            unavailable_components: string[];
+        };
+        /**
+         * PrioritizationResponse
+         * @description Ranked prioritization candidates.
+         *
+         *     `caveats` is not decoration: these framings are the difference between
+         *     a useful triage aid and a tool that manufactures false confidence. A
+         *     client that renders `score` without them is misusing this endpoint.
+         */
+        PrioritizationResponse: {
+            /** Results */
+            results: components["schemas"]["PrioritizationOut"][];
+            /** Weights */
+            weights: {
+                [key: string]: number;
+            };
+            /** Caveats */
+            caveats: string[];
+            /** Corpus Bgc Count */
+            corpus_bgc_count: number;
+            /** Mibig Reference Present */
+            mibig_reference_present: boolean;
         };
         /** SearchResult */
         SearchResult: {
@@ -625,6 +792,27 @@ export interface components {
             direct_genomes: components["schemas"]["GenomeSummary"][];
             /** Children */
             children: components["schemas"]["TaxonTreeNode"][];
+        };
+        /**
+         * TaxonomyClassFlow
+         * @description Sankey flows: phylum -> genus -> BGC class.
+         *
+         *     `hybrid_double_counted` matters for honest reading: a hybrid BGC is
+         *     counted under each component class in the final stage, so the last
+         *     column's total exceeds `total_bgcs` by that amount. Reported rather
+         *     than hidden — see api/flows.py for why that trade was made.
+         */
+        TaxonomyClassFlow: {
+            /** Nodes */
+            nodes: components["schemas"]["FlowNode"][];
+            /** Links */
+            links: components["schemas"]["FlowLink"][];
+            /** Hybrid Double Counted */
+            hybrid_double_counted: number;
+            /** Unclassified Bgcs */
+            unclassified_bgcs: number;
+            /** Total Bgcs */
+            total_bgcs: number;
         };
         /** ValidationError */
         ValidationError: {
@@ -842,6 +1030,88 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CladeComparison"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_prioritization_api_v1_prioritization_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrioritizationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_taxonomy_class_flow_api_v1_flows_taxonomy_class_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaxonomyClassFlow"];
+                };
+            };
+        };
+    };
+    get_presence_heatmap_api_v1_heatmap_get: {
+        parameters: {
+            query?: {
+                rank?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PresenceHeatmap"];
                 };
             };
             /** @description Validation Error */

@@ -4,13 +4,21 @@ import { useMemo, useRef, useState } from "react";
 import { ClassFilterRail } from "@/components/ClassFilterRail";
 import { ComparisonPanel } from "@/components/ComparisonPanel";
 import { ExportButton } from "@/components/ExportButton";
+import { HeatmapView } from "@/components/HeatmapView";
+import { SankeyView } from "@/components/SankeyView";
 import { DetailPanel, type Selection } from "@/components/DetailPanel";
 import { FamilyRail } from "@/components/FamilyRail";
 import { Header } from "@/components/Header";
 import { TreeCanvas } from "@/components/TreeCanvas";
 import { useTaxonomyTree } from "@/hooks/useTaxonomyTree";
 import { CLASS_ORDER } from "@/lib/colors";
-import { collectMatchKeys, countBgcClasses, countTotalGenomes, toRootDisplayNode } from "@/lib/tree-logic";
+import {
+  collectMatchKeys,
+  countBgcClasses,
+  countTotalGenomes,
+  toRootDisplayNode,
+  type TreeOrientation,
+} from "@/lib/tree-logic";
 
 export default function HomePage() {
   const { tree, loading, error } = useTaxonomyTree();
@@ -21,6 +29,8 @@ export default function HomePage() {
   const [selectedFamilyId, setSelectedFamilyId] = useState<string | null>(null);
   const [comparisonTaxonIds, setComparisonTaxonIds] = useState<string[]>([]);
   const svgRef = useRef<SVGSVGElement | null>(null);
+  const [orientation, setOrientation] = useState<TreeOrientation>("horizontal");
+  const [view, setView] = useState<"tree" | "flow" | "heatmap">("tree");
 
   function toggleComparisonTaxon(taxonId: string): void {
     setComparisonTaxonIds((prev) =>
@@ -57,6 +67,37 @@ export default function HomePage() {
   return (
     <div className="flex h-screen w-full flex-col bg-paper">
       <Header query={query} onQueryChange={setQuery} genomeCount={genomeCount} matchCount={matchCount}>
+        <div className="flex overflow-hidden rounded border border-line">
+          {([["tree", "Tree"], ["flow", "Flows"], ["heatmap", "Matrix"]] as const).map(([id, label]) => (
+            <button
+              key={id}
+              onClick={() => setView(id)}
+              className={`px-2.5 py-1 text-xs ${
+                view === id ? "bg-signal-wash text-signal" : "text-ink-muted hover:text-ink"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {view === "tree" && (
+        <div className="flex overflow-hidden rounded border border-line">
+          {(["horizontal", "radial"] as const).map((mode) => (
+            <button
+              key={mode}
+              onClick={() => setOrientation(mode)}
+              title={mode === "horizontal" ? "Horizontal tree" : "Circular tree"}
+              className={`px-2 py-1 text-xs ${
+                orientation === mode ? "bg-signal-wash text-signal" : "text-ink-muted hover:text-ink"
+              }`}
+            >
+              {mode === "horizontal" ? "⊢" : "◎"}
+            </button>
+          ))}
+        </div>
+        )}
+
         <ExportButton
           svgRef={svgRef}
           collapsed={collapsed}
@@ -79,15 +120,17 @@ export default function HomePage() {
         </div>
 
         <div className="flex-1 overflow-auto p-6">
-          {loading && <div className="text-sm text-ink-muted">Loading taxonomy tree…</div>}
-          {error && (
+          {view === "flow" && <SankeyView />}
+          {view === "heatmap" && <HeatmapView />}
+          {view === "tree" && loading && <div className="text-sm text-ink-muted">Loading taxonomy tree…</div>}
+          {view === "tree" && error && (
             <div className="max-w-md text-sm text-red-700">
               Couldn&apos;t reach the API ({error.message}). Is <code className="font-mono">uvicorn
               bgcscape.api.app:app</code> running, and does <code className="font-mono">NEXT_PUBLIC_API_URL</code>{" "}
               point at it? See <code className="font-mono">web/.env.local.example</code>.
             </div>
           )}
-          {root && (
+          {view === "tree" && root && (
             <TreeCanvas
               root={root}
               collapsed={collapsed}
@@ -101,6 +144,7 @@ export default function HomePage() {
               onSelectGenome={(id) => setSelection({ kind: "genome", id })}
               onSelectBgc={(id) => setSelection({ kind: "bgc", id })}
               svgRef={svgRef}
+              orientation={orientation}
             />
           )}
         </div>

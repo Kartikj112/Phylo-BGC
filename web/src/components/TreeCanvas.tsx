@@ -1,7 +1,7 @@
 "use client";
 
 import * as d3 from "d3";
-import { useMemo } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import type { DisplayNode, TaxonDisplayNode } from "@/lib/api-types";
 import { BGC_CLASS_COLORS, COLORS, classColor } from "@/lib/colors";
 import {
@@ -17,7 +17,11 @@ import {
   nodeMatchesOrContains,
   nodeKey,
   nodeVisibleClasses,
+  computeRadialTreeLayout,
+  isLeftHalf,
+  rankAbbreviation,
   subtreeBgcCount,
+  type TreeOrientation,
 } from "@/lib/tree-logic";
 
 interface TreeCanvasProps {
@@ -33,6 +37,7 @@ interface TreeCanvasProps {
   onSelectGenome: (id: string) => void;
   onSelectBgc: (id: string) => void;
   svgRef?: React.Ref<SVGSVGElement>;
+  orientation: TreeOrientation;
 }
 
 const TREE_WIDTH = 760;
@@ -51,6 +56,7 @@ export function TreeCanvas({
   onSelectGenome,
   onSelectBgc,
   svgRef,
+  orientation,
 }: TreeCanvasProps) {
   // Searching forces open the path to every match — a hit inside a
   // collapsed clade would otherwise never render, which made search look
@@ -59,10 +65,43 @@ export function TreeCanvas({
     () => effectiveCollapsed(root, collapsed, searchQuery),
     [root, collapsed, searchQuery],
   );
-  const { nodes, links, height } = useMemo(
+  const horizontal = useMemo(
     () => computeTreeLayout(root, openCollapsed, TREE_WIDTH),
     [root, openCollapsed],
   );
+  const radial = useMemo(() => computeRadialTreeLayout(root, openCollapsed), [root, openCollapsed]);
+  const isRadial = orientation === "radial";
+  const nodes = isRadial ? radial.nodes : horizontal.nodes;
+  const links = isRadial ? radial.links : horizontal.links;
+  const height = isRadial ? radial.size : horizontal.height;
+
+  // Middle-button pan. Left-drag is deliberately left alone: it's how
+  // text selection and click-to-select work, and hijacking it would break
+  // both. Middle-drag is the convention in map and graph tools.
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const dragStart = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
+  const [dragging, setDragging] = useState(false);
+
+  const onMouseDown = useCallback(
+    (e: React.MouseEvent<SVGSVGElement>) => {
+      if (e.button !== 1) return;
+      e.preventDefault(); // suppress the browser's autoscroll cursor
+      dragStart.current = { x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y };
+      setDragging(true);
+    },
+    [pan],
+  );
+
+  const onMouseMove = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
+    const start = dragStart.current;
+    if (!start) return;
+    setPan({ x: start.panX + (e.clientX - start.x), y: start.panY + (e.clientY - start.y) });
+  }, []);
+
+  const endDrag = useCallback(() => {
+    dragStart.current = null;
+    setDragging(false);
+  }, []);
 
   const linkGenerator = useMemo(
     () =>
@@ -70,6 +109,15 @@ export function TreeCanvas({
         .linkHorizontal<d3.HierarchyPointLink<DisplayNode>, d3.HierarchyPointNode<DisplayNode>>()
         .x((d) => d.y)
         .y((d) => d.x),
+    [],
+  );
+
+  const radialLinkGenerator = useMemo(
+    () =>
+      d3
+        .linkRadial<d3.HierarchyPointLink<DisplayNode>, d3.HierarchyPointNode<DisplayNode>>()
+        .angle((d) => d.x)
+        .radius((d) => d.y),
     [],
   );
 
@@ -83,8 +131,24 @@ export function TreeCanvas({
   );
 
   return (
-    <svg ref={svgRef} width="100%" height={height} viewBox={`0 0 ${SVG_VIEWBOX_WIDTH} ${height}`}>
-      <g transform="translate(30,20)">
+    <svg
+      ref={svgRef}
+      width="100%"
+      height={height}
+      viewBox={`0 0 ${isRadial ? radial.size : SVG_VIEWBOX_WIDTH} ${height}`}
+      onMouseDown={onMouseDown}
+      onMouseMove={onMouseMove}
+      onMouseUp={endDrag}
+      onMouseLeave={endDrag}
+      style={{ cursor: dragging ? "grabbing" : undefined }}
+    >
+      <g
+        transform={
+          isRadial
+            ? `translate(${radial.size / 2 + pan.x},${radial.size / 2 + pan.y})`
+            : `translate(${30 + pan.x},${20 + pan.y})`
+        }
+      >
         {links.map((link, i) => {
           const target = link.target.data;
           const width = branchWidth(target, maxSubtreeCount);
@@ -96,7 +160,7 @@ export function TreeCanvas({
           return (
             <path
               key={i}
-              d={linkGenerator(link) ?? undefined}
+              d={(isRadial ? radialLinkGenerator(link) : linkGenerator(link)) ?? undefined}
               fill="none"
               stroke={stroke}
               strokeWidth={width}
@@ -131,10 +195,20 @@ export function TreeCanvas({
           const opacity = dimmed || genomeDimmed || familyDimmed || searchDimmed ? 0.15 : 1;
 
           return (
-            <g key={key} transform={`translate(${n.y},${n.x})`} opacity={opacity}>
+            <g
+              key={key}
+              transform={
+                isRadial
+                  ? `rotate(${(n.x * 180) / Math.PI - 90}) translate(${n.y},0)`
+                  : `translate(${n.y},${n.x})`
+              }
+              opacity={opacity}
+            >
               {!isGenome && (
                 <TaxonNode
                   node={node}
+                  isRadial={isRadial}
+                  angle={n.x}
                   hiddenCount={hidden}
                   matched={isMatch}
                   inSelectedFamily={inSelectedFamily}
@@ -146,6 +220,8 @@ export function TreeCanvas({
               {isGenome && (
                 <GenomeNode
                   node={node}
+                  isRadial={isRadial}
+                  angle={n.x}
                   matched={isMatch}
                   dimmedBySelection={selectedId !== null && selectedId !== node.id}
                   selectedFamilyId={selectedFamilyId}
@@ -163,6 +239,8 @@ export function TreeCanvas({
 
 function TaxonNode({
   node,
+  isRadial,
+  angle,
   hiddenCount,
   matched,
   inSelectedFamily,
@@ -171,6 +249,8 @@ function TaxonNode({
   onToggleComparison,
 }: {
   node: Extract<DisplayNode, { _kind: "taxon" }>;
+  isRadial: boolean;
+  angle: number;
   hiddenCount: number;
   matched: boolean;
   inSelectedFamily: boolean;
@@ -179,6 +259,14 @@ function TaxonNode({
   onToggleComparison: () => void;
 }) {
   const isHighRank = node.rank === "domain" || node.rank === "phylum";
+  const badge = rankAbbreviation(node.rank);
+  // In radial mode a label on the left half would render upside down, so
+  // it's rotated 180 degrees and anchored from the other side.
+  const flip = isRadial && isLeftHalf(angle);
+  const labelAnchor = isRadial ? (flip ? "end" : "start") : "end";
+  const labelX = isRadial ? (flip ? -14 : 14) : -9;
+  const labelTransform = flip ? "rotate(180)" : undefined;
+  const badgeX = isRadial ? (flip ? 8 : -20) : -node.name.length * 6.6 - 22;
   return (
     <>
       <circle
@@ -195,7 +283,7 @@ function TaxonNode({
       {/* A highlighter wash behind the label. Recolouring alone wasn't
           enough: signal teal against body ink is nearly indistinguishable
           at 12px, so a working search read as a dead one. */}
-      {matched && (
+      {matched && !isRadial && (
         <rect
           x={-9 - node.name.length * 6.6 - 4}
           y={-8}
@@ -207,14 +295,44 @@ function TaxonNode({
           rx={2}
         />
       )}
+
+      {/* Rank badge (D/P/C/O/F/G/S — GTDB has no kingdom rank, so no K).
+          Rendered as its own glyph rather than prefixed into the label so
+          it stays visually subordinate to the organism name. */}
+      {badge && (
+        <g transform={labelTransform}>
+          <rect
+            x={badgeX}
+            y={-6.5}
+            width={13}
+            height={13}
+            rx={2.5}
+            fill={COLORS.paper}
+            stroke={COLORS.lineStrong}
+            strokeWidth={0.75}
+          />
+          <text
+            x={badgeX + 6.5}
+            textAnchor="middle"
+            dy="0.32em"
+            fontSize={8.5}
+            fontWeight={600}
+            fill={COLORS.inkMuted}
+          >
+            {badge}
+          </text>
+        </g>
+      )}
+
       <text
-        x={-9}
-        textAnchor="end"
+        x={labelX}
+        textAnchor={labelAnchor}
+        transform={labelTransform}
         dy="0.32em"
         fontStyle={node.rank === "species" ? "italic" : "normal"}
         fontSize={isHighRank ? 13 : 12}
         fontWeight={matched || isHighRank || inSelectedFamily || inComparison ? 600 : 400}
-        fill={inSelectedFamily || inComparison ? COLORS.signal : COLORS.ink}
+        fill={matched ? "#8A6D0B" : inSelectedFamily || inComparison ? COLORS.signal : COLORS.ink}
         className="cursor-pointer"
         onClick={(e) => {
           if (e.shiftKey) {
@@ -236,6 +354,8 @@ const BARCODE_TICK_WIDTH = 11;
 
 function GenomeNode({
   node,
+  isRadial,
+  angle,
   matched,
   dimmedBySelection,
   selectedFamilyId,
@@ -243,17 +363,25 @@ function GenomeNode({
   onSelectBgc,
 }: {
   node: Extract<DisplayNode, { _kind: "genome" }>;
+  isRadial: boolean;
+  angle: number;
   matched: boolean;
   dimmedBySelection: boolean;
   selectedFamilyId: string | null;
   onSelectGenome: () => void;
   onSelectBgc: (id: string) => void;
 }) {
+  const flip = isRadial && isLeftHalf(angle);
   return (
-    <g className="cursor-pointer" onClick={onSelectGenome} opacity={dimmedBySelection ? 0.55 : 1}>
+    <g
+      className="cursor-pointer"
+      onClick={onSelectGenome}
+      opacity={dimmedBySelection ? 0.55 : 1}
+      transform={flip ? "rotate(180)" : undefined}
+    >
       {matched && (
         <rect
-          x={6}
+          x={flip ? -node.accession.length * 6.9 - 14 : 6}
           y={-8}
           width={node.accession.length * 6.9 + 8}
           height={16}
@@ -264,7 +392,8 @@ function GenomeNode({
         />
       )}
       <text
-        x={10}
+        x={flip ? -10 : 10}
+        textAnchor={flip ? "end" : "start"}
         dy="0.32em"
         fontSize={11.5}
         fontWeight={matched ? 600 : 400}

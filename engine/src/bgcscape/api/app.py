@@ -21,6 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session, selectinload
 
 from bgcscape import __version__
+from bgcscape.api.flows import build_taxonomy_class_flow
 from bgcscape.api.comparison import (
     all_family_labels,
     build_clade_profile,
@@ -41,10 +42,15 @@ from bgcscape.api.schemas import (
     DatasetProvenanceResponse,
     ExportRequest,
     FamilyRef,
+    FlowLink,
+    FlowNode,
     GenomeDetail,
+    HeatmapCell,
+    PresenceHeatmap,
     PrioritizationOut,
     PrioritizationResponse,
     SearchResult,
+    TaxonomyClassFlow,
     TaxonTreeNode,
 )
 from bgcscape.api.tree_builder import build_taxonomy_tree
@@ -66,6 +72,7 @@ from bgcscape.scoring import (
     rank_bgcs,
 )
 from bgcscape.models import BGC, BGCCompoundLink, BGCFamily, BGCFamilyMembership, Genome, Source, Taxon
+from bgcscape.models.taxonomy import TaxonRank
 
 app = FastAPI(
     title="BGC-scape API",
@@ -397,6 +404,94 @@ def get_prioritization(
         caveats=shared_caveats,
         corpus_bgc_count=ctx_bgcs,
         mibig_reference_present=mibig_present,
+    )
+
+
+@app.get("/api/v1/flows/taxonomy-class", response_model=TaxonomyClassFlow)
+def get_taxonomy_class_flow(session: Session = Depends(get_session)) -> TaxonomyClassFlow:
+    """Sankey flows from phylum through genus to BGC class."""
+    return TaxonomyClassFlow(**build_taxonomy_class_flow(session))
+
+
+@app.get("/api/v1/heatmap", response_model=PresenceHeatmap)
+def get_presence_heatmap(
+    rank: str = "genus",
+    session: Session = Depends(get_session),
+) -> PresenceHeatmap:
+    """Clade x BGC-class matrix (report section 4.9)."""
+    try:
+        target_rank = TaxonRank(rank)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"Unknown rank: {rank}") from exc
+
+    taxa = {t.id: t for t in session.query(Taxon).all()}
+
+    def ancestor_at(taxon_id):
+        current = taxa.get(taxon_id)
+        while current is not None:
+            if current.rank == target_rank:
+                return current
+            current = taxa.get(current.parent_id) if current.parent_id else None
+        return None
+
+    genomes = (
+        session.query(Genome).options(selectinload(Genome.bgcs)).filter(Genome.taxon_id.isnot(None)).all()
+    )
+
+    counts: dict[str, dict[str, int]] = {}
+    genome_counts: dict[str, int] = {}
+    row_names: dict[str, str] = {}
+    classes: set[str] = set()
+
+    for genome in genomes:
+        clade = ancestor_at(genome.taxon_id)
+        if clade is None:
+            continue
+        key = str(clade.id)
+        row_names[key] = clade.name
+        genome_counts[key] = genome_counts.get(key, 0) + 1
+        bucket = counts.setdefault(key, {})
+        for bgc in genome.bgcs:
+            components = (
+                [p.strip().lower() for p in bgc.subtype.split("+") if p.strip()]
+                if bgc.bgc_class.value == "hybrid" and bgc.subtype
+                else [bgc.bgc_class.value]
+            )
+            for component in components:
+                classes.add(component)
+                bucket[component] = bucket.get(component, 0) + 1
+
+    ordered_columns = sorted(classes)
+    rows = [
+        {"id": key, "label": row_names[key], "genome_count": genome_counts[key]}
+        for key in sorted(row_names, key=lambda k: -genome_counts[k])
+    ]
+    cells = [
+        HeatmapCell(
+            row_id=row["id"],
+            column=column,
+            count=counts.get(row["id"], {}).get(column, 0),
+            per_genome=(
+                counts.get(row["id"], {}).get(column, 0) / row["genome_count"]
+                if row["genome_count"]
+                else None
+            ),
+        )
+        for row in rows
+        for column in ordered_columns
+    ]
+
+    return PresenceHeatmap(
+        rows=rows,
+        columns=ordered_columns,
+        cells=cells,
+        rank=target_rank.value,
+        caveat=(
+            "An empty cell means no genome in this dataset was found to carry that class in this "
+            "clade — not that the clade lacks it. Compare per-genome rates rather than raw counts, "
+            "and note each row's genome count: a zero in a 1-genome clade says far less than a zero "
+            "in a 40-genome clade."
+        ),
     )
 
 

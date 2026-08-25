@@ -910,3 +910,72 @@ ribbon widths on a phylogeny would compete with branch length for the same
 visual channel. This keeps the tree a tree and adds one honest encoding.
 The root → phylum → class flow *is* conserved and would make a legitimate
 Sankey — but as a separate view, not grafted onto ancestry.
+
+---
+
+## Tree affordances, and two new views
+
+### Rank badges use D, not K
+
+Each taxon carries a single-letter rank badge — **D**/P/C/O/F/G/S,
+matching GTDB's own taxonomy-string prefixes (`d__Bacteria;p__…`). There
+is deliberately no K: GTDB's top rank is *domain*, not kingdom, so a K
+badge would misdescribe the data this tool actually renders. The badge is
+a separate glyph rather than a prefix on the label, so it stays visually
+subordinate to the organism name.
+
+### Middle-button pan
+
+Middle-drag pans the canvas; left-drag is deliberately untouched, since
+that's how text selection and click-to-select work and hijacking it would
+break both. `preventDefault` on mousedown suppresses the browser's
+autoscroll cursor.
+
+### Circular / horizontal toggle
+
+Radial layout is the same `d3.tree` algorithm read in polar coordinates —
+sized `[2π, radius]`, so `x` is an angle and `y` a radius. Two details
+that matter: the radius grows with leaf count (a fixed radius is fine at
+20 tips and unreadable at 150), and labels on the left half are rotated
+180° and re-anchored, or they render upside down.
+
+### Sankey view: why it's a separate view, not ribbons on the tree
+
+A Sankey requires **conserved flow** — what enters a node must equal what
+leaves, or the widths lie. Branch width on the phylogeny already encodes
+subtree richness, and a second width channel there would fight it. So the
+flow lives in its own view, where `phylum → genus → BGC class` genuinely
+is conserved: every BGC has exactly one genome, genus, and phylum.
+
+Verified at 80-genome scale: 397 BGCs in, 397 across the phylum→genus
+stage.
+
+**One honest exception.** A hybrid BGC is counted under *each* component
+class in the final stage, so an NRPS+PKS cluster appears in both. That
+breaks conservation in the last column only (434 = 397 + 37 hybrids). The
+alternative — a separate "hybrid" sink — would be formally conserved but
+would hide that hybrid clusters *are* NRPS and PKS machinery, and would
+disagree with how the filter rail, clade comparison, and branch tinting
+all count them. Cross-view consistency was judged worth more than the
+invariant, and `hybrid_double_counted` is returned and shown in the UI so
+a reader can't infer conservation that isn't there.
+
+Nodes beyond the display cap collapse into an explicit "other" bucket
+rather than being dropped — silently omitting flow would make every
+downstream width wrong.
+
+### Presence/absence heatmap (report §4.9)
+
+Clade × BGC-class matrix, with the rank selectable from phylum to genus.
+
+**Cell shade encodes clusters per genome, not raw count.** A forty-genome
+clade would otherwise look uniformly rich purely for being better sampled,
+which is sampling effort rather than biology. The raw count is still
+printed in the cell, because the rate alone can't tell you whether it
+rests on one genome or forty — and each row shows its genome count for
+the same reason.
+
+The absence caveat is returned by the API and rendered above the grid: an
+empty cell means no genome *in this dataset* was found to carry that
+class, not that the clade lacks it. Same reasoning as
+`only_in_this_clade` in the comparison endpoint.

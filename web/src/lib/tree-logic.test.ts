@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   MAX_BRANCH_WIDTH,
   MIN_BRANCH_WIDTH,
+  RANK_ABBREVIATIONS,
+  computeRadialTreeLayout,
+  isLeftHalf,
+  rankAbbreviation,
   ancestorsOfMatches,
   bgcComponentClasses,
   branchWidth,
@@ -434,5 +438,74 @@ describe("branch weighting", () => {
       bgc_class_counts: { nrps: 9, pks: 2 }, direct_genomes: [], children: [],
     });
     expect(dominantBgcClass(clear)).toBe("nrps");
+  });
+});
+
+describe("rank badges", () => {
+  it("uses GTDB's own rank letters — domain, not kingdom", () => {
+    expect(rankAbbreviation("domain")).toBe("D");
+    expect(rankAbbreviation("phylum")).toBe("P");
+    expect(rankAbbreviation("species")).toBe("S");
+    // There is no kingdom rank in GTDB, so nothing should map to K.
+    expect(Object.values(RANK_ABBREVIATIONS)).not.toContain("K");
+  });
+
+  it("returns null for the synthetic root, which has no rank", () => {
+    expect(rankAbbreviation(null)).toBeNull();
+    expect(rankAbbreviation(undefined)).toBeNull();
+    expect(rankAbbreviation("not-a-rank")).toBeNull();
+  });
+});
+
+describe("radial layout", () => {
+  it("renders the same node set as the horizontal layout", () => {
+    const root = toRootDisplayNode(buildFixtureTree());
+    const flat = computeTreeLayout(root, new Set(), 800);
+    const radial = computeRadialTreeLayout(root, new Set());
+    expect(radial.nodes.length).toBe(flat.nodes.length);
+  });
+
+  it("places every node within the circle, at a finite angle and radius", () => {
+    const root = toRootDisplayNode(buildFixtureTree());
+    const { nodes, radius } = computeRadialTreeLayout(root, new Set());
+    for (const n of nodes) {
+      expect(Number.isFinite(n.x)).toBe(true);
+      expect(Number.isFinite(n.y)).toBe(true);
+      expect(n.x).toBeGreaterThanOrEqual(0);
+      expect(n.x).toBeLessThanOrEqual(2 * Math.PI);
+      expect(n.y).toBeLessThanOrEqual(radius);
+    }
+  });
+
+  it("respects collapse state", () => {
+    const tree = buildFixtureTree();
+    const root = toRootDisplayNode(tree);
+    const genus = findTaxonByName(tree, "Streptomyces")!;
+    const full = computeRadialTreeLayout(root, new Set());
+    const collapsed = computeRadialTreeLayout(root, new Set([genus.id!]));
+    expect(collapsed.nodes.length).toBeLessThan(full.nodes.length);
+  });
+
+  it("grows the canvas with leaf count so tips don't crush together", () => {
+    const small = computeRadialTreeLayout(toRootDisplayNode(buildFixtureTree()), new Set());
+    const big = computeRadialTreeLayout(
+      toRootDisplayNode({
+        id: null, name: "root", rank: null, genome_count: 60, bgc_class_counts: {},
+        direct_genomes: Array.from({ length: 60 }, (_, i) => ({
+          id: `g${i}`, accession: `SYN_${i}.1`, assembly_level: "complete_genome" as const,
+          is_mag: false, bgcs: [],
+        })),
+        children: [],
+      }),
+      new Set(),
+    );
+    expect(big.size).toBeGreaterThan(small.size);
+  });
+
+  it("flips labels on the left half so they read left-to-right", () => {
+    expect(isLeftHalf(0)).toBe(false);
+    expect(isLeftHalf(Math.PI / 2)).toBe(false);
+    expect(isLeftHalf(Math.PI)).toBe(true);
+    expect(isLeftHalf(1.5 * Math.PI)).toBe(true);
   });
 });

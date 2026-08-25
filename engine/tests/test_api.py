@@ -527,3 +527,50 @@ def test_get_endpoints_still_allow_preflight(api_client):
         headers={"Origin": "http://localhost:3000", "Access-Control-Request-Method": "GET"},
     )
     assert response.status_code == 200
+
+
+# --- Sankey flow + heatmap -------------------------------------------------------
+
+
+def test_taxonomy_class_flow_has_both_stages(api_client):
+    body = api_client.get("/api/v1/flows/taxonomy-class").json()
+    stages = {n["stage"] for n in body["nodes"]}
+    assert "phylum" in stages and "genus" in stages and "bgc_class" in stages
+    assert all(link["value"] > 0 for link in body["links"])
+
+
+def test_flow_is_conserved_from_phylum_to_genus(api_client):
+    """The phylum->genus stage must conserve flow exactly — that's what
+    makes this a legitimate Sankey rather than decoration."""
+    body = api_client.get("/api/v1/flows/taxonomy-class").json()
+    p_to_g = sum(l["value"] for l in body["links"] if l["source"].startswith("p:"))
+    classified = body["total_bgcs"] - body["unclassified_bgcs"]
+    assert p_to_g == classified
+
+
+def test_flow_reports_hybrid_double_counting_rather_than_hiding_it(api_client):
+    """Hybrids are counted under each component class in the final stage,
+    so that column exceeds the total. Reported so a reader can't infer
+    conservation that isn't there."""
+    body = api_client.get("/api/v1/flows/taxonomy-class").json()
+    g_to_c = sum(l["value"] for l in body["links"] if l["source"].startswith("g:"))
+    classified = body["total_bgcs"] - body["unclassified_bgcs"]
+    assert g_to_c == classified + body["hybrid_double_counted"]
+
+
+def test_heatmap_returns_a_complete_matrix(api_client):
+    body = api_client.get("/api/v1/heatmap", params={"rank": "genus"}).json()
+    assert body["rank"] == "genus"
+    assert len(body["cells"]) == len(body["rows"]) * len(body["columns"])
+    assert all("genome_count" in row for row in body["rows"])
+
+
+def test_heatmap_carries_the_absence_caveat(api_client):
+    """An empty cell means 'not found in this dataset', not 'absent'."""
+    body = api_client.get("/api/v1/heatmap").json()
+    assert "not that the clade lacks it" in body["caveat"]
+    assert "genome count" in body["caveat"]
+
+
+def test_heatmap_rejects_an_unknown_rank(api_client):
+    assert api_client.get("/api/v1/heatmap", params={"rank": "kingdom"}).status_code == 422

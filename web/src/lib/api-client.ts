@@ -10,6 +10,8 @@ import type {
   BGCFamilySummary,
   CladeComparison,
   DatasetProvenanceResponse,
+  PresenceHeatmap,
+  TaxonomyClassFlow,
   GenomeDetail,
   SearchResult,
   TaxonTreeNode,
@@ -108,4 +110,12 @@ export async function exportFigure(
     throw new ApiError(res.status, `Export failed: ${detail}`);
   }
   return res.blob();
+}
+
+export function fetchTaxonomyClassFlow(): Promise<TaxonomyClassFlow> {
+  return getJson<TaxonomyClassFlow>("/api/v1/flows/taxonomy-class");
+}
+
+export function fetchHeatmap(rank = "genus"): Promise<PresenceHeatmap> {
+  return getJson<PresenceHeatmap>(`/api/v1/heatmap?rank=${encodeURIComponent(rank)}`);
 }

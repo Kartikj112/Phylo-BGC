@@ -245,3 +245,53 @@ class PrioritizationResponse(BaseModel):
     caveats: list[str]
     corpus_bgc_count: int
     mibig_reference_present: bool
+
+
+class FlowNode(BaseModel):
+    id: str
+    label: str
+    stage: str
+
+
+class FlowLink(BaseModel):
+    source: str
+    target: str
+    value: int
+
+
+class TaxonomyClassFlow(BaseModel):
+    """Sankey flows: phylum -> genus -> BGC class.
+
+    `hybrid_double_counted` matters for honest reading: a hybrid BGC is
+    counted under each component class in the final stage, so the last
+    column's total exceeds `total_bgcs` by that amount. Reported rather
+    than hidden — see api/flows.py for why that trade was made.
+    """
+
+    nodes: list[FlowNode]
+    links: list[FlowLink]
+    hybrid_double_counted: int
+    unclassified_bgcs: int
+    total_bgcs: int
+
+
+class HeatmapCell(BaseModel):
+    row_id: str
+    column: str
+    count: int
+    per_genome: float | None = None
+
+
+class PresenceHeatmap(BaseModel):
+    """Clade x BGC-class presence/absence matrix (report section 4.9).
+
+    Rows carry `genome_count` because a zero cell in a one-genome clade
+    and a zero cell in a forty-genome clade are very different statements,
+    and a bare grid hides that distinction entirely.
+    """
+
+    rows: list[dict]
+    columns: list[str]
+    cells: list[HeatmapCell]
+    rank: str
+    caveat: str

@@ -320,3 +320,75 @@ export function dominantBgcClass(node: DisplayNode): string | null {
   if (entries.length > 1 && entries[1]![1] === topCount) return null; // genuine tie
   return topClass;
 }
+
+/**
+ * Rank abbreviations, matching GTDB's own taxonomy-string prefixes
+ * (`d__Bacteria;p__...;c__...`). Note there is no "kingdom" here: GTDB's
+ * top rank is domain, so the badge is D, not K. Using K would be wrong
+ * for the data this tool actually renders.
+ */
+export const RANK_ABBREVIATIONS: Record<string, string> = {
+  domain: "D",
+  phylum: "P",
+  class: "C",
+  order: "O",
+  family: "F",
+  genus: "G",
+  species: "S",
+};
+
+export function rankAbbreviation(rank: string | null | undefined): string | null {
+  if (!rank) return null;
+  return RANK_ABBREVIATIONS[rank] ?? null;
+}
+
+export type TreeOrientation = "horizontal" | "radial";
+
+export interface RadialTreeLayout {
+  nodes: d3.HierarchyPointNode<DisplayNode>[];
+  links: d3.HierarchyPointLink<DisplayNode>[];
+  size: number;
+  radius: number;
+}
+
+const RADIAL_MIN_RADIUS = 260;
+const RADIAL_PADDING = 190; // room for labels radiating outward
+
+/**
+ * Radial layout. `x` becomes an angle in radians and `y` a radius, which
+ * is what d3.tree produces when sized `[2π, r]` — the same layout
+ * algorithm, read in polar coordinates.
+ *
+ * Radius grows with leaf count so a large tree doesn't crush its tips
+ * together; a fixed radius looks fine at 20 leaves and becomes unreadable
+ * at 150.
+ */
+export function computeRadialTreeLayout(
+  root: TaxonDisplayNode,
+  collapsed: ReadonlySet<string>,
+): RadialTreeLayout {
+  const hierarchy = d3.hierarchy<DisplayNode>(root, makeChildrenAccessor(collapsed));
+  const leafCount = Math.max(hierarchy.leaves().length, 1);
+  const radius = Math.max(RADIAL_MIN_RADIUS, (leafCount * 15) / (2 * Math.PI) + RADIAL_MIN_RADIUS);
+
+  const layout = d3
+    .tree<DisplayNode>()
+    .size([2 * Math.PI, radius])
+    // Angular separation must scale inversely with radius, or inner
+    // nodes overlap while outer ones sit too far apart.
+    .separation((a, b) => (a.parent === b.parent ? 1 : 2) / a.depth || 1);
+  const positioned = layout(hierarchy);
+
+  return {
+    nodes: positioned.descendants(),
+    links: positioned.links(),
+    size: (radius + RADIAL_PADDING) * 2,
+    radius,
+  };
+}
+
+/** Whether a radial label sits on the left half and must be flipped so it
+ * reads left-to-right rather than upside down. */
+export function isLeftHalf(angleRadians: number): boolean {
+  return angleRadians >= Math.PI;
+}
