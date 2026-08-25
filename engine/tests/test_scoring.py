@@ -434,3 +434,52 @@ def test_small_corpus_caveat_is_raised(builder, session):
     session.commit()
     result = score_bgc(bgc, build_scoring_context(session))
     assert any("mostly reflects what hasn't been ingested yet" in c for c in result.caveats)
+
+
+def test_unclustered_bias_is_surfaced_not_hidden(builder, session):
+    """Being unclustered scores 1.0 on one component AND makes three
+    others uncomputable — so such clusters rise to the top of a ranking by
+    construction rather than by evidence. Found by running the scorer over
+    an 80-genome synthetic corpus, where the entire top of the ranking was
+    unclustered. Not corrected (that would mean inventing evidence or
+    making a weighting judgement on the researcher's behalf) but it must
+    be stated.
+    """
+    builder.add_bgc(
+        genus_name="Streptomyces",
+        species_name="S. ref",
+        accession="GCF_REF.1",
+        family_label="FAM_KNOWN",
+        mibig_accession="BGC-TEST0000001",
+    )
+    for i in range(3):
+        builder.add_bgc(
+            genus_name="Streptomyces", species_name=f"S. c{i}", accession=f"GCF_C{i}.1", family_label="FAM_KNOWN"
+        )
+    orphan = builder.add_bgc(genus_name="Streptomyces", species_name="S. orphan", accession="GCF_ORPH.1")
+    session.commit()
+
+    result = score_bgc(orphan, build_scoring_context(session))
+    assert any("BY CONSTRUCTION" in c for c in result.caveats)
+    assert any("not against clusters scored on the full component set" in c for c in result.caveats)
+
+
+def test_fully_scored_cluster_does_not_get_the_bias_caveat(builder, session):
+    """The caveat must be specific, not boilerplate on every result."""
+    builder.add_bgc(
+        genus_name="Streptomyces",
+        species_name="S. ref",
+        accession="GCF_REF.1",
+        family_label="FAM_KNOWN",
+        mibig_accession="BGC-TEST0000001",
+    )
+    clustered = builder.add_bgc(
+        genus_name="Streptomyces", species_name="S. c1", accession="GCF_C1.1", family_label="FAM_KNOWN"
+    )
+    builder.add_bgc(
+        genus_name="Streptomyces", species_name="S. c2", accession="GCF_C2.1", family_label="FAM_KNOWN"
+    )
+    session.commit()
+
+    result = score_bgc(clustered, build_scoring_context(session))
+    assert not any("BY CONSTRUCTION" in c for c in result.caveats)

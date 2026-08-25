@@ -2,7 +2,7 @@
 
 **Read this file first when resuming work in a new chunk.**
 
-_Last updated: Chunk 9 (Phase 5 complete) — 2026-08-25_
+_Last updated: Chunk 10 (synthetic demo corpus) — 2026-08-25_
 
 ## Status at a glance
 
@@ -16,8 +16,13 @@ _Last updated: Chunk 9 (Phase 5 complete) — 2026-08-25_
 | 4 | Publication-grade export | ✅ Done |
 | 5 | **User uploads + BGC prioritization scoring** | ✅ **Done (this chunk)** |
 
-**All five roadmap phases are implemented.** 149 engine tests (passing on
-BOTH SQLite and real Postgres) + 45 frontend tests = **194 total**.
+**All five roadmap phases are implemented.** 151 engine tests (passing on
+BOTH SQLite and real Postgres) + 45 frontend tests = **196 total**.
+
+**New: `bgcscape seed-demo`** generates ~80 genomes / ~400 BGCs / ~70
+families of clearly-labelled synthetic data, so the interface can be
+judged at realistic density. Running it immediately exposed a real
+scoring flaw invisible at fixture scale — see below.
 
 The remaining work is no longer "build the next phase" — it's validation
 against reality. See "What's actually unverified" below, which is now the
@@ -70,11 +75,19 @@ MIBiG reference entry correctly scores 0.00 on distance.
 The build is complete; the **validation is not**. In rough order of how
 much it should worry you:
 
-1. **No one has ever looked at the UI.** This sandbox has no browser. The
-   frontend builds, serves, type-checks, and its logic is unit-tested —
-   but its actual rendered appearance has never been seen by anything in
-   this entire project. Five phases of interface decisions rest on this.
-   **This is the single highest-value thing only you can do.**
+1. **The UI at realistic density has not been assessed.** It's now been
+   seen at 5 genomes (verdict: "looks like a simple tree, expected
+   something prettier") — but that's the skeleton without the density the
+   design depends on. Seed the demo corpus and look again before deciding
+   the aesthetic needs changing.
+
+   *Known scoring bias found this way:* over 80 genomes, the entire top of
+   the prioritization ranking was unclustered BGCs — they score 1.0 on
+   `unclustered` while making three other components uncomputable, so the
+   mean is over few, high signals. Not corrected (that would mean
+   inventing evidence or making a weighting judgement for you); it's named
+   in an explicit caveat on any affected result. Deciding the remedy is a
+   real scientific call — see ARCHITECTURE.md.
 2. **The scoring weights are uncalibrated, by design.** They're uniform
    because picking otherwise would be inventing a scientific claim. Tuning
    them requires real data at volume; weights fitted against fixture

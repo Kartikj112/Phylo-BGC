@@ -203,6 +203,44 @@ def ingest_bigscape_cmd(
         )
 
 
+@app.command("seed-demo")
+def seed_demo(
+    genomes: int = typer.Option(80, help="How many synthetic genomes to generate."),
+    seed: int = typer.Option(20260825, help="RNG seed — the same seed yields an identical corpus."),
+    force: bool = typer.Option(False, help="Proceed even if the database already contains data."),
+) -> None:
+    """Generate a synthetic corpus for evaluating the interface at scale.
+
+    THE DATA IS FABRICATED. Taxon names are transparently fictional,
+    accessions use a SYN_ prefix, and every row carries
+    evidence_level=HYPOTHESIZED with a source named "SYNTHETIC DEMO DATA
+    (not real)" — so it announces itself in the API, in figure captions,
+    and in `bgcscape inspect-figure`. No conclusion drawn from it means
+    anything.
+
+    Intended for a database of its own, not mixed into real data.
+    """
+    from bgcscape.demo import generate_demo_corpus
+    from bgcscape.models import Genome as GenomeModel
+
+    with session_scope() as session:
+        existing = session.query(GenomeModel).count()
+        if existing and not force:
+            typer.echo(
+                f"This database already holds {existing} genome(s). Seeding synthetic data into a "
+                "database with real data would mix fabricated rows into it. Use a separate database, "
+                "or pass --force if you're sure.",
+                err=True,
+            )
+            raise typer.Exit(1)
+
+        counts = generate_demo_corpus(session, genome_count=genomes, seed=seed)
+
+    typer.echo("Generated SYNTHETIC demo corpus (fabricated data — do not cite):")
+    for key, value in counts.items():
+        typer.echo(f"    {key}: {value}")
+
+
 @app.command("prioritize")
 def prioritize_cmd(
     limit: int = typer.Option(20, help="How many candidates to list."),

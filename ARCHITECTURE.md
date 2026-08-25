@@ -798,3 +798,47 @@ are in the report's §8 sketch, and both need alignment infrastructure
 rather than reimplementing. Adding them later means adding components, not
 restructuring the scorer; that extensibility is why components are a list
 rather than fixed fields.
+
+---
+
+## Synthetic demo corpus, and what running it at scale revealed
+
+`bgcscape seed-demo` generates ~80 genomes / ~400 BGCs / ~70 families for
+evaluating the interface at realistic density. The 5-genome test fixtures
+verify ingestion correctness but are useless for judging whether the tree
+design works — the genomic-barcode treatment, label crowding, and family
+distribution patterns only become assessable at scale.
+
+The data is fabricated, and is constrained to say so: transparently
+fictional taxon names (`Pseudostreptomyces demoensis`), `SYN_` accessions
+that can't be confused with NCBI assemblies, `evidence_level=HYPOTHESIZED`
+throughout, and a source named "SYNTHETIC DEMO DATA (not real)" that
+therefore appears in the provenance endpoint, every exported figure
+caption, and `inspect-figure` output. Seeding refuses to run into a
+database that already holds genomes unless forced.
+
+### It immediately exposed a real methodological flaw
+
+Running the prioritization scorer over 80 genomes, **the entire top of the
+ranking was unclustered BGCs** — and not for a good reason. Being
+unclustered scores 1.0 on the `unclustered` component *and* makes
+`family_rarity`, `taxonomic_isolation`, and `mibig_distance` all
+uncomputable at once. So the weighted mean is taken over two surviving
+components, both high, and the cluster rises to the top by construction
+rather than by evidence.
+
+This was invisible at 5 genomes and would have been invisible forever
+without a realistic corpus. It's the clearest argument in this project for
+why fixture-scale testing isn't validation.
+
+**Deliberately not "fixed."** Penalizing unclustered clusters or imputing
+values for the missing components would both invent evidence, which is the
+one thing the scorer refuses to do. The two defensible remedies — rank
+within equal-coverage groups, or weight `unclustered` down — are
+scientific judgements of exactly the kind this module leaves to the
+researcher. So the bias is *named*: any result hitting this pattern
+carries an explicit caveat telling the reader the rank is partly an
+artifact and to compare it only against similarly-scored clusters.
+
+That's the general principle this codebase keeps landing on: when the
+honest answer is a judgement call, surface it rather than pick silently.

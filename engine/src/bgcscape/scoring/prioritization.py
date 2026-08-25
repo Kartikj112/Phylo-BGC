@@ -362,6 +362,29 @@ def score_bgc(bgc: BGC, ctx: ScoringContext, weights: dict[str, float] | None = 
             f"{', '.join(missing)}. Scores resting on different component sets are not directly "
             "comparable to each other."
         )
+
+    # A systematic bias, surfaced rather than silently corrected. Being
+    # unclustered scores 1.0 AND makes family_rarity, taxonomic_isolation
+    # and mibig_distance uncomputable — so an unclustered BGC's mean is
+    # taken over few, high components and it rises to the top by
+    # construction, not because the evidence is stronger. Found by running
+    # the scorer over an 80-genome corpus, where the entire top of the
+    # ranking turned out to be unclustered clusters.
+    #
+    # Deliberately not "fixed" by penalizing unclustered BGCs or imputing
+    # values for the missing components: both would invent evidence, which
+    # is the thing this module refuses to do. The defensible options are to
+    # rank within equal-coverage groups, or to weight `unclustered` down —
+    # and choosing between them is a scientific judgement, like the weights
+    # themselves. So it's named here and left to the caller.
+    unclustered = next((c for c in components if c.name == "unclustered"), None)
+    if unclustered is not None and unclustered.value == 1.0 and len(missing) >= 2:
+        caveats.append(
+            "This cluster ranks high partly BY CONSTRUCTION: being unclustered scores maximally on "
+            "one component while making three others uncomputable, so its score is an average of few, "
+            "high signals rather than strong evidence. Compare it against other unclustered clusters, "
+            "not against clusters scored on the full component set."
+        )
     if not ctx.mibig_present:
         caveats.append(
             "No MIBiG reference data in this corpus — the most informative signal for prioritization "
