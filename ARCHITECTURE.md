@@ -1304,3 +1304,65 @@ disagreeing with the sidebar beside it would be worse than no donut. Its
 total (434 on the demo corpus) therefore matches the Sankey's final
 column rather than the raw BGC count (397) — the same documented
 hybrid double-count.
+
+---
+
+## Chunk B: incremental tree loading
+
+`/api/v1/taxonomy-tree` builds the whole hierarchy in memory and ships it
+in one response. That was a deliberate MVP simplification and it held to
+~2,500 BGCs at ~1.1 MB. It would not survive a real GTDB release:
+~600,000 genomes is a payload no browser should parse, for a tree no human
+can read anyway.
+
+`/api/v1/tree?root=X&depth=N` serves one slice at a time. Measured:
+
+| corpus | eager | lazy (depth 1) |
+|---|---|---|
+| MIBiG, 2,526 BGCs | 1,116 KB / 1.36s | **<1 KB / 0.51s** |
+| GTDB-shaped, 3,000 genomes | 871 KB / 0.84s | **<1 KB / 0.16s** |
+
+### The property that makes shallow loading usable
+
+**Rolled-up counts cover the whole subtree, not the returned slice.** At
+depth 1 the root has fetched no children but still reports 3,000 genomes
+and every BGC class count beneath it. If counts only covered what was
+returned, every summary glyph would understate its clade and the feature
+would be actively misleading rather than merely incomplete.
+
+This is what makes a shallow response a *view* rather than a loading
+state: combined with the collapsed-clade glyphs, depth 1 is a legible
+summary of the entire corpus.
+
+`truncated_at` names the nodes where expansion stopped, so a client can
+place "expand" affordances precisely instead of guessing.
+
+### Two bugs the tests caught
+
+**Genomes were gated on depth.** They attached only at the deepest
+*requested* level — so a shallow request returned none at all whenever
+the taxonomy placed genomes deeper than that. Depth governs *taxon*
+recursion; genomes are leaves, and the size cap is what bounds them.
+
+**`MAX_DEPTH` was too low to reach species.** GTDB is seven ranks and the
+synthetic root sits above them, so reaching species needs 8; the original
+6 silently made the deepest level unreachable. Caught by a test asking
+for genomes at `MAX_DEPTH` and getting none because recursion stopped at
+family.
+
+### Deliberately not done
+
+**The eager endpoint stays.** Export needs a complete figure, and the
+existing frontend consumes it; removing it to prove a point would break
+both. The two coexist, with the lazy one as the path that scales.
+
+**The rollup pass is still in-memory.** Counts are computed over the whole
+taxonomy on every request, which is the remaining bottleneck — a
+recursive SQL CTE is the obvious next optimisation. Not bundled here so
+the API-shape change can be evaluated on its own; shipping both at once
+would make a regression in either hard to attribute.
+
+**The frontend still uses the eager endpoint.** Porting it is a real
+piece of work (incremental fetch-on-expand, cache invalidation, focus
+interaction) and belongs in its own chunk rather than tacked onto the API
+change.

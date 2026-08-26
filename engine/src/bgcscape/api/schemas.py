@@ -316,3 +316,40 @@ class LineageStep(BaseModel):
 class BGCTypeCount(BaseModel):
     bgc_class: str
     count: int
+
+
+class LazyTaxonNode(BaseModel):
+    """One level of the tree, for incremental loading.
+
+    The difference from `TaxonTreeNode` is what `children` means: here it
+    is *this level only*, and `has_children` tells the client whether more
+    exists below without shipping it. A client renders what it has and
+    fetches deeper only where the user actually looks.
+    """
+
+    id: uuid.UUID | None
+    name: str
+    rank: TaxonRank | None
+    genome_count: int
+    bgc_class_counts: dict[str, int]
+    has_children: bool
+    child_taxon_count: int
+    direct_genome_count: int
+    children: list["LazyTaxonNode"] = []
+    direct_genomes: list[GenomeSummary] = []
+    """Populated only at the deepest requested level, and only when the
+    genome count is small enough to be worth sending — see the endpoint."""
+
+
+LazyTaxonNode.model_rebuild()
+
+
+class LazyTreeResponse(BaseModel):
+    root: LazyTaxonNode
+    depth: int
+    truncated_at: list[str]
+    """Node names where expansion stopped because the requested depth ran
+    out. Named so a client can show "expand" affordances precisely rather
+    than guessing."""
+    total_genomes: int
+    total_bgcs: int

@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from bgcscape import __version__
 from bgcscape.api.flows import build_taxonomy_class_flow
+from bgcscape.api.lazy_tree import LazyTreeError, build_lazy_tree
 from bgcscape.api.comparison import (
     all_family_labels,
     build_clade_profile,
@@ -47,6 +48,7 @@ from bgcscape.api.schemas import (
     GenomeDetail,
     BGCTypeCount,
     HeatmapCell,
+    LazyTreeResponse,
     LineageStep,
     PresenceHeatmap,
     PrioritizationOut,
@@ -118,6 +120,26 @@ def health() -> dict[str, str]:
 @app.get("/api/v1/taxonomy-tree", response_model=TaxonTreeNode)
 def get_taxonomy_tree(session: Session = Depends(get_session)) -> TaxonTreeNode:
     return build_taxonomy_tree(session)
+
+
+@app.get("/api/v1/tree", response_model=LazyTreeResponse)
+def get_lazy_tree(
+    root: uuid.UUID | None = None,
+    depth: int = 2,
+    session: Session = Depends(get_session),
+) -> LazyTreeResponse:
+    """One level of the tree at a time, for incremental loading.
+
+    `/taxonomy-tree` ships the whole hierarchy and is retained for the
+    existing client and for export, where a complete figure is the point.
+    This endpoint is what survives a real GTDB release: fetch the root,
+    render it, and request subtrees only where the user expands.
+    """
+    try:
+        return build_lazy_tree(session, root_id=root, depth=depth)
+    except LazyTreeError as exc:
+        detail = str(exc)
+        raise HTTPException(status_code=404 if "not found" in detail else 422, detail=detail) from exc
 
 
 @app.get("/api/v1/bgc-classes")
