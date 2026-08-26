@@ -2,7 +2,9 @@
 
 import { useMemo, useRef, useState } from "react";
 import { Breadcrumbs } from "@/components/Breadcrumbs";
+import { BgcTypeDonut } from "@/components/BgcTypeDonut";
 import { ClassFilterRail } from "@/components/ClassFilterRail";
+import { FilterPanel } from "@/components/FilterPanel";
 import { ComparisonPanel } from "@/components/ComparisonPanel";
 import { ExportButton } from "@/components/ExportButton";
 import { HeatmapView } from "@/components/HeatmapView";
@@ -19,11 +21,14 @@ import {
   collectMatchKeys,
   countBgcClasses,
   countTotalGenomes,
+  EMPTY_FILTERS,
   applyFocus,
+  applyGenomeFilters,
   pruneToBgcBearing,
   ranksPresent,
   toRootDisplayNode,
   type CollapseLevel,
+  type GenomeFilters,
   type TreeOrientation,
 } from "@/lib/tree-logic";
 
@@ -43,6 +48,7 @@ export default function HomePage() {
   // never been run on, and showing them buries the signal.
   const [onlyWithBgcs, setOnlyWithBgcs] = useState(true);
   const [focusKey, setFocusKey] = useState<string | null>(null);
+  const [filters, setFilters] = useState<GenomeFilters>(EMPTY_FILTERS);
 
   function toggleComparisonTaxon(taxonId: string): void {
     setComparisonTaxonIds((prev) =>
@@ -55,9 +61,13 @@ export default function HomePage() {
     () => (fullRoot ? pruneToBgcBearing(fullRoot, onlyWithBgcs) : null),
     [fullRoot, onlyWithBgcs],
   );
+  const filtered = useMemo(
+    () => (pruned ? applyGenomeFilters(pruned.root, filters) : null),
+    [pruned, filters],
+  );
   const focused = useMemo(
-    () => (pruned ? applyFocus(pruned.root, focusKey) : null),
-    [pruned, focusKey],
+    () => (filtered ? applyFocus(filtered.root, focusKey) : null),
+    [filtered, focusKey],
   );
   const root = focused?.root ?? null;
 
@@ -189,6 +199,14 @@ export default function HomePage() {
             </p>
           </div>
 
+          <FilterPanel
+            filters={filters}
+            onChange={setFilters}
+            matched={filtered?.matched ?? 0}
+            total={pruned?.shownGenomes ?? 0}
+            filteredEverythingOut={filtered?.filteredEverythingOut ?? false}
+          />
+
           <LevelControl
             activeLevel={activeLevel}
             availableRanks={availableRanks}
@@ -204,7 +222,12 @@ export default function HomePage() {
           <FamilyRail selectedFamilyId={selectedFamilyId} onSelectFamily={setSelectedFamilyId} />
         </div>
 
-        <div className="flex-1 overflow-auto p-6">
+        <div className="relative flex-1 overflow-auto p-6">
+          {view === "tree" && root && (
+            <div className="pointer-events-none absolute bottom-4 right-4 z-10">
+              <BgcTypeDonut />
+            </div>
+          )}
           {view === "flow" && <SankeyView />}
           {view === "heatmap" && <HeatmapView />}
           {view === "tree" && loading && <div className="text-sm text-ink-muted">Loading taxonomy tree…</div>}

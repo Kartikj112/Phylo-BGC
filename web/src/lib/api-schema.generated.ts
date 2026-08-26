@@ -216,6 +216,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/bgc-type-counts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Bgc Type Counts
+         * @description Corpus-wide BGC class distribution, for the summary donut.
+         *
+         *     Hybrids are attributed to each component class, matching every other
+         *     count in the app (filter rail, comparison, heatmap, flows) — a donut
+         *     disagreeing with the sidebar beside it would be worse than no donut.
+         */
+        get: operations["get_bgc_type_counts_api_v1_bgc_type_counts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/provenance": {
         parameters: {
             query?: never;
@@ -424,6 +448,13 @@ export interface components {
              */
             family_ids: string[];
         };
+        /** BGCTypeCount */
+        BGCTypeCount: {
+            /** Bgc Class */
+            bgc_class: string;
+            /** Count */
+            count: number;
+        };
         /** CladeComparison */
         CladeComparison: {
             /** Clades */
@@ -616,6 +647,11 @@ export interface components {
             contamination_pct?: number | null;
             /** Bgcs */
             bgcs: components["schemas"]["BGCSummary"][];
+            /**
+             * Lineage
+             * @default []
+             */
+            lineage: components["schemas"]["LineageStep"][];
         };
         /** GenomeSummary */
         GenomeSummary: {
@@ -631,6 +667,12 @@ export interface components {
             is_mag: boolean;
             /** Bgcs */
             bgcs: components["schemas"]["BGCSummary"][];
+            /** Genome Size Bp */
+            genome_size_bp?: number | null;
+            /** Gc Content Pct */
+            gc_content_pct?: number | null;
+            /** Completeness Pct */
+            completeness_pct?: number | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -647,6 +689,12 @@ export interface components {
             count: number;
             /** Per Genome */
             per_genome?: number | null;
+        };
+        /** LineageStep */
+        LineageStep: {
+            rank: components["schemas"]["TaxonRank"];
+            /** Name */
+            name: string;
         };
         /**
          * PresenceHeatmap
@@ -1121,6 +1169,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_bgc_type_counts_api_v1_bgc_type_counts_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BGCTypeCount"][];
                 };
             };
         };

@@ -1236,3 +1236,71 @@ fan rather than a phylogeny.
 client-side. At real GTDB scale that becomes the binding constraint, and
 the fix is server-side lazy aggregation (`/tree?root=X&depth=2`) — a
 larger change, and the next one worth making before going live.
+
+---
+
+## Genome-level detail and filtering (Chunk A)
+
+### Node size encodes BGC count
+
+Five tiers (0 / 1–5 / 6–20 / 21–50 / >50) rather than a continuous scale:
+the distinction that matters is categorical — worth looking at or not —
+and a smooth ramp makes every genome look mid-range.
+
+BGC-negative genomes are **muted, not removed**: smaller, grey, 65%
+opacity, but still drawn. They are evolutionary context, and deleting
+them from the tree would misrepresent the phylogeny. The node is also
+tinted by its dominant BGC class, so a tip's colour and size together say
+"how much, and of what" before any label is read.
+
+### Filters are limited to what the model can answer
+
+BGC count range, MIBiG matched/unmatched, genome size, GC content,
+minimum completeness, MAGs only. Every one is backed by a real column —
+a filter the database can't answer silently returns nothing and reads as
+a bug.
+
+Two behaviours worth stating:
+
+**A missing measurement passes rather than fails.** A genome with no
+recorded GC content shouldn't vanish because a GC filter is set; the
+filter simply can't speak to it. Treating null as a failed comparison
+would quietly hide exactly the incompletely-annotated genomes a
+researcher most needs to see.
+
+**Filtering everything out falls back to the unfiltered tree**, with an
+explanation — the same reasoning as the BGC-bearing filter and focus
+mode. A blank canvas reads as a crash rather than an empty result.
+
+Genome metadata (`genome_size_bp`, `gc_content_pct`, `completeness_pct`)
+now rides in the tree payload so filtering needs no request per genome.
+That is a real payload cost, bounded and small per genome; Chunk B's lazy
+aggregation is what actually addresses payload size.
+
+### Genome panel: tabs, lineage, external links
+
+Overview / BGCs / Genome / Lineage, plus a taxonomy breadcrumb and a
+status dot. Overview shows the first six clusters with a "show all"
+affordance; the BGCs tab shows everything.
+
+`lineage` is assembled server-side by walking `Taxon.parent_id` (with a
+cycle guard) and returned root-first, because the tree payload carries
+only a genome's own taxon — reconstructing ancestry client-side would
+need the whole taxon table.
+
+The Lineage tab explains its own emptiness on MIBiG-only data rather than
+rendering blank: MIBiG records a species and nothing above it.
+
+**External links are generated from the accession, and antiSMASH DB is
+deliberately omitted.** NCBI and GTDB resolve for any assembly accession;
+antiSMASH DB only resolves for genomes that happen to be in it, and a
+link that 404s for most genomes is worse than no link.
+
+### The donut agrees with everything else
+
+`/api/v1/bgc-type-counts` attributes hybrids to each component class,
+exactly as the filter rail, comparison, heatmap and Sankey do. A donut
+disagreeing with the sidebar beside it would be worse than no donut. Its
+total (434 on the demo corpus) therefore matches the Sankey's final
+column rather than the raw BGC count (397) — the same documented
+hybrid double-count.

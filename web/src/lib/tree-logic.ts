@@ -702,3 +702,145 @@ export function applyFocus(
   if (path.length === 0) return { root, path: [], focusLost: true };
   return { root: path[path.length - 1]!, path, focusLost: false };
 }
+
+/**
+ * BGC-count size tiers.
+ *
+ * A genome with no clusters should not command the same visual attention
+ * as one with fifty. Tiers rather than a continuous scale because the
+ * distinction that matters is categorical — "worth looking at" vs "not" —
+ * and a smooth ramp makes every genome look mid-range.
+ *
+ * BGC-negative genomes stay deliberately visible but subdued: they are
+ * evolutionary context, not noise, and deleting them from the tree would
+ * misrepresent the phylogeny.
+ */
+export interface BgcSizeTier {
+  id: string;
+  label: string;
+  radius: number;
+  /** Muted for empty genomes so they recede without disappearing. */
+  muted: boolean;
+}
+
+export const BGC_SIZE_TIERS: BgcSizeTier[] = [
+  { id: "none", label: "0", radius: 2, muted: true },
+  { id: "low", label: "1–5", radius: 3.5, muted: false },
+  { id: "medium", label: "6–20", radius: 5, muted: false },
+  { id: "high", label: "21–50", radius: 7, muted: false },
+  { id: "very-high", label: ">50", radius: 9.5, muted: false },
+];
+
+export function bgcSizeTier(bgcCount: number): BgcSizeTier {
+  if (bgcCount <= 0) return BGC_SIZE_TIERS[0]!;
+  if (bgcCount <= 5) return BGC_SIZE_TIERS[1]!;
+  if (bgcCount <= 20) return BGC_SIZE_TIERS[2]!;
+  if (bgcCount <= 50) return BGC_SIZE_TIERS[3]!;
+  return BGC_SIZE_TIERS[4]!;
+}
+
+/**
+ * Genome filters.
+ *
+ * Every field here is backed by real data in the model — no filter is
+ * offered for something the database can't answer. `null` bounds mean
+ * "unconstrained", which is distinct from a bound of zero.
+ */
+export interface GenomeFilters {
+  minBgcCount: number | null;
+  maxBgcCount: number | null;
+  mibigMatched: "any" | "matched" | "unmatched";
+  minGenomeSizeMb: number | null;
+  maxGenomeSizeMb: number | null;
+  minGcPct: number | null;
+  maxGcPct: number | null;
+  minCompletenessPct: number | null;
+  magOnly: boolean;
+}
+
+export const EMPTY_FILTERS: GenomeFilters = {
+  minBgcCount: null,
+  maxBgcCount: null,
+  mibigMatched: "any",
+  minGenomeSizeMb: null,
+  maxGenomeSizeMb: null,
+  minGcPct: null,
+  maxGcPct: null,
+  minCompletenessPct: null,
+  magOnly: false,
+};
+
+export function filtersAreActive(f: GenomeFilters): boolean {
+  return (
+    f.minBgcCount !== null ||
+    f.maxBgcCount !== null ||
+    f.mibigMatched !== "any" ||
+    f.minGenomeSizeMb !== null ||
+    f.maxGenomeSizeMb !== null ||
+    f.minGcPct !== null ||
+    f.maxGcPct !== null ||
+    f.minCompletenessPct !== null ||
+    f.magOnly
+  );
+}
+
+export function genomePassesFilters(genome: GenomeDisplayNode, f: GenomeFilters): boolean {
+  const bgcCount = genome.bgcs.length;
+  if (f.minBgcCount !== null && bgcCount < f.minBgcCount) return false;
+  if (f.maxBgcCount !== null && bgcCount > f.maxBgcCount) return false;
+
+  if (f.mibigMatched !== "any") {
+    const hasMatch = genome.bgcs.some((b) => b.mibig_accession);
+    if (f.mibigMatched === "matched" && !hasMatch) return false;
+    if (f.mibigMatched === "unmatched" && hasMatch) return false;
+  }
+
+  // A missing measurement is not a failed one: a genome without a
+  // recorded GC content shouldn't vanish because a GC filter is set. It
+  // passes, and the filter simply can't speak to it.
+  const sizeMb = genome.genome_size_bp != null ? genome.genome_size_bp / 1_000_000 : null;
+  if (sizeMb !== null) {
+    if (f.minGenomeSizeMb !== null && sizeMb < f.minGenomeSizeMb) return false;
+    if (f.maxGenomeSizeMb !== null && sizeMb > f.maxGenomeSizeMb) return false;
+  }
+  if (genome.gc_content_pct != null) {
+    if (f.minGcPct !== null && genome.gc_content_pct < f.minGcPct) return false;
+    if (f.maxGcPct !== null && genome.gc_content_pct > f.maxGcPct) return false;
+  }
+  if (genome.completeness_pct != null && f.minCompletenessPct !== null) {
+    if (genome.completeness_pct < f.minCompletenessPct) return false;
+  }
+  if (f.magOnly && !genome.is_mag) return false;
+  return true;
+}
+
+/** Apply filters to the tree, dropping taxa left with nothing. Shares the
+ * fallback behaviour of pruneToBgcBearing: filtering everything away
+ * returns the unfiltered tree rather than a blank canvas. */
+export function applyGenomeFilters(
+  root: TaxonDisplayNode,
+  filters: GenomeFilters,
+): { root: TaxonDisplayNode; matched: number; filteredEverythingOut: boolean } {
+  if (!filtersAreActive(filters)) {
+    return { root, matched: root.genome_count, filteredEverythingOut: false };
+  }
+
+  let matched = 0;
+  function prune(node: TaxonTreeNode): TaxonTreeNode {
+    const genomes = node.direct_genomes.filter((g) =>
+      genomePassesFilters({ ...g, _kind: "genome" }, filters),
+    );
+    matched += genomes.length;
+    const children = node.children.map(prune).filter((c) => c.genome_count > 0);
+    return {
+      ...node,
+      direct_genomes: genomes,
+      children,
+      genome_count: genomes.length + children.reduce((s, c) => s + c.genome_count, 0),
+    };
+  }
+
+  const filtered: TaxonDisplayNode = { ...prune(root), _kind: "taxon" };
+  if (matched === 0) return { root, matched: 0, filteredEverythingOut: true };
+  return { root: filtered, matched, filteredEverythingOut: false };
+}

@@ -12,7 +12,12 @@ import {
   MAX_GLYPH_WIDTH,
   MIN_GLYPH_WIDTH,
   ancestorsOfMatches,
+  EMPTY_FILTERS,
   applyFocus,
+  applyGenomeFilters,
+  bgcSizeTier,
+  filtersAreActive,
+  genomePassesFilters,
   cladeSummary,
   findNodeByKey,
   glyphWidth,
@@ -849,5 +854,95 @@ describe("focus mode", () => {
     const species = findTaxonByName(tree, "Kitasatospora setae")!;
     expect(findNodeByKey(root, species.id!)?.name).toBe("Kitasatospora setae");
     expect(findNodeByKey(root, "missing")).toBeNull();
+  });
+});
+
+describe("BGC-count size tiers", () => {
+  it("assigns tiers at the documented boundaries", () => {
+    expect(bgcSizeTier(0).id).toBe("none");
+    expect(bgcSizeTier(1).id).toBe("low");
+    expect(bgcSizeTier(5).id).toBe("low");
+    expect(bgcSizeTier(6).id).toBe("medium");
+    expect(bgcSizeTier(20).id).toBe("medium");
+    expect(bgcSizeTier(21).id).toBe("high");
+    expect(bgcSizeTier(50).id).toBe("high");
+    expect(bgcSizeTier(51).id).toBe("very-high");
+  });
+
+  it("radius increases monotonically with BGC count", () => {
+    const radii = [0, 3, 10, 30, 100].map((n) => bgcSizeTier(n).radius);
+    expect(radii).toEqual([...radii].sort((a, b) => a - b));
+  });
+
+  it("only the empty tier is muted — BGC-negative genomes recede but stay visible", () => {
+    expect(bgcSizeTier(0).muted).toBe(true);
+    expect(bgcSizeTier(1).muted).toBe(false);
+    expect(bgcSizeTier(0).radius).toBeGreaterThan(0);
+  });
+});
+
+describe("genome filters", () => {
+  function g(overrides: Partial<GenomeDisplayNode> = {}): GenomeDisplayNode {
+    return {
+      _kind: "genome", id: "g1", accession: "GCF_1.1",
+      assembly_level: "complete_genome", is_mag: false,
+      genome_size_bp: 5_000_000, gc_content_pct: 60, completeness_pct: 98,
+      bgcs: [], ...overrides,
+    } as GenomeDisplayNode;
+  }
+  const bgc = (mibig: string | null = null) => ({
+    id: `b${Math.random()}`, bgc_class: "nrps" as const, subtype: null,
+    mibig_accession: mibig, evidence_level: "predicted" as const, family_ids: [],
+  });
+
+  it("no active filter passes everything", () => {
+    expect(filtersAreActive(EMPTY_FILTERS)).toBe(false);
+    expect(genomePassesFilters(g(), EMPTY_FILTERS)).toBe(true);
+  });
+
+  it("filters on BGC count range", () => {
+    const f = { ...EMPTY_FILTERS, minBgcCount: 2 };
+    expect(genomePassesFilters(g({ bgcs: [bgc()] }), f)).toBe(false);
+    expect(genomePassesFilters(g({ bgcs: [bgc(), bgc()] }), f)).toBe(true);
+  });
+
+  it("filters on MIBiG match", () => {
+    const matched = { ...EMPTY_FILTERS, mibigMatched: "matched" as const };
+    const unmatched = { ...EMPTY_FILTERS, mibigMatched: "unmatched" as const };
+    expect(genomePassesFilters(g({ bgcs: [bgc("BGC001")] }), matched)).toBe(true);
+    expect(genomePassesFilters(g({ bgcs: [bgc()] }), matched)).toBe(false);
+    expect(genomePassesFilters(g({ bgcs: [bgc()] }), unmatched)).toBe(true);
+  });
+
+  it("a MISSING measurement passes rather than fails", () => {
+    // A genome with no recorded GC shouldn't vanish because a GC filter
+    // is set — the filter simply can't speak to it.
+    const f = { ...EMPTY_FILTERS, minGcPct: 50 };
+    expect(genomePassesFilters(g({ gc_content_pct: null }), f)).toBe(true);
+    expect(genomePassesFilters(g({ gc_content_pct: 40 }), f)).toBe(false);
+  });
+
+  it("filters on genome size in Mb, converting from bp", () => {
+    const f = { ...EMPTY_FILTERS, minGenomeSizeMb: 6 };
+    expect(genomePassesFilters(g({ genome_size_bp: 5_000_000 }), f)).toBe(false);
+    expect(genomePassesFilters(g({ genome_size_bp: 7_000_000 }), f)).toBe(true);
+  });
+
+  it("applyGenomeFilters prunes taxa left with nothing", () => {
+    const tree = buildFixtureTree();
+    const root = toRootDisplayNode(tree);
+    const result = applyGenomeFilters(root, { ...EMPTY_FILTERS, minBgcCount: 3 });
+    expect(result.matched).toBeGreaterThan(0);
+    expect(result.matched).toBeLessThan(root.genome_count);
+    expect(result.filteredEverythingOut).toBe(false);
+  });
+
+  it("falls back to the unfiltered tree when nothing matches", () => {
+    // Same reasoning as the BGC-bearing filter: a blank canvas reads as
+    // a crash rather than an empty result.
+    const root = toRootDisplayNode(buildFixtureTree());
+    const result = applyGenomeFilters(root, { ...EMPTY_FILTERS, minBgcCount: 9999 });
+    expect(result.filteredEverythingOut).toBe(true);
+    expect(result.root).toBe(root);
   });
 });

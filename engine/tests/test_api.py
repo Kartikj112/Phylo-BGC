@@ -574,3 +574,58 @@ def test_heatmap_carries_the_absence_caveat(api_client):
 
 def test_heatmap_rejects_an_unknown_rank(api_client):
     assert api_client.get("/api/v1/heatmap", params={"rank": "kingdom"}).status_code == 422
+
+
+# --- lineage, genome metadata, BGC type counts (Chunk A) -------------------------
+
+
+def test_genome_detail_includes_root_first_lineage(api_client):
+    tree = api_client.get("/api/v1/taxonomy-tree").json()
+
+    def find_genome(node):
+        for g in node["direct_genomes"]:
+            return g["id"]
+        for c in node["children"]:
+            found = find_genome(c)
+            if found:
+                return found
+        return None
+
+    body = api_client.get(f"/api/v1/genomes/{find_genome(tree)}").json()
+    lineage = body["lineage"]
+    assert len(lineage) > 1
+    # Root-first: a breadcrumb reads Bacteria -> ... -> species.
+    assert lineage[0]["rank"] == "domain"
+    assert lineage[-1]["rank"] in ("species", "genus")
+
+
+def test_tree_genomes_carry_metadata_for_filtering(api_client):
+    tree = api_client.get("/api/v1/taxonomy-tree").json()
+
+    def genomes(node):
+        yield from node["direct_genomes"]
+        for c in node["children"]:
+            yield from genomes(c)
+
+    all_genomes = list(genomes(tree))
+    assert all_genomes
+    for g in all_genomes:
+        assert "genome_size_bp" in g and "gc_content_pct" in g and "completeness_pct" in g
+    # GTDB-sourced genomes carry real values, so at least one is populated.
+    assert any(g["gc_content_pct"] is not None for g in all_genomes)
+
+
+def test_bgc_type_counts_match_the_class_filter_counts(api_client):
+    """The donut must agree with the sidebar beside it — hybrids
+    attributed to each component class, exactly as everywhere else."""
+    counts = api_client.get("/api/v1/bgc-type-counts").json()
+    by_class = {c["bgc_class"]: c["count"] for c in counts}
+
+    # The fixture has one nrps+pks hybrid, so both components appear and
+    # the literal "hybrid" does not.
+    assert "hybrid" not in by_class
+    assert by_class.get("nrps", 0) >= 1
+    assert by_class.get("pks", 0) >= 1
+    # Sorted largest-first.
+    values = [c["count"] for c in counts]
+    assert values == sorted(values, reverse=True)

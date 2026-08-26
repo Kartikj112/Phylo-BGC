@@ -34,6 +34,9 @@ def _genome_summary(genome: Genome) -> GenomeSummary:
         accession=genome.accession,
         assembly_level=genome.assembly_level,
         is_mag=genome.is_mag,
+        genome_size_bp=genome.genome_size_bp,
+        gc_content_pct=genome.gc_content_pct,
+        completeness_pct=genome.completeness_pct,
         bgcs=[
             BGCSummary(
                 id=bgc.id,

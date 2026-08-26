@@ -6,6 +6,7 @@ import type { DisplayNode, TaxonDisplayNode } from "@/lib/api-types";
 import { BGC_CLASS_COLORS, BGC_CLASS_LABELS, COLORS, classColor } from "@/lib/colors";
 import {
   bgcInFamily,
+  bgcSizeTier,
   branchWidth,
   cladeSummary,
   dominantBgcClass,
@@ -533,6 +534,9 @@ function GenomeNode({
   onSelectBgc: (id: string) => void;
 }) {
   const flip = isRadial && isLeftHalf(angle);
+  const tier = bgcSizeTier(node.bgcs.length);
+  const dominant = dominantBgcClass(node);
+  const dominantColor = dominant ? (BGC_CLASS_COLORS[dominant] ?? COLORS.inkMuted) : COLORS.inkMuted;
   return (
     <g className="cursor-pointer" onClick={onSelectGenome} opacity={dimmedBySelection ? 0.55 : 1}>
       {/* The label is the ONLY thing that gets flipped on the left half.
@@ -541,6 +545,18 @@ function GenomeNode({
           frame +x is always radially outward regardless of hemisphere.
           Ticks therefore stay in the unflipped frame below. */}
       <g transform={flip ? "rotate(180)" : undefined}>
+      {/* Node size encodes BGC count, so a genome with fifty clusters
+          doesn't compete for attention with one that has none. Empty
+          genomes stay visible but subdued -- they are evolutionary
+          context, not noise, and removing them would misrepresent the
+          phylogeny. */}
+      <circle
+        r={tier.radius}
+        fill={tier.muted ? COLORS.line : dominantColor}
+        stroke={tier.muted ? COLORS.lineStrong : COLORS.ink}
+        strokeWidth={tier.muted ? 0.75 : 1}
+        opacity={tier.muted ? 0.65 : 1}
+      />
       {matched && showLabel && (
         <rect
           x={flip ? -node.accession.length * 6.9 - 14 : 6}
@@ -555,7 +571,7 @@ function GenomeNode({
       )}
       {showLabel && (
         <text
-          x={flip ? -10 : 10}
+          x={flip ? -(tier.radius + 6) : tier.radius + 6}
           textAnchor={flip ? "end" : "start"}
           dy="0.32em"
           fontSize={11.5}

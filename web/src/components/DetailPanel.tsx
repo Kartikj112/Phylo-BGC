@@ -1,6 +1,6 @@
 "use client";
 
-import { MapPin, X } from "lucide-react";
+import { ExternalLink, MapPin, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { fetchBgc, fetchGenome } from "@/lib/api-client";
 import type { BGCDetail, GenomeDetail } from "@/lib/api-types";
@@ -83,20 +83,83 @@ function EvidenceBadge({ level }: { level: string }) {
   );
 }
 
+type GenomeTab = "overview" | "bgcs" | "info" | "lineage";
+
+/** External resources, generated from the accession rather than
+ * hardcoded. antiSMASH DB is deliberately omitted: it only resolves for
+ * genomes that happen to be in that database, and a link that 404s for
+ * most genomes is worse than no link. */
+function externalLinks(accession: string) {
+  const bare = accession.replace(/^(RS_|GB_)/, "");
+  const isAssembly = /^GC[AF]_/.test(bare);
+  return [
+    {
+      label: "NCBI",
+      href: isAssembly
+        ? `https://www.ncbi.nlm.nih.gov/datasets/genome/${encodeURIComponent(bare)}/`
+        : `https://www.ncbi.nlm.nih.gov/nuccore/${encodeURIComponent(bare)}`,
+    },
+    ...(isAssembly
+      ? [{ label: "GTDB", href: `https://gtdb.ecogenomic.org/genome?gid=${encodeURIComponent(bare)}` }]
+      : []),
+  ];
+}
+
 function GenomeDetailView({ genome, onSelectBgc }: { genome: GenomeDetail; onSelectBgc: (id: string) => void }) {
+  const [tab, setTab] = useState<GenomeTab>("overview");
+  const tabs: { id: GenomeTab; label: string }[] = [
+    { id: "overview", label: "Overview" },
+    { id: "bgcs", label: `BGCs (${genome.bgcs.length})` },
+    { id: "info", label: "Genome" },
+    { id: "lineage", label: "Lineage" },
+  ];
   return (
     <>
-      <div className="mb-1 font-mono text-sm text-ink">{genome.accession}</div>
-      {genome.taxon_name && <div className="mb-3 text-sm italic text-ink-muted">{genome.taxon_name}</div>}
+      <div className="mb-1 flex items-center gap-2">
+        <span
+          className="inline-block h-2 w-2 rounded-full"
+          style={{ backgroundColor: genome.bgcs.length > 0 ? "#5B8C5A" : "#9A9D95" }}
+          title={genome.bgcs.length > 0 ? "Has predicted BGCs" : "No BGCs recorded"}
+        />
+        <span className="font-mono text-sm text-ink">{genome.accession}</span>
+      </div>
+      {genome.taxon_name && <div className="mb-2 text-sm italic text-ink-muted">{genome.taxon_name}</div>}
 
-      <div className="mb-4 flex items-center gap-2">
-        <MapPin size={14} className="text-ink-faint" />
-        <span className="text-xs text-ink-muted">
-          {genome.is_mag ? "Metagenome-assembled genome" : "Isolate genome assembly"}
-        </span>
+      {genome.lineage.length > 0 && (
+        <div className="mb-3 text-xs leading-relaxed text-ink-faint">
+          {genome.lineage.map((step, i) => (
+            <span key={`${step.rank}-${step.name}`}>
+              {i > 0 && <span className="mx-1">→</span>}
+              <span className={step.rank === "species" ? "italic" : ""}>{step.name}</span>
+            </span>
+          ))}
+        </div>
+      )}
+
+      <div className="mb-3 flex gap-1 border-b border-line">
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            className={`-mb-px border-b-2 px-2 py-1 text-xs ${
+              tab === t.id ? "border-signal text-signal" : "border-transparent text-ink-muted hover:text-ink"
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
       </div>
 
-      {(genome.genome_size_bp != null || genome.completeness_pct != null) && (
+      {tab === "info" && (
+        <div className="mb-4 flex items-center gap-2">
+          <MapPin size={14} className="text-ink-faint" />
+          <span className="text-xs text-ink-muted">
+            {genome.is_mag ? "Metagenome-assembled genome" : "Isolate genome assembly"}
+          </span>
+        </div>
+      )}
+
+      {tab === "info" && (genome.genome_size_bp != null || genome.completeness_pct != null) && (
         <dl className="mb-4 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
           {genome.genome_size_bp != null && (
             <>
@@ -125,11 +188,38 @@ function GenomeDetailView({ genome, onSelectBgc }: { genome: GenomeDetail; onSel
         </dl>
       )}
 
+      {tab === "lineage" && (
+        <div className="flex flex-col gap-1">
+          {genome.lineage.length === 0 && (
+            <div className="text-sm text-ink-faint">
+              No taxonomic hierarchy for this genome. MIBiG records a species and nothing above it — ingest
+              GTDB to supply the lineage.
+            </div>
+          )}
+          {genome.lineage.map((step) => (
+            <div key={`${step.rank}-${step.name}`} className="flex items-baseline gap-2 text-sm">
+              <span className="w-16 flex-shrink-0 text-xs uppercase tracking-wide text-ink-faint">
+                {step.rank}
+              </span>
+              <span className={`text-ink ${step.rank === "species" ? "italic" : ""}`}>{step.name}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {(tab === "overview" || tab === "bgcs") && (
       <div className="mb-2 text-xs uppercase tracking-wider text-ink-muted">
         Biosynthetic gene clusters ({genome.bgcs.length})
       </div>
+      )}
+      {(tab === "overview" || tab === "bgcs") && (
       <div className="flex flex-col gap-2">
-        {genome.bgcs.map((b) => (
+        {genome.bgcs.length === 0 && (
+          <div className="text-sm text-ink-faint">
+            No clusters recorded. Run antiSMASH on this genome to populate them.
+          </div>
+        )}
+        {(tab === "overview" ? genome.bgcs.slice(0, 6) : genome.bgcs).map((b) => (
           <button
             key={b.id}
             onClick={() => onSelectBgc(b.id)}
@@ -149,8 +239,32 @@ function GenomeDetailView({ genome, onSelectBgc }: { genome: GenomeDetail; onSel
               </span>
             </div>
             {b.subtype && b.bgc_class !== "hybrid" && <div className="mt-1 text-xs text-ink-muted">{b.subtype}</div>}
+            {b.mibig_accession && (
+              <div className="mt-1 font-mono text-xs text-signal">MIBiG {b.mibig_accession}</div>
+            )}
             <EvidenceBadge level={b.evidence_level} />
           </button>
+        ))}
+        {tab === "overview" && genome.bgcs.length > 6 && (
+          <button onClick={() => setTab("bgcs")} className="text-xs text-signal hover:underline">
+            Show all {genome.bgcs.length} BGCs
+          </button>
+        )}
+      </div>
+      )}
+
+      <div className="mt-5 flex flex-wrap gap-2 border-t border-line pt-3">
+        {externalLinks(genome.accession).map((link) => (
+          <a
+            key={link.label}
+            href={link.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1 rounded border border-line px-2 py-1 text-xs text-ink-muted hover:border-line-strong hover:text-ink"
+          >
+            {link.label}
+            <ExternalLink size={10} />
+          </a>
         ))}
       </div>
     </>

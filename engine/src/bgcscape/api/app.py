@@ -45,7 +45,9 @@ from bgcscape.api.schemas import (
     FlowLink,
     FlowNode,
     GenomeDetail,
+    BGCTypeCount,
     HeatmapCell,
+    LineageStep,
     PresenceHeatmap,
     PrioritizationOut,
     PrioritizationResponse,
@@ -138,6 +140,17 @@ def get_genome(genome_id: uuid.UUID, session: Session = Depends(get_session)) ->
     if genome is None:
         raise HTTPException(status_code=404, detail=f"Genome {genome_id} not found")
 
+    lineage: list[LineageStep] = []
+    if genome.taxon is not None:
+        taxa = {t.id: t for t in session.query(Taxon).all()}
+        current = genome.taxon
+        seen: set = set()
+        while current is not None and current.id not in seen:
+            seen.add(current.id)  # guards against a cyclic parent chain
+            lineage.append(LineageStep(rank=current.rank, name=current.name))
+            current = taxa.get(current.parent_id) if current.parent_id else None
+        lineage.reverse()  # root-first, the order a breadcrumb reads
+
     return GenomeDetail(
         id=genome.id,
         accession=genome.accession,
@@ -160,6 +173,7 @@ def get_genome(genome_id: uuid.UUID, session: Session = Depends(get_session)) ->
             )
             for b in genome.bgcs
         ],
+        lineage=lineage,
     )
 
 
@@ -493,6 +507,28 @@ def get_presence_heatmap(
             "in a 40-genome clade."
         ),
     )
+
+
+@app.get("/api/v1/bgc-type-counts", response_model=list[BGCTypeCount])
+def get_bgc_type_counts(session: Session = Depends(get_session)) -> list[BGCTypeCount]:
+    """Corpus-wide BGC class distribution, for the summary donut.
+
+    Hybrids are attributed to each component class, matching every other
+    count in the app (filter rail, comparison, heatmap, flows) — a donut
+    disagreeing with the sidebar beside it would be worse than no donut.
+    """
+    counts: dict[str, int] = {}
+    for bgc in session.query(BGC).all():
+        components = (
+            [p.strip().lower() for p in bgc.subtype.split("+") if p.strip()]
+            if bgc.bgc_class.value == "hybrid" and bgc.subtype
+            else [bgc.bgc_class.value]
+        )
+        for component in components:
+            counts[component] = counts.get(component, 0) + 1
+    return [
+        BGCTypeCount(bgc_class=k, count=v) for k, v in sorted(counts.items(), key=lambda kv: -kv[1])
+    ]
 
 
 @app.get("/api/v1/provenance", response_model=DatasetProvenanceResponse)

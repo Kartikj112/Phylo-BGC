@@ -37,6 +37,13 @@ class GenomeSummary(BaseModel):
     assembly_level: AssemblyLevel
     is_mag: bool
     bgcs: list[BGCSummary]
+    # Carried in the tree payload so filtering on genome quality/size/GC
+    # can happen without a request per genome. These are small scalars;
+    # the payload cost is real but bounded, and Phase B's lazy
+    # aggregation is what actually addresses payload size.
+    genome_size_bp: int | None = None
+    gc_content_pct: float | None = None
+    completeness_pct: float | None = None
 
 
 class TaxonTreeNode(BaseModel):
@@ -93,6 +100,10 @@ class GenomeDetail(BaseModel):
     completeness_pct: float | None = None
     contamination_pct: float | None = None
     bgcs: list[BGCSummary]
+    lineage: list["LineageStep"] = []
+    """Full GTDB lineage, root-first. Assembled server-side because the
+    tree payload only carries the genome's own taxon — walking ancestors
+    client-side would need the whole taxon table."""
 
 
 class SearchResult(BaseModel):
@@ -295,3 +306,13 @@ class PresenceHeatmap(BaseModel):
     cells: list[HeatmapCell]
     rank: str
     caveat: str
+
+
+class LineageStep(BaseModel):
+    rank: TaxonRank
+    name: str
+
+
+class BGCTypeCount(BaseModel):
+    bgc_class: str
+    count: int

@@ -10,6 +10,7 @@ import type {
   BGCFamilySummary,
   CladeComparison,
   DatasetProvenanceResponse,
+  BGCTypeCount,
   PresenceHeatmap,
   TaxonomyClassFlow,
   GenomeDetail,
@@ -118,4 +119,8 @@ export function fetchTaxonomyClassFlow(): Promise<TaxonomyClassFlow> {
 
 export function fetchHeatmap(rank = "genus"): Promise<PresenceHeatmap> {
   return getJson<PresenceHeatmap>(`/api/v1/heatmap?rank=${encodeURIComponent(rank)}`);
+}
+
+export function fetchBgcTypeCounts(): Promise<BGCTypeCount[]> {
+  return getJson<BGCTypeCount[]>("/api/v1/bgc-type-counts");
 }
