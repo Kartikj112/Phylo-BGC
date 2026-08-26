@@ -6,11 +6,12 @@ interface HeaderProps {
   query: string;
   onQueryChange: (query: string) => void;
   genomeCount: number;
+  totalGenomes?: number;
   matchCount?: number | null;
   children?: React.ReactNode;
 }
 
-export function Header({ query, onQueryChange, genomeCount, matchCount, children }: HeaderProps) {
+export function Header({ query, onQueryChange, genomeCount, totalGenomes, matchCount, children }: HeaderProps) {
   return (
     <div className="flex flex-shrink-0 items-center gap-4 border-b border-line bg-card px-4 py-3">
       <div className="flex items-center gap-2">
@@ -44,7 +45,12 @@ export function Header({ query, onQueryChange, genomeCount, matchCount, children
       <span className="ml-auto flex items-center gap-3 text-xs text-ink-faint">
         <span className="hidden lg:inline">shift-click a clade to compare</span>
         <span className="font-mono">
-          {genomeCount} genome{genomeCount === 1 ? "" : "s"} · taxonomic tree (GTDB)
+          {/* "N of M" rather than a bare count: a filtered tree that
+              doesn't say so is indistinguishable from missing data. */}
+          {totalGenomes && totalGenomes !== genomeCount
+            ? `${genomeCount} of ${totalGenomes} genomes`
+            : `${genomeCount} genome${genomeCount === 1 ? "" : "s"}`}{" "}
+          · taxonomic tree (GTDB)
         </span>
       </span>
     </div>

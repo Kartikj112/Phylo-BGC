@@ -18,6 +18,7 @@ import {
   collectMatchKeys,
   countBgcClasses,
   countTotalGenomes,
+  pruneToBgcBearing,
   ranksPresent,
   toRootDisplayNode,
   type CollapseLevel,
@@ -36,6 +37,9 @@ export default function HomePage() {
   const [orientation, setOrientation] = useState<TreeOrientation>("horizontal");
   const [view, setView] = useState<"tree" | "flow" | "heatmap">("tree");
   const [activeLevel, setActiveLevel] = useState<CollapseLevel | null>(null);
+  // Defaults to on: a real GTDB ingest is mostly genomes antiSMASH has
+  // never been run on, and showing them buries the signal.
+  const [onlyWithBgcs, setOnlyWithBgcs] = useState(true);
 
   function toggleComparisonTaxon(taxonId: string): void {
     setComparisonTaxonIds((prev) =>
@@ -43,10 +47,15 @@ export default function HomePage() {
     );
   }
 
-  const root = useMemo(() => (tree ? toRootDisplayNode(tree) : null), [tree]);
+  const fullRoot = useMemo(() => (tree ? toRootDisplayNode(tree) : null), [tree]);
+  const pruned = useMemo(
+    () => (fullRoot ? pruneToBgcBearing(fullRoot, onlyWithBgcs) : null),
+    [fullRoot, onlyWithBgcs],
+  );
+  const root = pruned?.root ?? null;
   const classCounts = useMemo(() => (root ? countBgcClasses(root) : {}), [root]);
   const availableRanks = useMemo(() => (root ? ranksPresent(root) : new Set<string>()), [root]);
-  const genomeCount = useMemo(() => (root ? countTotalGenomes(root) : 0), [root]);
+  const genomeCount = pruned?.shownGenomes ?? 0;
   const matchCount = useMemo(
     () => (root && query.trim() ? collectMatchKeys(root, query).size : null),
     [root, query],
@@ -82,7 +91,9 @@ export default function HomePage() {
 
   return (
     <div className="flex h-screen w-full flex-col bg-paper">
-      <Header query={query} onQueryChange={setQuery} genomeCount={genomeCount} matchCount={matchCount}>
+      <Header query={query} onQueryChange={setQuery} genomeCount={genomeCount}
+        totalGenomes={pruned?.totalGenomes ?? 0}
+        matchCount={matchCount}>
         <div className="flex overflow-hidden rounded border border-line">
           {([["tree", "Tree"], ["flow", "Flows"], ["heatmap", "Matrix"]] as const).map(([id, label]) => (
             <button
@@ -126,6 +137,33 @@ export default function HomePage() {
 
       <div className="flex min-h-0 flex-1">
         <div className="w-52 flex-shrink-0 overflow-y-auto border-r border-line p-4">
+          <div className="mb-5">
+            <label className="flex cursor-pointer items-start gap-2">
+              <input
+                type="checkbox"
+                checked={onlyWithBgcs}
+                onChange={(e) => setOnlyWithBgcs(e.target.checked)}
+                className="mt-0.5 accent-[#2C5F52]"
+              />
+              <span className="text-sm text-ink">Only genomes with BGCs</span>
+            </label>
+            <p className="mt-1 pl-6 text-xs leading-relaxed text-ink-faint">
+              {pruned?.fellBackToFull ? (
+                <span className="text-amber-700">
+                  No genome in this dataset has BGCs yet — showing all. Run{" "}
+                  <span className="font-mono">bgcscape ingest antismash</span> to populate them.
+                </span>
+              ) : onlyWithBgcs ? (
+                <>
+                  Hiding {(pruned?.totalGenomes ?? 0) - (pruned?.shownGenomes ?? 0)} genome(s) with no
+                  predicted clusters. They are in the database, just not drawn.
+                </>
+              ) : (
+                <>Showing every genome, including those antiSMASH has not been run on.</>
+              )}
+            </p>
+          </div>
+
           <LevelControl
             activeLevel={activeLevel}
             availableRanks={availableRanks}

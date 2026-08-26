@@ -19,6 +19,7 @@ import {
   dominantBgcClass,
   effectiveCollapsed,
   nodeMatchesOrContains,
+  pruneToBgcBearing,
   subtreeBgcCount,
   bgcInFamily,
   genomeHasFamily,
@@ -36,7 +37,7 @@ import {
   toRootDisplayNode,
 } from "./tree-logic";
 import { FAM_LOCAL, FAM_SHARED, buildFixtureTree, findTaxonByName } from "./test-fixtures";
-import type { GenomeDisplayNode } from "./api-types";
+import type { GenomeDisplayNode, TaxonTreeNode } from "./api-types";
 
 describe("nodeKey", () => {
   it("uses the sentinel for the null-id synthetic root", () => {
@@ -665,5 +666,92 @@ describe("rank-level collapse", () => {
     // The fixture has no order rank, so the control should disable it.
     expect(present.has("order")).toBe(true); // fixture does include order
     expect(present.has("kingdom")).toBe(false);
+  });
+});
+
+describe("pruning to BGC-bearing genomes", () => {
+  /** A tree shaped like a real GTDB ingest: mostly genomes antiSMASH has
+   * never been run on, with a few that carry clusters. */
+  function mixedTree(): TaxonTreeNode {
+    const withBgcs = {
+      id: "g-has", accession: "GCF_HAS.1", assembly_level: "complete_genome" as const,
+      is_mag: false,
+      bgcs: [{
+        id: "b1", bgc_class: "nrps" as const, subtype: null,
+        mibig_accession: null, evidence_level: "predicted" as const, family_ids: [],
+      }],
+    };
+    const empties = Array.from({ length: 5 }, (_, i) => ({
+      id: `g-empty-${i}`, accession: `GCF_EMPTY_${i}.1`,
+      assembly_level: "complete_genome" as const, is_mag: false, bgcs: [],
+    }));
+    return {
+      id: null, name: "root", rank: null, genome_count: 6,
+      bgc_class_counts: { nrps: 1 }, direct_genomes: [],
+      children: [
+        {
+          id: "productive", name: "Productivegenus", rank: "genus", genome_count: 1,
+          bgc_class_counts: { nrps: 1 }, direct_genomes: [withBgcs], children: [],
+        },
+        {
+          id: "barren", name: "Barrengenus", rank: "genus", genome_count: 5,
+          bgc_class_counts: {}, direct_genomes: empties, children: [],
+        },
+      ],
+    };
+  }
+
+  it("keeps only genomes that carry BGCs", () => {
+    const result = pruneToBgcBearing(toRootDisplayNode(mixedTree()), true);
+    expect(result.shownGenomes).toBe(1);
+    expect(result.totalGenomes).toBe(6);
+    expect(result.fellBackToFull).toBe(false);
+  });
+
+  it("drops taxa whose entire subtree is empty", () => {
+    const result = pruneToBgcBearing(toRootDisplayNode(mixedTree()), true);
+    const names = result.root.children.map((c) => c.name);
+    expect(names).toContain("Productivegenus");
+    expect(names).not.toContain("Barrengenus");
+  });
+
+  it("recomputes genome_count so downstream consumers describe what's drawn", () => {
+    // Branch weighting, level collapse and the header count all read
+    // this; a stale count would describe the pre-pruned tree.
+    const result = pruneToBgcBearing(toRootDisplayNode(mixedTree()), true);
+    expect(result.root.genome_count).toBe(1);
+  });
+
+  it("passes the tree through untouched when disabled", () => {
+    const full = toRootDisplayNode(mixedTree());
+    const result = pruneToBgcBearing(full, false);
+    expect(result.root).toBe(full);
+    expect(result.shownGenomes).toBe(6);
+  });
+
+  it("falls back to the full tree when NOTHING has BGCs", () => {
+    // GTDB ingested without antiSMASH. Pruning to an empty canvas would
+    // read as a broken app rather than an empty result.
+    const barren = toRootDisplayNode({
+      id: null, name: "root", rank: null, genome_count: 3, bgc_class_counts: {},
+      direct_genomes: Array.from({ length: 3 }, (_, i) => ({
+        id: `g${i}`, accession: `GCF_${i}.1`, assembly_level: "complete_genome" as const,
+        is_mag: false, bgcs: [],
+      })),
+      children: [],
+    });
+    const result = pruneToBgcBearing(barren, true);
+    expect(result.fellBackToFull).toBe(true);
+    expect(result.shownGenomes).toBe(3);
+  });
+
+  it("the pruned tree still lays out and collapses correctly", () => {
+    const result = pruneToBgcBearing(toRootDisplayNode(mixedTree()), true);
+    const layout = computeTreeLayout(result.root, new Set(), 800);
+    expect(layout.nodes.some((n) => n.data._kind === "genome")).toBe(true);
+    expect(
+      layout.nodes.some((n) => n.data._kind === "genome" && n.data.accession.includes("EMPTY")),
+    ).toBe(false);
+    expect(collapseToLevel(result.root, "genus").size).toBeGreaterThan(0);
   });
 });

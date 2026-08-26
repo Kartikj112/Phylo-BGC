@@ -1138,3 +1138,42 @@ prioritization 0.84s. Acceptable, but the 959 KB tree payload and 1,527
 sibling nodes are the first sign that the in-memory tree builder and the
 "render every node" frontend will need the CTE/virtualization work both
 have been flagged for since Phase 2.
+
+---
+
+## Pruning to BGC-bearing genomes
+
+A real GTDB ingest brings in every genome in the release, but only the
+ones antiSMASH has been run on carry BGCs. On a 3,000-genome GTDB corpus
+the tree rendered 4,659 nodes of which almost all were empty scaffolding —
+pruning to BGC-bearing genomes leaves 9. That is the difference between an
+unusable tree and a readable one, so **pruning is the default** and the
+full tree is the opt-in.
+
+Four decisions:
+
+**The check is O(1) per node.** `subtreeHasBgcs` reads the rolled-up
+`bgc_class_counts` the API already computes rather than walking the
+subtree. This runs on every render, and a walk-per-node would make
+pruning cost more than it saves.
+
+**`genome_count` is recomputed on the pruned tree.** Branch weighting,
+level collapse, and the header all read it; leaving the pre-pruned value
+would have them describing a tree that isn't on screen.
+
+**Empty results fall back to the full tree.** If nothing anywhere carries
+BGCs — GTDB ingested without antiSMASH, which is a normal intermediate
+state — pruning would produce a blank canvas that reads as a broken app
+rather than an empty result. The fallback is explicit, and the UI says
+why and names the command that would populate it.
+
+**The header reports "N of M genomes", not a bare count.** A filtered
+tree that doesn't announce itself is indistinguishable from missing data —
+the same failure the search fix addressed. The rail states how many
+genomes are hidden and that they remain in the database.
+
+### A typechecking gap this surfaced
+
+`tsc --noEmit` passed on a test file with a missing type import that
+`next build` then rejected. The two run different configurations, so
+`npm run typecheck` is not a substitute for building before shipping.

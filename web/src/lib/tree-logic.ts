@@ -530,3 +530,69 @@ export function ranksPresent(root: TaxonDisplayNode): Set<string> {
   walk(root);
   return found;
 }
+
+/**
+ * Pruning to BGC-bearing genomes.
+ *
+ * A real GTDB ingest brings in every genome in the release, but only the
+ * ones antiSMASH has actually been run on carry BGCs. At 5,000 GTDB rows
+ * with a few hundred BGC-bearing genomes, the tree is overwhelmingly
+ * empty scaffolding and the signal is buried.
+ *
+ * Uses the rolled-up `bgc_class_counts` the API already computes per
+ * node, so deciding whether a whole subtree is empty is O(1) per node
+ * rather than a walk — this runs on every render.
+ */
+export function subtreeHasBgcs(node: DisplayNode): boolean {
+  if (node._kind === "genome") return node.bgcs.length > 0;
+  return Object.values(node.bgc_class_counts).some((n) => n > 0);
+}
+
+export interface PrunedTree {
+  root: TaxonDisplayNode;
+  /** Genomes kept vs. present in the source tree. Surfaced so the UI can
+   * say "showing N of M" — a filtered tree that doesn't announce itself
+   * is indistinguishable from missing data. */
+  shownGenomes: number;
+  totalGenomes: number;
+  /** True when pruning was requested but nothing carries BGCs, so the
+   * full tree was returned instead. Pruning to an empty canvas would
+   * look like a broken app rather than an empty result. */
+  fellBackToFull: boolean;
+}
+
+export function pruneToBgcBearing(root: TaxonDisplayNode, enabled: boolean): PrunedTree {
+  const totalGenomes = root.genome_count;
+
+  if (!enabled) {
+    return { root, shownGenomes: totalGenomes, totalGenomes, fellBackToFull: false };
+  }
+
+  if (!subtreeHasBgcs(root)) {
+    // Nothing anywhere has BGCs — most likely GTDB ingested without
+    // antiSMASH. Show everything rather than a blank canvas.
+    return { root, shownGenomes: totalGenomes, totalGenomes, fellBackToFull: true };
+  }
+
+  let shown = 0;
+
+  function prune(node: TaxonTreeNode): TaxonTreeNode {
+    const genomes = node.direct_genomes.filter((g) => g.bgcs.length > 0);
+    shown += genomes.length;
+    const children = node.children
+      .filter((c) => subtreeHasBgcs({ ...c, _kind: "taxon" }))
+      .map(prune);
+    return {
+      ...node,
+      direct_genomes: genomes,
+      children,
+      // Recomputed so downstream consumers (branch weighting, level
+      // collapse, the header count) describe the tree being drawn rather
+      // than the one before pruning.
+      genome_count: genomes.length + children.reduce((sum, c) => sum + c.genome_count, 0),
+    };
+  }
+
+  const prunedRoot: TaxonDisplayNode = { ...prune(root), _kind: "taxon" };
+  return { root: prunedRoot, shownGenomes: shown, totalGenomes, fellBackToFull: false };
+}
