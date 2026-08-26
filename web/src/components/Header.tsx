@@ -43,7 +43,7 @@ export function Header({ query, onQueryChange, genomeCount, totalGenomes, matchC
       {children}
 
       <span className="ml-auto flex items-center gap-3 text-xs text-ink-faint">
-        <span className="hidden lg:inline">shift-click a clade to compare</span>
+        <span className="hidden xl:inline">double-click a clade to focus · shift-click to compare</span>
         <span className="font-mono">
           {/* "N of M" rather than a bare count: a filtered tree that
               doesn't say so is indistinguishable from missing data. */}

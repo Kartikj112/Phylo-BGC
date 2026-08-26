@@ -3,11 +3,13 @@
 import * as d3 from "d3";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { DisplayNode, TaxonDisplayNode } from "@/lib/api-types";
-import { BGC_CLASS_COLORS, COLORS, classColor } from "@/lib/colors";
+import { BGC_CLASS_COLORS, BGC_CLASS_LABELS, COLORS, classColor } from "@/lib/colors";
 import {
   bgcInFamily,
   branchWidth,
+  cladeSummary,
   dominantBgcClass,
+  glyphWidth,
   computeTreeLayout,
   genomeMatchesActiveClasses,
   hiddenChildrenCount,
@@ -38,6 +40,7 @@ interface TreeCanvasProps {
   onToggleComparisonTaxon: (taxonId: string) => void;
   onSelectGenome: (id: string) => void;
   onSelectBgc: (id: string) => void;
+  onFocusNode: (key: string) => void;
   svgRef?: React.Ref<SVGSVGElement>;
   orientation: TreeOrientation;
 }
@@ -57,6 +60,7 @@ export function TreeCanvas({
   onToggleComparisonTaxon,
   onSelectGenome,
   onSelectBgc,
+  onFocusNode,
   svgRef,
   orientation,
 }: TreeCanvasProps) {
@@ -142,6 +146,13 @@ export function TreeCanvas({
   // so collapsing a clade rescales the rest rather than flattening it.
   const maxSubtreeCount = useMemo(
     () => Math.max(1, ...nodes.map((n) => subtreeBgcCount(n.data))),
+    [nodes],
+  );
+
+  // Glyphs scale against the largest clade currently drawn, so collapsing
+  // or focusing rescales the rest rather than leaving everything tiny.
+  const maxGenomeCount = useMemo(
+    () => Math.max(1, ...nodes.map((n) => (n.data._kind === "taxon" ? n.data.genome_count : 1))),
     [nodes],
   );
 
@@ -234,7 +245,9 @@ export function TreeCanvas({
                   matched={isMatch}
                   inSelectedFamily={inSelectedFamily}
                   inComparison={node.id !== null && comparisonTaxonIds.includes(node.id)}
+                  maxGenomeCount={maxGenomeCount}
                   onToggleCollapse={() => onToggleCollapse(key)}
+                  onFocus={() => onFocusNode(key)}
                   onToggleComparison={() => node.id !== null && onToggleComparisonTaxon(node.id)}
                 />
               )}
@@ -279,8 +292,10 @@ function TaxonNode({
   matched,
   inSelectedFamily,
   inComparison,
+  maxGenomeCount,
   onToggleCollapse,
   onToggleComparison,
+  onFocus,
 }: {
   node: Extract<DisplayNode, { _kind: "taxon" }>;
   isRadial: boolean;
@@ -290,8 +305,10 @@ function TaxonNode({
   matched: boolean;
   inSelectedFamily: boolean;
   inComparison: boolean;
+  maxGenomeCount: number;
   onToggleCollapse: () => void;
   onToggleComparison: () => void;
+  onFocus: () => void;
 }) {
   const isHighRank = node.rank === "domain" || node.rank === "phylum";
   const badge = rankAbbreviation(node.rank);
@@ -304,14 +321,28 @@ function TaxonNode({
   const badgeX = isRadial ? (flip ? 8 : -20) : -node.name.length * 6.6 - 22;
   return (
     <>
-      <circle
-        r={4.5}
-        fill={hiddenCount > 0 ? COLORS.signal : COLORS.paper}
-        stroke={COLORS.ink}
-        strokeWidth={1.25}
-        className="cursor-pointer"
-        onClick={onToggleCollapse}
-      />
+      {/* A collapsed clade renders as a summary rather than a dot:
+          width encodes genome count, the stacked bar its BGC class
+          composition. Collapsing therefore SUMMARISES rather than hides,
+          which is what makes a zoomed-out view more interpretable instead
+          of less. */}
+      {hiddenCount > 0 ? (
+        <CladeGlyph
+          node={node}
+          maxGenomeCount={maxGenomeCount}
+          flip={isRadial && isLeftHalf(angle)}
+          onToggleCollapse={onToggleCollapse}
+        />
+      ) : (
+        <circle
+          r={4.5}
+          fill={COLORS.paper}
+          stroke={COLORS.ink}
+          strokeWidth={1.25}
+          className="cursor-pointer"
+          onClick={onToggleCollapse}
+        />
+      )}
       {/* Shift-click adds/removes this clade from the comparison, leaving
           plain click as collapse/expand — the far more frequent action,
           which shouldn't get harder to reach because a second mode exists. */}
@@ -376,6 +407,12 @@ function TaxonNode({
             onToggleComparison();
           }
         }}
+        onDoubleClick={(e) => {
+          // Double-click focuses. Single click is left free for
+          // collapse/compare, both of which are more frequent.
+          e.stopPropagation();
+          onFocus();
+        }}
       >
         {inComparison ? "\u25C6 " : ""}
         {node.name}
@@ -383,6 +420,91 @@ function TaxonNode({
       </text>
       )}
     </>
+  );
+}
+
+function CladeGlyph({
+  node,
+  maxGenomeCount,
+  flip,
+  onToggleCollapse,
+}: {
+  node: Extract<DisplayNode, { _kind: "taxon" }>;
+  maxGenomeCount: number;
+  flip: boolean;
+  onToggleCollapse: () => void;
+}) {
+  const summary = cladeSummary(node);
+  const width = glyphWidth(summary.genomeCount, maxGenomeCount);
+  const height = 13;
+  const x = flip ? -width - 6 : 6;
+
+  let offset = 0;
+  return (
+    <g className="cursor-pointer" onClick={onToggleCollapse}>
+      <title>
+        {node.name}: {summary.genomeCount} genome{summary.genomeCount === 1 ? "" : "s"},{" "}
+        {summary.bgcCount} BGC{summary.bgcCount === 1 ? "" : "s"}
+        {summary.composition.length > 0 &&
+          ` — ${summary.composition
+            .slice(0, 4)
+            .map((c) => `${BGC_CLASS_LABELS[c.bgcClass] ?? c.bgcClass} ${c.count}`)
+            .join(", ")}`}
+      </title>
+
+      {summary.bgcCount === 0 ? (
+        // No clusters anywhere below: an outline, so an empty clade is
+        // visibly different from an unrendered one.
+        <rect
+          x={x}
+          y={-height / 2}
+          width={width}
+          height={height}
+          fill="none"
+          stroke={COLORS.lineStrong}
+          strokeWidth={1}
+          rx={2}
+        />
+      ) : (
+        summary.composition.map((segment) => {
+          const segWidth = Math.max(1, segment.fraction * width);
+          const segX = x + offset;
+          offset += segWidth;
+          return (
+            <rect
+              key={segment.bgcClass}
+              x={segX}
+              y={-height / 2}
+              width={segWidth}
+              height={height}
+              fill={BGC_CLASS_COLORS[segment.bgcClass] ?? COLORS.inkFaint}
+            />
+          );
+        })
+      )}
+
+      <rect
+        x={x}
+        y={-height / 2}
+        width={width}
+        height={height}
+        fill="none"
+        stroke={COLORS.ink}
+        strokeWidth={0.75}
+        rx={2}
+      />
+      <text
+        x={flip ? x - 4 : x + width + 4}
+        dy="0.32em"
+        textAnchor={flip ? "end" : "start"}
+        fontSize={9}
+        fill={COLORS.inkMuted}
+        className="font-mono"
+        transform={flip ? "rotate(180)" : undefined}
+      >
+        {summary.genomeCount}g · {summary.bgcCount}b
+      </text>
+    </g>
   );
 }
 

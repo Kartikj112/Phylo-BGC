@@ -9,7 +9,13 @@ import {
   isAnchorRank,
   isLeftHalf,
   rankAbbreviation,
+  MAX_GLYPH_WIDTH,
+  MIN_GLYPH_WIDTH,
   ancestorsOfMatches,
+  applyFocus,
+  cladeSummary,
+  findNodeByKey,
+  glyphWidth,
   bgcComponentClasses,
   branchWidth,
   collapseToLevel,
@@ -753,5 +759,95 @@ describe("pruning to BGC-bearing genomes", () => {
       layout.nodes.some((n) => n.data._kind === "genome" && n.data.accession.includes("EMPTY")),
     ).toBe(false);
     expect(collapseToLevel(result.root, "genus").size).toBeGreaterThan(0);
+  });
+});
+
+describe("clade summary glyphs", () => {
+  const tree = buildFixtureTree();
+  const root = toRootDisplayNode(tree);
+
+  it("summarises a collapsed clade instead of hiding it", () => {
+    const strep = { ...findTaxonByName(tree, "Streptomyces")!, _kind: "taxon" as const };
+    const summary = cladeSummary(strep);
+    // Three species, one genome each.
+    expect(summary.genomeCount).toBe(3);
+    expect(summary.bgcCount).toBeGreaterThan(0);
+    expect(summary.composition.length).toBeGreaterThan(1);
+  });
+
+  it("orders composition largest-first so glyphs are comparable at a glance", () => {
+    const summary = cladeSummary(root);
+    const fractions = summary.composition.map((c) => c.fraction);
+    expect(fractions).toEqual([...fractions].sort((a, b) => b - a));
+    expect(fractions.reduce((a, b) => a + b, 0)).toBeCloseTo(1, 5);
+  });
+
+  it("reports an empty clade as zero rather than omitting it", () => {
+    const empty = toRootDisplayNode({
+      id: "e", name: "Empty", rank: "genus", genome_count: 3, bgc_class_counts: {},
+      direct_genomes: [], children: [],
+    });
+    const summary = cladeSummary(empty);
+    expect(summary.bgcCount).toBe(0);
+    expect(summary.composition).toEqual([]);
+    expect(summary.genomeCount).toBe(3);
+  });
+
+  it("glyph width is bounded and scales with clade size", () => {
+    expect(glyphWidth(1, 100)).toBeGreaterThanOrEqual(MIN_GLYPH_WIDTH);
+    expect(glyphWidth(100, 100)).toBeLessThanOrEqual(MAX_GLYPH_WIDTH);
+    expect(glyphWidth(100, 100)).toBeGreaterThan(glyphWidth(4, 100));
+    // Clamped when the caller's maximum is wrong, same as branchWidth.
+    expect(glyphWidth(500, 10)).toBeLessThanOrEqual(MAX_GLYPH_WIDTH);
+  });
+});
+
+describe("focus mode", () => {
+  const tree = buildFixtureTree();
+  const root = toRootDisplayNode(tree);
+
+  it("re-roots the view on the focused clade", () => {
+    const genus = findTaxonByName(tree, "Streptomyces")!;
+    const result = applyFocus(root, genus.id!);
+    expect(result.root.name).toBe("Streptomyces");
+    expect(result.focusLost).toBe(false);
+  });
+
+  it("builds a breadcrumb path from the true root down to the focus", () => {
+    const species = findTaxonByName(tree, "Streptomyces coelicolor")!;
+    const names = applyFocus(root, species.id!).path.map((n) => n.name);
+    expect(names[0]).toBe("root");
+    expect(names).toContain("Streptomyces");
+    expect(names[names.length - 1]).toBe("Streptomyces coelicolor");
+  });
+
+  it("returns the whole tree when no focus is set", () => {
+    const result = applyFocus(root, null);
+    expect(result.root).toBe(root);
+    expect(result.path).toEqual([]);
+  });
+
+  it("falls back to the full tree when the focused clade is gone", () => {
+    // Happens legitimately: toggling the BGC-bearing filter can prune away
+    // whatever was focused. Blanking the canvas would look like a crash.
+    const result = applyFocus(root, "no-such-node");
+    expect(result.focusLost).toBe(true);
+    expect(result.root).toBe(root);
+  });
+
+  it("the focused subtree lays out on its own", () => {
+    const genus = findTaxonByName(tree, "Streptomyces")!;
+    const focusedRoot = applyFocus(root, genus.id!).root;
+    const layout = computeTreeLayout(focusedRoot, new Set(), 800);
+    expect(layout.nodes.length).toBeGreaterThan(1);
+    expect(
+      layout.nodes.every((n) => n.data._kind === "genome" || n.data.name !== "Kitasatospora"),
+    ).toBe(true);
+  });
+
+  it("findNodeByKey locates nodes at any depth", () => {
+    const species = findTaxonByName(tree, "Kitasatospora setae")!;
+    expect(findNodeByKey(root, species.id!)?.name).toBe("Kitasatospora setae");
+    expect(findNodeByKey(root, "missing")).toBeNull();
   });
 });

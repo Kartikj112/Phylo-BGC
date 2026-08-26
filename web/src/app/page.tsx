@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
+import { Breadcrumbs } from "@/components/Breadcrumbs";
 import { ClassFilterRail } from "@/components/ClassFilterRail";
 import { ComparisonPanel } from "@/components/ComparisonPanel";
 import { ExportButton } from "@/components/ExportButton";
@@ -18,6 +19,7 @@ import {
   collectMatchKeys,
   countBgcClasses,
   countTotalGenomes,
+  applyFocus,
   pruneToBgcBearing,
   ranksPresent,
   toRootDisplayNode,
@@ -40,6 +42,7 @@ export default function HomePage() {
   // Defaults to on: a real GTDB ingest is mostly genomes antiSMASH has
   // never been run on, and showing them buries the signal.
   const [onlyWithBgcs, setOnlyWithBgcs] = useState(true);
+  const [focusKey, setFocusKey] = useState<string | null>(null);
 
   function toggleComparisonTaxon(taxonId: string): void {
     setComparisonTaxonIds((prev) =>
@@ -52,7 +55,25 @@ export default function HomePage() {
     () => (fullRoot ? pruneToBgcBearing(fullRoot, onlyWithBgcs) : null),
     [fullRoot, onlyWithBgcs],
   );
-  const root = pruned?.root ?? null;
+  const focused = useMemo(
+    () => (pruned ? applyFocus(pruned.root, focusKey) : null),
+    [pruned, focusKey],
+  );
+  const root = focused?.root ?? null;
+
+  function focusNode(key: string | null): void {
+    setFocusKey(key);
+    // Focusing into a collapsed clade must open it, or the new root
+    // renders as a single glyph with nothing beneath it.
+    if (key) {
+      setCollapsed((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+      setActiveLevel(null);
+    }
+  }
   const classCounts = useMemo(() => (root ? countBgcClasses(root) : {}), [root]);
   const availableRanks = useMemo(() => (root ? ranksPresent(root) : new Set<string>()), [root]);
   const genomeCount = pruned?.shownGenomes ?? 0;
@@ -135,6 +156,10 @@ export default function HomePage() {
         />
       </Header>
 
+      {view === "tree" && focused && (
+        <Breadcrumbs path={focused.path} focusLost={focused.focusLost} onNavigate={focusNode} />
+      )}
+
       <div className="flex min-h-0 flex-1">
         <div className="w-52 flex-shrink-0 overflow-y-auto border-r border-line p-4">
           <div className="mb-5">
@@ -205,6 +230,7 @@ export default function HomePage() {
               onSelectBgc={(id) => setSelection({ kind: "bgc", id })}
               svgRef={svgRef}
               orientation={orientation}
+              onFocusNode={focusNode}
             />
           )}
         </div>

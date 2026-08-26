@@ -1177,3 +1177,62 @@ genomes are hidden and that they remain in the database.
 `tsc --noEmit` passed on a test file with a missing type import that
 `next build` then rejected. The two run different configurations, so
 `npm run typecheck` is not a substitute for building before shipping.
+
+---
+
+## Navigating at scale: summary glyphs and focus mode
+
+A global tree of everything is never what a researcher arrives wanting.
+They come with a question — *where does my MAG sit?*, *what's the closest
+characterized relative?*, *which lineages are worth bioprospecting?* — and
+none of those need every tip drawn. Rendering faster wouldn't help; a
+500,000-node tree is uninterpretable at any framerate. The fix is to draw
+**less, but more meaningfully**.
+
+### Collapsing now summarises rather than hides
+
+A collapsed clade renders as a glyph: width encodes genome count (sqrt
+scale, clamped, for the same reason branch widths use it), filled with a
+stacked bar of its BGC class composition, labelled `Ng · Nb`.
+
+This inverts the previous behaviour. Zooming out used to *remove*
+information, which is exactly why a large tree felt uninformative; now a
+phylum-level view is a handful of richly-loaded objects instead of a
+handful of dots. On a 3,000-genome GTDB-shaped corpus: **4,659 objects at
+full expansion, 11 at genus level** — and those 11 carry composition, not
+just position.
+
+Composition is ordered largest-first so the dominant segment is always
+leftmost and glyphs are comparable across clades at a glance. A clade with
+no clusters renders as an outline rather than a filled bar, so "empty" is
+visibly different from "not drawn".
+
+### Focus mode
+
+Double-click any clade to re-root the view on it; breadcrumbs climb back
+out. Navigation becomes drilling rather than scrolling, so the number of
+objects on screen stays bounded regardless of corpus size.
+
+Double-click rather than single: single click is collapse and shift-click
+is compare, both more frequent. Focusing also force-expands the target,
+since re-rooting onto a collapsed node would otherwise render a single
+glyph with nothing beneath it.
+
+`applyFocus` falls back to the full tree when the focused clade is no
+longer present — which happens legitimately when the BGC-bearing filter
+prunes it away. Blanking the canvas would read as a crash; instead the
+breadcrumb bar explains what happened.
+
+### What this does not fix
+
+**MIBiG-only data is flat.** All 1,527 species are direct siblings of the
+root, so collapse levels, glyphs, and focus have no hierarchy to work
+with — every level shows the same 1,528 objects. This isn't a limitation
+of the new features; it's the same finding as before, seen from another
+angle: GTDB is what supplies the tree structure, and MIBiG without it is a
+fan rather than a phylogeny.
+
+**Payload size is untouched.** The full tree is still fetched and pruned
+client-side. At real GTDB scale that becomes the binding constraint, and
+the fix is server-side lazy aggregation (`/tree?root=X&depth=2`) — a
+larger change, and the next one worth making before going live.

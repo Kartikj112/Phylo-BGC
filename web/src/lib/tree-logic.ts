@@ -596,3 +596,109 @@ export function pruneToBgcBearing(root: TaxonDisplayNode, enabled: boolean): Pru
   const prunedRoot: TaxonDisplayNode = { ...prune(root), _kind: "taxon" };
   return { root: prunedRoot, shownGenomes: shown, totalGenomes, fellBackToFull: false };
 }
+
+/**
+ * Collapsed-clade summary glyphs.
+ *
+ * Collapsing currently *hides* information, which is why zooming out makes
+ * the tree less interpretable rather than more. A collapsed clade should
+ * instead *summarize* what it contains: how many genomes, how many
+ * clusters, and what the biosynthetic composition looks like. Then a
+ * phylum-level view is ~30 informative objects rather than 30 dots, and
+ * the "Show down to" control becomes a real analytical tool instead of a
+ * way to make the tree smaller.
+ */
+export interface CladeSummary {
+  genomeCount: number;
+  bgcCount: number;
+  /** Class proportions, largest first. Ordered so the glyph's dominant
+   * segment is always leftmost and comparable across clades at a glance. */
+  composition: { bgcClass: string; count: number; fraction: number }[];
+}
+
+export function cladeSummary(node: DisplayNode): CladeSummary {
+  const counts: Record<string, number> =
+    node._kind === "genome"
+      ? node.bgcs.reduce<Record<string, number>>((acc, b) => {
+          for (const cls of bgcComponentClasses(b)) acc[cls] = (acc[cls] ?? 0) + 1;
+          return acc;
+        }, {})
+      : node.bgc_class_counts;
+
+  const bgcCount = Object.values(counts).reduce((sum, n) => sum + n, 0);
+  const composition = Object.entries(counts)
+    .filter(([, n]) => n > 0)
+    .sort((a, b) => b[1] - a[1])
+    .map(([bgcClass, count]) => ({
+      bgcClass,
+      count,
+      fraction: bgcCount > 0 ? count / bgcCount : 0,
+    }));
+
+  return {
+    genomeCount: node._kind === "genome" ? 1 : node.genome_count,
+    bgcCount,
+    composition,
+  };
+}
+
+/** Glyph width from genome count. sqrt for the same reason branch widths
+ * use it: clade sizes span orders of magnitude, and a linear map makes
+ * one clade a slab and the rest invisible. */
+export const MIN_GLYPH_WIDTH = 26;
+export const MAX_GLYPH_WIDTH = 120;
+
+export function glyphWidth(genomeCount: number, maxGenomeCount: number): number {
+  if (genomeCount <= 0 || maxGenomeCount <= 0) return MIN_GLYPH_WIDTH;
+  const scaled = Math.min(1, Math.sqrt(genomeCount) / Math.sqrt(maxGenomeCount));
+  return MIN_GLYPH_WIDTH + scaled * (MAX_GLYPH_WIDTH - MIN_GLYPH_WIDTH);
+}
+
+/**
+ * Focus mode.
+ *
+ * Navigating a large tree by scrolling is hopeless; navigating by drilling
+ * is not. Focusing re-roots the view on a clade so the researcher always
+ * sees a bounded number of objects regardless of corpus size, with
+ * breadcrumbs to climb back out.
+ */
+export function findNodeByKey(root: TaxonDisplayNode, key: string): TaxonDisplayNode | null {
+  if (nodeKey(root) === key) return root;
+  for (const child of root.children) {
+    const found = findNodeByKey({ ...child, _kind: "taxon" }, key);
+    if (found) return found;
+  }
+  return null;
+}
+
+/** Ancestor chain from the true root down to `key`, inclusive — the
+ * breadcrumb trail. Empty when the key isn't in this tree, which happens
+ * legitimately when the BGC-bearing filter prunes away the focused clade. */
+export function pathToNode(root: TaxonDisplayNode, key: string): TaxonDisplayNode[] {
+  const path: TaxonDisplayNode[] = [];
+
+  function walk(node: TaxonDisplayNode): boolean {
+    path.push(node);
+    if (nodeKey(node) === key) return true;
+    for (const child of node.children) {
+      if (walk({ ...child, _kind: "taxon" })) return true;
+    }
+    path.pop();
+    return false;
+  }
+
+  return walk(root) ? path : [];
+}
+
+/** The subtree to draw, given an optional focus. Falls back to the whole
+ * tree when the focused clade is no longer present — otherwise toggling
+ * the BGC filter while focused would blank the canvas. */
+export function applyFocus(
+  root: TaxonDisplayNode,
+  focusKey: string | null,
+): { root: TaxonDisplayNode; path: TaxonDisplayNode[]; focusLost: boolean } {
+  if (!focusKey) return { root, path: [], focusLost: false };
+  const path = pathToNode(root, focusKey);
+  if (path.length === 0) return { root, path: [], focusLost: true };
+  return { root: path[path.length - 1]!, path, focusLost: false };
+}
