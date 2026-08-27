@@ -407,6 +407,17 @@ def load_mibig_entry(session: Session, parsed: ParsedMibigEntry, source: Source)
     bgc_create = BGCCreate(
         genome_id=genome.id,
         contig=parsed.locus_accession,
+        # MIBiG distributes one GenBank file per entry, named
+        # "<accession>.gbk", and BiG-SCAPE identifies every input record by
+        # that filename stem in its clustering output's GBK column. Setting
+        # external_ref to the accession therefore makes a BiG-SCAPE run over
+        # MIBiG's own GenBank files joinable by `bgcscape ingest bigscape`
+        # with no extra mapping — the same cross-tool join key antiSMASH
+        # ingestion populates (see ingest/antismash.py's
+        # region_external_ref). Without it those rows are reported as
+        # skipped, which is what used to happen to MIBiG reference clusters
+        # mixed into a BiG-SCAPE run.
+        external_ref=parsed.mibig_accession,
         start_coord=parsed.start_coord,
         end_coord=parsed.end_coord,
         bgc_class=parsed.bgc_class,

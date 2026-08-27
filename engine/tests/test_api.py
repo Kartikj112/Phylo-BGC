@@ -245,12 +245,15 @@ def test_list_families(api_client):
     assert response.status_code == 200
     families = response.json()
 
-    # The BiG-SCAPE fixture defines FAM_00001 (2 members) and FAM_00002 (1).
-    assert len(families) == 2
+    # The BiG-SCAPE fixture defines FAM_00001 (2 antiSMASH regions),
+    # FAM_00002 (1 region) and FAM_00003 (a MIBiG reference cluster the run
+    # included — matched via external_ref rather than skipped).
+    assert len(families) == 3
     labels = [f["label"] for f in families]
-    assert labels == ["FAM_00001", "FAM_00002"]  # sorted most-members-first
+    assert labels == ["FAM_00001", "FAM_00002", "FAM_00003"]  # most members first, then label
     assert families[0]["member_count"] == 2
     assert families[1]["member_count"] == 1
+    assert families[2]["member_count"] == 1
     assert families[0]["clustering_cutoff"] == 0.3
     assert families[0]["evidence_level"] == "computed"
 
@@ -304,16 +307,23 @@ def test_tree_bgc_summaries_carry_family_ids(api_client):
 
     walk(tree)
 
-    # The 3 antiSMASH regions are family members; the 2 MIBiG BGCs aren't.
-    assert len(found_with_family) == 3
+    # The 3 antiSMASH regions, plus the one MIBiG reference cluster the
+    # BiG-SCAPE fixture run also included.
+    assert len(found_with_family) == 4
     for bgc in found_with_family:
         assert set(bgc["family_ids"]) <= known_family_ids
 
 
-def test_mibig_bgcs_have_no_family_ids(api_client):
-    """MIBiG-derived BGCs have no antiSMASH region filename, so BiG-SCAPE
-    ingestion can't match them — they should carry an empty family list,
-    not be silently attached to something."""
+def test_mibig_bgcs_join_a_bigscape_run_that_included_them(api_client):
+    """A BiG-SCAPE run that includes MIBiG reference clusters reports which
+    family each one landed in, and that is exactly the finding a user wants
+    ("my cluster is in the same family as this characterized one").
+
+    MIBiG ingestion sets `external_ref` to the entry accession, which is the
+    GenBank filename stem BiG-SCAPE reports — so those rows now match
+    instead of being counted as skipped. The fixture clustering file puts
+    BGC-TEST0000001 in FAM_00003; the other MIBiG entry is absent from the
+    run and must stay unattached rather than being guessed at."""
     tree = api_client.get("/api/v1/taxonomy-tree").json()
 
     mibig_bgcs = []
@@ -328,7 +338,10 @@ def test_mibig_bgcs_have_no_family_ids(api_client):
 
     walk(tree)
     assert len(mibig_bgcs) == 2
-    assert all(b["family_ids"] == [] for b in mibig_bgcs)
+    in_run = [b for b in mibig_bgcs if b["mibig_accession"] == "BGC-TEST0000001"]
+    not_in_run = [b for b in mibig_bgcs if b["mibig_accession"] != "BGC-TEST0000001"]
+    assert len(in_run[0]["family_ids"]) == 1
+    assert all(b["family_ids"] == [] for b in not_in_run)
 
 
 # --- provenance + export endpoints (Phase 4) ------------------------------------
@@ -341,7 +354,10 @@ def test_provenance_endpoint_reports_real_database_state(api_client):
     assert names == {"MIBiG", "GTDB", "antiSMASH", "BiG-SCAPE"}
     assert body["genome_count"] == 5
     assert body["bgc_count"] == 5  # 2 MIBiG + 3 antiSMASH
-    assert body["family_count"] == 2
+    # 3, not 2: the fixture BiG-SCAPE run also includes a MIBiG reference
+    # cluster (FAM_00003), which now matches via external_ref instead of
+    # being skipped — see test_mibig_bgcs_join_a_bigscape_run_that_included_them.
+    assert body["family_count"] == 3
     assert body["engine_version"]
 
     gtdb = next(s for s in body["sources"] if s["name"] == "GTDB")

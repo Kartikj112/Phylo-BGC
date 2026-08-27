@@ -121,9 +121,11 @@ of this repo.
     label at a different cutoff is a different grouping. BGC-scape keys
     families on `(source_id, label, clustering_cutoff)` accordingly.
   - Real BiG-SCAPE runs commonly mix in MIBiG reference BGCs for
-    comparison. Those rows won't match any `external_ref` (MIBiG
-    ingestion has no antiSMASH filename to derive one from), so they're
-    reported as `skipped`, distinctly from errors.
+    comparison. These now match: MIBiG ships one GenBank per entry named
+    `<accession>.gbk`, and BiG-SCAPE reports that filename stem in `GBK`,
+    so MIBiG ingestion sets `external_ref` to the accession and the rows
+    join directly. Rows matching nothing at all are still reported as
+    `skipped`, distinctly from errors.
 
 ## CORASON
 

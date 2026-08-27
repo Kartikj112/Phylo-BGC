@@ -5,7 +5,11 @@ import { useEffect, useMemo, useState } from "react";
 import { fetchFamilies } from "@/lib/api-client";
 import type { BGCFamilySummary } from "@/lib/api-types";
 import type { FamilyIndexEntry } from "@/lib/tree-logic";
+
 import { BGC_CLASS_COLORS, COLORS } from "@/lib/colors";
+
+/** Matches CLUSTERING_METHOD in engine/src/bgcscape/ingest/compound_groups.py. */
+const COMPOUND_METHOD = "MIBiG shared compound";
 
 interface FamilyRailProps {
   selectedFamilyId: string | null;
@@ -68,6 +72,35 @@ export function FamilyRail({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // What KIND of grouping is loaded. A BiG-SCAPE run produces sequence-based
+  // gene cluster families; `bgcscape group-by-compound` produces groups of
+  // clusters that make the same curated compound. They are different claims,
+  // so the rail names whichever it actually has rather than calling both
+  // "families". Mixed corpora get the neutral term.
+  const kind = useMemo(() => {
+    const methods = new Set(families.map((f) => f.clustering_method ?? "unknown"));
+    if (methods.size === 1 && methods.has(COMPOUND_METHOD)) {
+      return {
+        title: "Compound groups",
+        blurb:
+          "Clusters MIBiG records as making the same compound. A curated experimental link, not a sequence clustering.",
+        unit: "group",
+      };
+    }
+    if (methods.size > 0 && ![...methods].some((m) => m === COMPOUND_METHOD)) {
+      return {
+        title: "Gene cluster families",
+        blurb: "Sequence-similarity groupings from a BiG-SCAPE run.",
+        unit: "family",
+      };
+    }
+    return {
+      title: "Cluster groups",
+      blurb: "Mixed grouping methods — each row shows the method it came from.",
+      unit: "group",
+    };
+  }, [families]);
+
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
     const filtered = q
@@ -109,7 +142,7 @@ export function FamilyRail({
       <div className="mb-2 flex items-center justify-between">
         <span className="flex items-center gap-1.5 text-xs uppercase tracking-wider text-ink-muted">
           <Layers size={12} />
-          Gene cluster families
+          {kind.title}
         </span>
         {selectedFamilyId && (
           <button onClick={() => onSelectFamily(null)} className="text-xs text-signal hover:underline">
@@ -120,12 +153,13 @@ export function FamilyRail({
 
       {!loading && !error && families.length > 0 && (
         <>
+          <p className="mb-2 text-[11px] leading-relaxed text-ink-faint">{kind.blurb}</p>
           <div className="relative mb-1.5">
             <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-ink-faint" />
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Filter families or organisms"
+              placeholder="Filter by name or organism"
               className="w-full rounded border border-line bg-paper py-1 pl-7 pr-2 text-xs text-ink outline-none focus:border-line-strong"
             />
           </div>
@@ -152,12 +186,13 @@ export function FamilyRail({
       {error && <div className="text-xs text-red-700">{error}</div>}
       {!loading && !error && families.length === 0 && (
         <div className="text-xs leading-relaxed text-ink-faint">
-          No families yet. Run <span className="font-mono">bgcscape ingest bigscape</span> to group
-          predicted BGCs into families.
+          No groups yet. Run <span className="font-mono">bgcscape group-by-compound</span> to group
+          clusters by their curated product, or{" "}
+          <span className="font-mono">bgcscape ingest bigscape</span> for sequence-based families.
         </div>
       )}
       {!loading && !error && families.length > 0 && rows.length === 0 && (
-        <div className="text-xs text-ink-faint">No family matches “{query}”.</div>
+        <div className="text-xs text-ink-faint">No {kind.unit} matches “{query}”.</div>
       )}
 
       <div className="flex max-h-[40vh] flex-col gap-0.5 overflow-y-auto pr-1">

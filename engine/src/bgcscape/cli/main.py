@@ -198,9 +198,50 @@ def ingest_bigscape_cmd(
     _echo_report(report)
     if report.skipped:
         typer.echo(
-            f"  ({report.skipped} row(s) referenced a BGC not in the database — expected if the "
-            "BiG-SCAPE run included MIBiG reference clusters, or if antiSMASH ingestion hasn't run yet.)"
+            f"  ({report.skipped} row(s) referenced a BGC not in the database — expected if "
+            "antiSMASH or MIBiG ingestion hasn't run for those records yet. MIBiG reference "
+            "clusters DO match, via their accession.)"
         )
+
+
+@app.command("group-by-compound")
+def group_by_compound_cmd(
+    min_members: int = typer.Option(
+        2, help="Minimum clusters sharing a compound before it forms a group."
+    ),
+) -> None:
+    """Group clusters that MIBiG records as making the same compound.
+
+    This is NOT a BiG-SCAPE gene cluster family — no sequences are compared.
+    It groups on a curated experimental fact (two clusters produce the same
+    named molecule), which is enough to answer "where is this pathway across
+    the tree" from MIBiG alone. Groups are labelled `CMPD_*` and carry
+    clustering_method "MIBiG shared compound" so they can never be mistaken
+    for a sequence-based family. Run `ingest bigscape` for real GCFs.
+
+    Idempotent.
+    """
+    from bgcscape.ingest.compound_groups import CLUSTERING_METHOD, group_by_compound
+
+    with session_scope() as session:
+        source = _get_or_create_source(
+            session,
+            name=CLUSTERING_METHOD,
+            source_type=SourceType.REFERENCE_DATABASE,
+            version=None,
+        )
+        report = group_by_compound(session, source, min_members=min_members)
+
+    typer.echo(
+        f"Created {report.groups_created} compound group(s), updated {report.groups_updated}; "
+        f"{report.memberships} new membership(s) across {report.clusters_grouped} cluster(s)."
+    )
+    typer.echo(
+        f"  ({report.singletons_skipped} compound(s) are made by a single cluster and were "
+        "skipped — a group of one says nothing about distribution.)"
+    )
+    for example in report.examples:
+        typer.echo(f"    {example}")
 
 
 @app.command("link-mibig")

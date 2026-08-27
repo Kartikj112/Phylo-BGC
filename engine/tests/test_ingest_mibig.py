@@ -282,3 +282,15 @@ def test_reader_accepts_a_directory_of_v3_entries():
     entries = list(read_mibig_entries_from_path(V3_FIXTURES))
     assert len(entries) == len(list(V3_FIXTURES.glob("*.json")))
     assert all("cluster" in e for e in entries)
+
+
+def test_loaded_bgc_carries_the_accession_as_external_ref(session, mibig_source):
+    """MIBiG ships one GenBank per entry named "<accession>.gbk", and
+    BiG-SCAPE keys its output on that filename stem — so external_ref must
+    be the accession for a BiG-SCAPE run over MIBiG to join, rather than
+    being reported as skipped."""
+    parsed = parse_mibig_entry(_load_fixture("mibig_test_entry_active_single_class.json"))
+    bgc, _ = load_mibig_entry(session, parsed, mibig_source)
+    session.commit()
+
+    assert bgc.external_ref == parsed.mibig_accession

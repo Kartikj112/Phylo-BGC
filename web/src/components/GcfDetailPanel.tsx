@@ -7,6 +7,9 @@ import type { BGCFamilyDetail, BGCFamilySummary } from "@/lib/api-types";
 import type { FamilyDistribution } from "@/lib/tree-logic";
 import { BGC_CLASS_COLORS, BGC_CLASS_LABELS, COLORS } from "@/lib/colors";
 
+/** Matches CLUSTERING_METHOD in engine/src/bgcscape/ingest/compound_groups.py. */
+const COMPOUND_METHOD = "MIBiG shared compound";
+
 interface GcfDetailPanelProps {
   familyId: string;
   family: BGCFamilySummary | undefined;
@@ -64,7 +67,9 @@ export function GcfDetailPanel({
     <div className="flex w-80 flex-shrink-0 flex-col border-l border-line bg-card">
       <div className="flex items-start justify-between border-b border-line p-4">
         <div className="min-w-0">
-          <div className="text-xs uppercase tracking-wider text-ink-muted">Gene cluster family</div>
+          <div className="text-xs uppercase tracking-wider text-ink-muted">
+            {family?.clustering_method === COMPOUND_METHOD ? "Compound group" : "Gene cluster family"}
+          </div>
           <div className="mt-0.5 truncate font-mono text-sm text-ink">
             {family?.label ?? familyId.slice(0, 12)}
           </div>
@@ -91,7 +96,11 @@ export function GcfDetailPanel({
           className="mt-1.5 text-xs uppercase tracking-wide"
           style={{ color: curated ? COLORS.signal : COLORS.inkFaint }}
         >
-          {curated ? "Curated reference family" : "Computed by clustering"}
+          {family?.clustering_method === COMPOUND_METHOD
+            ? "Grouped by shared curated compound"
+            : curated
+              ? "Curated reference family"
+              : "Computed by sequence clustering"}
           {family?.clustering_method ? ` · ${family.clustering_method}` : ""}
           {family?.clustering_cutoff != null ? ` · cutoff ${family.clustering_cutoff}` : ""}
         </div>

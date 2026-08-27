@@ -7,6 +7,7 @@ import { ClassFilterRail } from "@/components/ClassFilterRail";
 import { DistributionSummaryBar } from "@/components/DistributionSummaryBar";
 import { FilterPanel } from "@/components/FilterPanel";
 import { ComparisonPanel } from "@/components/ComparisonPanel";
+import { CorpusStatsBar } from "@/components/CorpusStatsBar";
 import { ExportButton } from "@/components/ExportButton";
 import { GcfDetailPanel } from "@/components/GcfDetailPanel";
 import { HeatmapView } from "@/components/HeatmapView";
@@ -321,6 +322,17 @@ export default function HomePage() {
           searchQuery={query}
         />
       </Header>
+
+      {/* What this dataset contains, above everything: how many clusters,
+          of what kinds, over how many genomes. Doubles as the class filter
+          so it can never disagree with the left rail. */}
+      <CorpusStatsBar
+        activeClasses={activeClasses}
+        onToggleClass={toggleClass}
+        onResetClasses={() => setActiveClasses(new Set(CLASS_ORDER))}
+        shownGenomes={genomeCount}
+        totalGenomes={pruned?.totalGenomes ?? 0}
+      />
 
       {view === "tree" && selectedFamilyId && familyDist && (
         <DistributionSummaryBar

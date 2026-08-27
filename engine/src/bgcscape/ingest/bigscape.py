@@ -21,10 +21,14 @@ Family lookup is keyed on `(source_id, label, clustering_cutoff)`, never
 label alone.
 
 Rows whose `GBK` doesn't match any known `BGC.external_ref` are expected,
-not errors: real BiG-SCAPE input commonly mixes in MIBiG reference BGCs
-for comparison, and this project's own MIBiG ingestion has no antiSMASH
-per-region filename to derive an `external_ref` from, so those rows will
-never match. Counted as `skipped`, distinctly from parse errors.
+not errors, and are counted as `skipped` distinctly from parse errors.
+
+Note that MIBiG reference BGCs — which real BiG-SCAPE input commonly mixes
+in for comparison — DO match: MIBiG ships one GenBank per entry named
+`<accession>.gbk`, so MIBiG ingestion sets `external_ref` to the accession
+(see ingest/mibig.py). Capturing those rows is the point: they say which
+characterized cluster a novel one groups with. Only records from neither
+source remain unmatched.
 """
 from __future__ import annotations
 

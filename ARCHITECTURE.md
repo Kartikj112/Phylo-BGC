@@ -446,11 +446,21 @@ produces two distinct families (there's a test for exactly this).
 ### Unmatched rows are expected, not errors
 
 Real BiG-SCAPE runs routinely include MIBiG reference BGCs for comparison.
-Those rows can never match an `external_ref`, because MIBiG ingestion has
-no antiSMASH region filename to derive one from. `IngestReport` counts them
-as `skipped`, and the CLI prints an explanatory note — so an operator
-seeing "skipped=1" knows immediately whether that's benign or a sign
-antiSMASH ingestion hasn't run yet.
+
+**Superseded (MIBiG 4.0 chunk):** those rows used to be unmatchable, because
+MIBiG ingestion had no antiSMASH region filename to derive an `external_ref`
+from, and `IngestReport` counted them as `skipped`. That threw away the most
+useful thing such a run reports — *which characterized cluster your novel one
+groups with*. MIBiG distributes one GenBank per entry named
+`<accession>.gbk`, and BiG-SCAPE keys its output on exactly that filename
+stem, so MIBiG ingestion now sets `external_ref` to the entry accession and
+those rows join like any other. A BiG-SCAPE run over MIBiG's own GenBank
+files therefore needs no mapping step at all.
+
+Rows that still don't match are genuinely unknown records, and remain
+`skipped` with the CLI's explanatory note — so an operator seeing
+"skipped=1" still knows whether that's benign or a sign antiSMASH ingestion
+hasn't run yet.
 
 ### Real bugs found this phase (all by running the code, not reading it)
 

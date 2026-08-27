@@ -184,6 +184,51 @@ The frontend reads these URL parameters on load:
 So an antiSMASH KnownClusterBlast hit (`BGC…`) becomes
 `https://<your-site>/?bgc=BGC0000123`.
 
+## Cluster groups: what ships, and how to get real GCFs
+
+Two different groupings can live in this database at once, and the UI names
+whichever it has rather than calling both "families".
+
+**What ships today — compound groups.** `bgcscape group-by-compound` groups
+clusters that MIBiG records as producing the same named compound: 279 groups
+over 576 clusters, 209 of them spanning more than one organism. This is a
+curated experimental link, not a sequence clustering. Groups are labelled
+`CMPD_*` with `clustering_method = "MIBiG shared compound"` and no cutoff, so
+they can never be mistaken for BiG-SCAPE output.
+
+**What it is not.** A Gene Cluster Family in the BiG-SCAPE / BiG-SLiCE sense
+groups clusters by gene content and domain architecture. That needs the
+sequences and a real clustering run.
+
+### Getting real GCFs (a few hours, one time)
+
+MIBiG's corpus is small enough that BiG-SCAPE over it is very tractable —
+roughly 2,400 clusters, not the 1.2 million in BiG-FAM (whose bulk download is
+a 189 GB tarball, so not a practical route).
+
+1. Download **MIBiG 4.0 GenBank files** from the MIBiG download page (the
+   GenBank bundle, not the JSON one you already have).
+2. Install BiG-SCAPE and the Pfam database it needs:
+   ```bash
+   conda install -c bioconda bigscape        # or follow the BiG-SCAPE README
+   wget https://ftp.ebi.ac.uk/pub/databases/Pfam/current_release/Pfam-A.hmm.gz
+   gunzip Pfam-A.hmm.gz && hmmpress Pfam-A.hmm
+   ```
+3. Run it over the MIBiG GenBanks:
+   ```bash
+   bigscape cluster -i mibig_gbk/ -o bigscape_out/ -p Pfam-A.hmm --mibig
+   ```
+4. Ingest the clustering output — it joins automatically:
+   ```bash
+   bgcscape ingest bigscape bigscape_out/<...>_clustering_c0.30.tsv
+   ```
+
+Step 4 works with no extra mapping because MIBiG ingestion sets
+`BGC.external_ref` to each entry's accession, and BiG-SCAPE identifies every
+input record by its GenBank filename stem — which for MIBiG's own files *is*
+the accession. Both groupings then coexist; a cluster can belong to a compound
+group and a GCF at the same time, which is why `family_ids` is a list.
+
 ## Going bigger: full GTDB + antiSMASH + BiG-SCAPE
 
 The bundled dataset has **no gene cluster families** — those require a BiG-SCAPE
