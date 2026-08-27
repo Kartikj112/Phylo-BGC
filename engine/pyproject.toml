@@ -42,4 +42,6 @@ packages = ["src/bgcscape"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+# "src" for the package; "." so `from tests.test_api import <fixture>` works
+# under a bare `pytest` invocation (CI), not only `python -m pytest`.
+pythonpath = ["src", "."]
