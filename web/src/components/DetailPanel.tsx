@@ -301,6 +301,34 @@ function BgcDetailView({
       {bgc.mibig_accession && <div className="mb-1 text-xs text-ink-muted">MIBiG: {bgc.mibig_accession}</div>}
       <EvidenceBadge level={bgc.evidence_level} />
 
+      {/* How this cluster came to sit where it does on the tree. A MIBiG
+          entry carries an organism name and taxid but no lineage, so its
+          position comes from matching that organism to a GTDB genome —
+          which is a claim about the organism, not about the assembly the
+          cluster was sequenced from. Saying which route placed it lets a
+          reader weigh the position rather than take it on trust. */}
+      {bgc.placement_method && (
+        <div className="mt-3 rounded border border-line bg-paper p-2.5">
+          <div className="mb-1 flex items-center gap-1.5">
+            <MapPin size={11} className="flex-shrink-0 text-ink-faint" />
+            <span className="text-xs uppercase tracking-wider text-ink-muted">
+              Placement on the tree
+            </span>
+          </div>
+          <div className="text-xs leading-relaxed text-ink">
+            {bgc.placement_note ?? bgc.placement_method}
+          </div>
+          {bgc.contig && (
+            <div className="mt-1 text-[11px] leading-relaxed text-ink-faint">
+              Characterized on MIBiG locus{" "}
+              <span className="font-mono text-ink-muted">{bgc.contig}</span>; shown on{" "}
+              <span className="font-mono text-ink-muted">{bgc.genome_accession}</span>, GTDB&apos;s
+              genome for the same organism.
+            </div>
+          )}
+        </div>
+      )}
+
       {familyIds.length > 0 && onShowFamily && (
         <div className="mt-4 rounded border border-line bg-paper p-2.5">
           <div className="mb-1.5 text-xs uppercase tracking-wider text-ink-muted">

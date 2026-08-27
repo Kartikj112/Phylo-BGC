@@ -59,6 +59,7 @@ from bgcscape.api.schemas import (
     TaxonTreeNode,
 )
 from bgcscape.api.tree_builder import build_taxonomy_tree
+from bgcscape.ingest.link import PLACEMENT_METHOD_LABELS, placement_of
 from bgcscape.db.session import get_sessionmaker
 from bgcscape.export import (
     ConfigVersionError,
@@ -220,6 +221,9 @@ def get_bgc(bgc_id: uuid.UUID, session: Session = Depends(get_session)) -> BGCDe
     if bgc is None:
         raise HTTPException(status_code=404, detail=f"BGC {bgc_id} not found")
 
+    placement = placement_of(bgc)
+    placement_method = placement.get("method") if placement else None
+
     return BGCDetail(
         id=bgc.id,
         genome_id=bgc.genome_id,
@@ -241,6 +245,8 @@ def get_bgc(bgc_id: uuid.UUID, session: Session = Depends(get_session)) -> BGCDe
             )
             for link in bgc.compound_links
         ],
+        placement_method=placement_method,
+        placement_note=PLACEMENT_METHOD_LABELS.get(placement_method) if placement_method else None,
     )
 
 

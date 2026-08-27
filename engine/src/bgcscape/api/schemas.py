@@ -86,6 +86,15 @@ class BGCDetail(BaseModel):
     mibig_accession: str | None = None
     evidence_level: EvidenceLevel
     compounds: list[CompoundSummary]
+    placement_method: str | None = None
+    """How this cluster was put on the taxonomic tree, when it wasn't the
+    source's own doing: `ncbi_taxid`, `ncbi_species_taxid` or `gtdb_species`
+    for a MIBiG entry matched to a GTDB genome (see ingest/link.py). None
+    when the cluster's genome came from the source directly, as with
+    antiSMASH. Surfaced because an exact-taxid placement and a name match
+    are different claims, and a reader should be able to tell them apart."""
+    placement_note: str | None = None
+    """Plain-language rendering of `placement_method`."""
 
 
 class GenomeDetail(BaseModel):

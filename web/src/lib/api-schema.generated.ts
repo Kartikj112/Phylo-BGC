@@ -38,6 +38,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/tree": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Lazy Tree
+         * @description One level of the tree at a time, for incremental loading.
+         *
+         *     `/taxonomy-tree` ships the whole hierarchy and is retained for the
+         *     existing client and for export, where a complete figure is the point.
+         *     This endpoint is what survives a real GTDB release: fetch the root,
+         *     render it, and request subtrees only where the user expands.
+         */
+        get: operations["get_lazy_tree_api_v1_tree_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/bgc-classes": {
         parameters: {
             query?: never;
@@ -352,6 +377,10 @@ export interface components {
             evidence_level: components["schemas"]["EvidenceLevel"];
             /** Compounds */
             compounds: components["schemas"]["CompoundSummary"][];
+            /** Placement Method */
+            placement_method?: string | null;
+            /** Placement Note */
+            placement_note?: string | null;
         };
         /** BGCFamilyDetail */
         BGCFamilyDetail: {
@@ -690,6 +719,56 @@ export interface components {
             /** Per Genome */
             per_genome?: number | null;
         };
+        /**
+         * LazyTaxonNode
+         * @description One level of the tree, for incremental loading.
+         *
+         *     The difference from `TaxonTreeNode` is what `children` means: here it
+         *     is *this level only*, and `has_children` tells the client whether more
+         *     exists below without shipping it. A client renders what it has and
+         *     fetches deeper only where the user actually looks.
+         */
+        LazyTaxonNode: {
+            /** Id */
+            id: string | null;
+            /** Name */
+            name: string;
+            rank: components["schemas"]["TaxonRank"] | null;
+            /** Genome Count */
+            genome_count: number;
+            /** Bgc Class Counts */
+            bgc_class_counts: {
+                [key: string]: number;
+            };
+            /** Has Children */
+            has_children: boolean;
+            /** Child Taxon Count */
+            child_taxon_count: number;
+            /** Direct Genome Count */
+            direct_genome_count: number;
+            /**
+             * Children
+             * @default []
+             */
+            children: components["schemas"]["LazyTaxonNode"][];
+            /**
+             * Direct Genomes
+             * @default []
+             */
+            direct_genomes: components["schemas"]["GenomeSummary"][];
+        };
+        /** LazyTreeResponse */
+        LazyTreeResponse: {
+            root: components["schemas"]["LazyTaxonNode"];
+            /** Depth */
+            depth: number;
+            /** Truncated At */
+            truncated_at: string[];
+            /** Total Genomes */
+            total_genomes: number;
+            /** Total Bgcs */
+            total_bgcs: number;
+        };
         /** LineageStep */
         LineageStep: {
             rank: components["schemas"]["TaxonRank"];
@@ -922,6 +1001,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TaxonTreeNode"];
+                };
+            };
+        };
+    };
+    get_lazy_tree_api_v1_tree_get: {
+        parameters: {
+            query?: {
+                root?: string | null;
+                depth?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LazyTreeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

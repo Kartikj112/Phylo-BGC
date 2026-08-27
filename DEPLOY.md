@@ -8,12 +8,15 @@ Two independently deployed pieces:
 | `engine/` FastAPI API | **Render** or **Hugging Face Spaces** | both have a card-free free tier; pick one below |
 
 The API image serves a **real read-only dataset** baked in
-(`engine/gtdb_mibig_bundled.db`): the GTDB genus backbone for every genus MIBiG
-covers, with all 2,526 active MIBiG reference clusters grafted onto it by genus
-(~74% land on their real branch; fungi/plants, which aren't in GTDB's bacterial
-taxonomy, sit in an "Unplaced organisms" group). No database service, no volume,
-no secrets required. Rebuilding that file, or moving to full GTDB + antiSMASH +
-BiG-SCAPE on Postgres, is at the bottom of this file.
+(`engine/gtdb_mibig_bundled.db`): all 2,437 active **MIBiG 4.0** reference
+clusters mapped onto the **GTDB R11-RS232** tree. 1,629 (66%) are matched to a
+specific GTDB genome by NCBI taxonomy ID; another 284 are placed at genus level,
+giving **78% on the real domain-to-species backbone**. The remainder are
+eukaryotes (GTDB is prokaryote-only) and sit in an "Unplaced organisms" group.
+Only genomes that actually carry a characterized cluster are ingested -- 1,739
+of GTDB's 879,000 -- which is what keeps the tree renderable. No database
+service, no volume, no secrets required. Rebuilding that file, or moving to
+antiSMASH + BiG-SCAPE on Postgres, is at the bottom of this file.
 
 ---
 
@@ -48,7 +51,7 @@ Verify:
 
 ```powershell
 curl https://<your-service>.onrender.com/api/v1/health     # {"status":"ok"}
-curl https://<your-service>.onrender.com/api/v1/families    # 71 families
+curl https://<your-service>.onrender.com/api/v1/provenance  # 2,437 BGCs
 ```
 
 Free services spin down after ~15 min idle; the first request afterwards
@@ -74,7 +77,7 @@ takes ~30–60s while it restarts. Fine for a demo.
    app_port: 7860
    pinned: false
    ---
-   Read-only visualization API for BGC-scape. Synthetic demo data.
+   Read-only visualization API for BGC-scape. MIBiG 4.0 mapped onto GTDB.
    ```
 
 4. In the Space's **Settings → Variables and secrets**, add a variable
@@ -127,23 +130,44 @@ Fly stays warm better than Render's free tier and has no per-request cold start.
 
 ## Rebuilding the bundled GTDB + MIBiG dataset
 
-`engine/gtdb_mibig_bundled.db` is checked in. To regenerate it (e.g. after a
-new MIBiG release), from `engine/`:
+`engine/gtdb_mibig_bundled.db` is checked in. To regenerate it (e.g. after a new
+MIBiG or GTDB release), from `engine/`:
 
 ```bash
-# 1. subset the full GTDB metadata to the genera MIBiG uses
+# 1. Pick the GTDB genomes MIBiG entries resolve to, and write the mapping.
+#    Scans all ~879,000 GTDB rows; takes a few minutes.
 python scripts/build_gtdb_subset.py \
-    --gtdb  bac120_metadata.tsv.gz \
-    --mibig mibig-json/data \
-    --out   data/gtdb_mibig_subset.tsv --per-genus 2 --context-genera 300
+    --gtdb    ../../../bac120_metadata.tsv.gz \
+    --mibig   ../../../data/mibig_json_4.0/mibig_json_4.0 \
+    --out     data/gtdb_mibig_subset.tsv \
+    --map-out data/mibig_gtdb_map.tsv
 
-# 2. build the DB
+# 2. Build the database.
 export BGCSCAPE_DATABASE_URL=sqlite+pysqlite:///./gtdb_mibig_bundled.db
 bgcscape init-db
 bgcscape ingest gtdb  data/gtdb_mibig_subset.tsv
-bgcscape ingest mibig mibig-json/data
-bgcscape graft-taxonomy       # attach MIBiG species to their GTDB genus
+bgcscape ingest mibig ../../../data/mibig_json_4.0/mibig_json_4.0 --version 4.0
+bgcscape link-mibig   data/mibig_gtdb_map.tsv   # attach clusters to GTDB genomes
+bgcscape graft-taxonomy                          # genus-level fallback for the rest
 ```
+
+### How entries are placed on the tree
+
+MIBiG records an organism name and an NCBI taxid but no lineage, so placement
+comes from matching that organism to a GTDB genome. Precedence, strongest first:
+
+| Method | What it matched | Entries |
+|---|---|---|
+| `ncbi_taxid` | MIBiG's taxid equals GTDB's `ncbi_taxid` | 1,589 |
+| `ncbi_species_taxid` | MIBiG's taxid equals GTDB's `ncbi_species_taxid` | 9 |
+| `gtdb_species` | binomial names agree | 31 |
+| genus only | no genome for the organism; grafted to its genus | 284 |
+| unplaced | genus absent from GTDB (mostly fungi and plants) | 524 |
+
+A match says *this cluster was characterized in this organism, and this is
+GTDB's genome for that organism*. It does **not** say the cluster was called on
+that assembly -- MIBiG's own locus accession stays on `BGC.contig`, and the
+method is shown in the UI so a reader can judge the placement.
 
 Commit the new `.db` and redeploy.
 
@@ -164,7 +188,9 @@ So an antiSMASH KnownClusterBlast hit (`BGC…`) becomes
 
 The bundled dataset has **no gene cluster families** — those require a BiG-SCAPE
 run over antiSMASH output, which is a real compute pipeline (large downloads,
-hours–days), not a build step. When you have those result files:
+hours–days), not a build step. Until then the family panel is empty, and a
+`?bgc=` deep link highlights the cluster's *biosynthetic class* across the tree
+-- the honest signal MIBiG + GTDB alone can support. When you have those files:
 
 1. Provision Postgres (Neon and Supabase have card-free free tiers).
 2. Set `BGCSCAPE_DATABASE_URL=postgresql+psycopg://user:pass@host:5432/db` on the API host.

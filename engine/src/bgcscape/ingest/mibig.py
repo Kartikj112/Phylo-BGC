@@ -127,12 +127,15 @@ class ParsedMibigEntry:
 def _hybrid_subtype(mapped: list[BGCClass]) -> str:
     """Canonical `nrps+pks`-style subtype for a hybrid — the frontend
     splits `subtype` on `+` and expects BGCClass *values*, not MIBiG's
-    product vocabulary ("NRP", "Polyketide"). Order-preserving, de-duped."""
-    seen: list[str] = []
-    for cls in mapped:
-        if cls.value not in seen:
-            seen.append(cls.value)
-    return "+".join(seen)
+    product vocabulary ("NRP", "Polyketide").
+
+    De-duped and **sorted**: MIBiG records the same hybrid in whichever
+    order the curator listed the classes, so the real 4.0 release contains
+    both `nrps+pks` (358 entries) and `pks+nrps` (36). Unsorted, those read
+    as two different subtypes in the class filter, the donut and the clade
+    comparison — the same cluster type counted twice under different names.
+    """
+    return "+".join(sorted({cls.value for cls in mapped}))
 
 
 def _map_bgc_class(class_names: list[str]) -> tuple[BGCClass, str | None]:
@@ -283,9 +286,16 @@ def parse_mibig_entry(raw: dict[str, Any]) -> ParsedMibigEntry:
     except KeyError as exc:
         raise MibigParseError(f"{accession}: locus missing accession") from exc
 
+    # MIBiG 4.0 writes `{"from": 0, "to": 0}` when the cluster's position
+    # within the deposited locus isn't recorded — 1,361 of 3,013 entries in
+    # the 4.0 release. Stored literally that would be a real zero-length
+    # span at the start of the contig, so it is read as "unknown" instead.
+    # Same reasoning as the 3.x half-present-coordinate rule above.
     location = primary_locus.get("location")
-    start_coord = location["from"] if location else None
-    end_coord = location["to"] if location else None
+    start_coord = location.get("from") if location else None
+    end_coord = location.get("to") if location else None
+    if start_coord in (None, 0) and end_coord in (None, 0):
+        start_coord = end_coord = None
 
     ncbi_taxid = taxonomy.get("ncbiTaxId")
     organism_name = taxonomy.get("name")

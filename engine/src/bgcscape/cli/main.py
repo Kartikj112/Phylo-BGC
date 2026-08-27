@@ -203,6 +203,55 @@ def ingest_bigscape_cmd(
         )
 
 
+@app.command("link-mibig")
+def link_mibig_cmd(
+    mapping_path: Path = typer.Argument(
+        ..., help="A mibig_accession/gtdb_accession/match_method TSV from scripts/build_gtdb_subset.py."
+    ),
+    keep_locus_stubs: bool = typer.Option(
+        False,
+        help=(
+            "Keep the MIBiG locus Genome rows left empty after linking. Off by default: they "
+            "carry no cluster once linked, are never drawn, and would inflate the genome counts "
+            "the UI reports. The locus accession is preserved on BGC.contig either way."
+        ),
+    ),
+) -> None:
+    """Attach MIBiG clusters to the GTDB genome of the same organism.
+
+    Run after `ingest gtdb` + `ingest mibig`. Matched on NCBI taxid (falling
+    back to species name) by scripts/build_gtdb_subset.py, which writes the
+    mapping this command consumes. Records how each cluster was placed, so
+    an exact-taxid match is distinguishable from a name match downstream.
+    Idempotent.
+    """
+    from bgcscape.ingest.link import link_mibig_to_gtdb, read_mapping
+
+    mapping = read_mapping(mapping_path)
+    typer.echo(f"Read {len(mapping)} mappings from {mapping_path}")
+    with session_scope() as session:
+        report = link_mibig_to_gtdb(session, mapping, prune_unlinked=not keep_locus_stubs)
+
+    typer.echo(
+        f"Linked {report.linked} cluster(s) to a GTDB genome "
+        f"({report.already_linked} already linked)."
+    )
+    if report.pruned_genomes or report.pruned_taxa:
+        typer.echo(
+            f"  Removed {report.pruned_genomes} empty MIBiG locus row(s) and "
+            f"{report.pruned_taxa} now-empty species node(s)."
+        )
+    if report.missing_bgc:
+        typer.echo(f"  {report.missing_bgc} mapping(s) referenced a MIBiG entry not in the database.")
+    if report.missing_genome:
+        typer.echo(
+            f"  {report.missing_genome} mapping(s) referenced a GTDB genome not in the database "
+            "(is the subset TSV the one this mapping was built from?)"
+        )
+        for example in report.missing_examples:
+            typer.echo(f"    {example}")
+
+
 @app.command("graft-taxonomy")
 def graft_taxonomy() -> None:
     """Attach parent-less species (typically from MIBiG) to their GTDB genus.
