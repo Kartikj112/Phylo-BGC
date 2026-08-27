@@ -7,9 +7,13 @@ Two independently deployed pieces:
 | `web/` Next.js frontend | **Vercel** | you already have this account; no card |
 | `engine/` FastAPI API | **Render** or **Hugging Face Spaces** | both have a card-free free tier; pick one below |
 
-The API image regenerates its demo database at build time (`bgcscape seed-demo`,
-deterministic). No database service, no volume, no secrets required. Swapping in
-real data / Postgres is a later step (bottom of this file).
+The API image serves a **real read-only dataset** baked in
+(`engine/gtdb_mibig_bundled.db`): the GTDB genus backbone for every genus MIBiG
+covers, with all 2,526 active MIBiG reference clusters grafted onto it by genus
+(~74% land on their real branch; fungi/plants, which aren't in GTDB's bacterial
+taxonomy, sit in an "Unplaced organisms" group). No database service, no volume,
+no secrets required. Rebuilding that file, or moving to full GTDB + antiSMASH +
+BiG-SCAPE on Postgres, is at the bottom of this file.
 
 ---
 
@@ -121,14 +125,51 @@ Comma-separate to also allow Vercel preview URLs.
 `engine/fly.toml` is already written. `cd engine && fly launch --no-deploy && fly deploy`.
 Fly stays warm better than Render's free tier and has no per-request cold start.
 
-## Serving real data instead of the demo corpus
+## Rebuilding the bundled GTDB + MIBiG dataset
 
-The demo corpus is fabricated (`SYN_` accessions, `evidence_level=HYPOTHESIZED`,
-source "SYNTHETIC DEMO DATA (not real)"). For real data:
+`engine/gtdb_mibig_bundled.db` is checked in. To regenerate it (e.g. after a
+new MIBiG release), from `engine/`:
 
-1. Provision Postgres (Neon and Supabase both have card-free free tiers).
+```bash
+# 1. subset the full GTDB metadata to the genera MIBiG uses
+python scripts/build_gtdb_subset.py \
+    --gtdb  bac120_metadata.tsv.gz \
+    --mibig mibig-json/data \
+    --out   data/gtdb_mibig_subset.tsv --per-genus 2 --context-genera 300
+
+# 2. build the DB
+export BGCSCAPE_DATABASE_URL=sqlite+pysqlite:///./gtdb_mibig_bundled.db
+bgcscape init-db
+bgcscape ingest gtdb  data/gtdb_mibig_subset.tsv
+bgcscape ingest mibig mibig-json/data
+bgcscape graft-taxonomy       # attach MIBiG species to their GTDB genus
+```
+
+Commit the new `.db` and redeploy.
+
+## Deep links (for the planned antiSMASH button)
+
+The frontend reads these URL parameters on load:
+
+| URL | Effect |
+|---|---|
+| `?bgc=BGC0000123` | select that MIBiG cluster's organism, frame the tree on its clade, highlight its biosynthetic class across the tree |
+| `?taxon=Streptomyces` | focus that clade |
+| `?class=nrps` | filter to that biosynthetic class |
+
+So an antiSMASH KnownClusterBlast hit (`BGC…`) becomes
+`https://<your-site>/?bgc=BGC0000123`.
+
+## Going bigger: full GTDB + antiSMASH + BiG-SCAPE
+
+The bundled dataset has **no gene cluster families** — those require a BiG-SCAPE
+run over antiSMASH output, which is a real compute pipeline (large downloads,
+hours–days), not a build step. When you have those result files:
+
+1. Provision Postgres (Neon and Supabase have card-free free tiers).
 2. Set `BGCSCAPE_DATABASE_URL=postgresql+psycopg://user:pass@host:5432/db` on the API host.
-3. Remove the `bgcscape init-db && bgcscape seed-demo` line (and the SQLite
-   `BGCSCAPE_DATABASE_URL`) from `engine/Dockerfile`.
-4. Run `alembic upgrade head`, then `bgcscape ingest gtdb/mibig/antismash/bigscape …`
-   against that database (see the root `README.md`).
+3. Point the Dockerfile at Postgres instead of the bundled SQLite (delete the
+   `cp gtdb_mibig_bundled.db …` line and the SQLite `BGCSCAPE_DATABASE_URL`).
+4. `alembic upgrade head`, then `bgcscape ingest gtdb/mibig/antismash/bigscape …`
+   and `bgcscape graft-taxonomy` (see the root `README.md`). Large trees also
+   need the frontend switched to the lazy `/api/v1/tree` endpoint.

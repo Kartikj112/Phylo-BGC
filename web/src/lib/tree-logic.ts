@@ -18,6 +18,48 @@ export function toRootDisplayNode(tree: TaxonTreeNode): TaxonDisplayNode {
   return { ...tree, _kind: "taxon" };
 }
 
+/** Key of the synthetic node that collects organisms with no place in the
+ * GTDB backbone (MIBiG's fungi/plants, GTDB-reclassified genera). */
+export const UNPLACED_KEY = "__unplaced__";
+
+/**
+ * Fold root-level orphans into one "Unplaced organisms" node.
+ *
+ * A real GTDB tree roots at a single `domain`. MIBiG entries whose genus
+ * isn't in GTDB's bacterial taxonomy ingest as bare species with no
+ * parent, so the API root ends up with the domain PLUS a fan of loose
+ * species. Bundling them keeps the tree readable and says plainly that
+ * they aren't phylogenetically placed, rather than scattering them beside
+ * the real hierarchy. A no-op when everything is placed.
+ */
+export function groupUnplacedTaxa(root: TaxonDisplayNode): TaxonDisplayNode {
+  const placed: TaxonTreeNode[] = [];
+  const unplaced: TaxonTreeNode[] = [];
+  for (const child of root.children) {
+    (child.rank === "domain" ? placed : unplaced).push(child);
+  }
+  if (unplaced.length === 0) return root;
+
+  const bgc_class_counts: Record<string, number> = {};
+  let genome_count = 0;
+  for (const node of unplaced) {
+    genome_count += node.genome_count;
+    for (const [cls, n] of Object.entries(node.bgc_class_counts)) {
+      bgc_class_counts[cls] = (bgc_class_counts[cls] ?? 0) + n;
+    }
+  }
+  const bucket: TaxonTreeNode = {
+    id: UNPLACED_KEY,
+    name: "Unplaced organisms",
+    rank: null,
+    genome_count,
+    bgc_class_counts,
+    direct_genomes: [],
+    children: unplaced,
+  };
+  return { ...root, children: [...placed, bucket] };
+}
+
 /** Stable identity for Sets (collapsed, selected, ...): TaxonTreeNode.id
  * is `string | null` (null only for the synthetic API root), while
  * GenomeSummary.id is always a real UUID. Never use `node.id` directly in
@@ -1287,6 +1329,71 @@ export function familyTreeIndex(root: TaxonDisplayNode): Map<string, FamilyIndex
     });
   }
   return out;
+}
+
+/**
+ * Resolve an incoming MIBiG accession (e.g. from an antiSMASH
+ * KnownClusterBlast hit, passed as `?bgc=BGC0000123`) to a place on the
+ * tree: the genome that carries it, the clade to frame on, and the
+ * biosynthetic class(es) to highlight the distribution of. Returns null if
+ * that accession isn't in the loaded dataset.
+ */
+export interface MibigHit {
+  genomeId: string;
+  focusKey: string;
+  bgcClasses: string[];
+  taxonName: string | null;
+}
+
+export function findMibigEntry(
+  root: TaxonDisplayNode,
+  mibigAccession: string,
+): MibigHit | null {
+  const target = mibigAccession.trim();
+  let hit: MibigHit | null = null;
+
+  function walk(node: DisplayNode, ancestors: TaxonDisplayNode[]): void {
+    if (hit) return;
+    if (node._kind === "genome") {
+      const bgc = node.bgcs.find((b) => b.mibig_accession === target);
+      if (bgc) {
+        const framed =
+          [...ancestors].reverse().find((a) => a.rank === "genus" || a.rank === "family") ??
+          ancestors[ancestors.length - 1] ??
+          root;
+        hit = {
+          genomeId: node.id,
+          focusKey: nodeKey(framed),
+          bgcClasses: bgcComponentClasses(bgc),
+          taxonName: ancestors[ancestors.length - 1]?.name ?? null,
+        };
+      }
+      return;
+    }
+    const next = [...ancestors, node];
+    for (const g of node.direct_genomes) walk({ ...g, _kind: "genome" }, next);
+    for (const c of node.children) walk({ ...c, _kind: "taxon" }, next);
+  }
+
+  walk(root, []);
+  return hit;
+}
+
+/** nodeKey of the first taxon whose name matches (case-insensitive) — for
+ * a `?taxon=Streptomyces` deep link. */
+export function findTaxonKeyByName(root: TaxonDisplayNode, name: string): string | null {
+  const target = name.trim().toLowerCase();
+  let found: string | null = null;
+  function walk(node: TaxonDisplayNode): void {
+    if (found) return;
+    if (node.name.toLowerCase() === target) {
+      found = nodeKey(node);
+      return;
+    }
+    for (const c of node.children) walk({ ...c, _kind: "taxon" });
+  }
+  walk(root);
+  return found;
 }
 
 /** bgc id → the families it belongs to. Lets a BGC selection offer "show

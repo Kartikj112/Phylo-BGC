@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Breadcrumbs } from "@/components/Breadcrumbs";
 import { BgcTypeDonut } from "@/components/BgcTypeDonut";
 import { ClassFilterRail } from "@/components/ClassFilterRail";
@@ -31,6 +31,9 @@ import {
   familyDistribution,
   familyMembershipSets,
   familyTreeIndex,
+  findMibigEntry,
+  findTaxonKeyByName,
+  groupUnplacedTaxa,
   pruneToBgcBearing,
   ranksPresent,
   toRootDisplayNode,
@@ -71,7 +74,10 @@ export default function HomePage() {
     );
   }
 
-  const fullRoot = useMemo(() => (tree ? toRootDisplayNode(tree) : null), [tree]);
+  const fullRoot = useMemo(
+    () => (tree ? groupUnplacedTaxa(toRootDisplayNode(tree)) : null),
+    [tree],
+  );
   const pruned = useMemo(
     () => (fullRoot ? pruneToBgcBearing(fullRoot, onlyWithBgcs) : null),
     [fullRoot, onlyWithBgcs],
@@ -133,6 +139,44 @@ export default function HomePage() {
     () => (selection?.kind === "bgc" ? (bgcFamIndex.get(selection.id) ?? []) : []),
     [selection, bgcFamIndex],
   );
+
+  // Deep links, for the planned antiSMASH "view across the tree" button and
+  // for sharing a view. Read once, from the URL directly (no useSearchParams
+  // so the page can stay statically rendered):
+  //   ?bgc=BGC0000123  → land on that MIBiG cluster's organism, framed on
+  //                       its clade, with its biosynthetic class highlighted
+  //   ?taxon=Streptomyces → focus that clade
+  //   ?class=nrps       → filter to that biosynthetic class
+  const deepLinkApplied = useRef(false);
+  useEffect(() => {
+    if (!fullRoot || deepLinkApplied.current || typeof window === "undefined") return;
+    deepLinkApplied.current = true;
+    const p = new URLSearchParams(window.location.search);
+    const clsParam = p.get("class")?.toLowerCase();
+    const bgcParam = p.get("bgc")?.trim();
+    const taxonParam = p.get("taxon")?.trim();
+
+    if (clsParam && CLASS_ORDER.includes(clsParam)) {
+      setActiveClasses(new Set([clsParam]));
+    }
+    if (bgcParam) {
+      const hit = findMibigEntry(fullRoot, bgcParam);
+      if (hit) {
+        setSelection({ kind: "genome", id: hit.genomeId });
+        const known = hit.bgcClasses.filter((c) => CLASS_ORDER.includes(c));
+        if (known.length) setActiveClasses(new Set(known));
+        setFocusKey(hit.focusKey);
+        setOnlyWithBgcs(true);
+        setFitSignal((n) => n + 1);
+      }
+    } else if (taxonParam) {
+      const key = findTaxonKeyByName(fullRoot, taxonParam);
+      if (key) {
+        setFocusKey(key);
+        setFitSignal((n) => n + 1);
+      }
+    }
+  }, [fullRoot]);
 
   function selectFamily(id: string | null): void {
     setSelectedFamilyId(id);

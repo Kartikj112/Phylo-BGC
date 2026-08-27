@@ -1,11 +1,17 @@
 # BGC-scape API image (FastAPI + the `api` and `export` extras).
 #
-# Ships with the synthetic demo corpus generated AT BUILD TIME by
-# `bgcscape seed-demo` (deterministic — fixed seed), so the container is
-# self-contained and needs no database service. The data is fabricated and
-# labelled as such throughout the API (see cli/main.py seed-demo docstring).
-# To serve real data instead, point BGCSCAPE_DATABASE_URL at a Postgres
-# instance and run the ingestion pipeline against it.
+# Ships with a REAL read-only dataset baked in: the GTDB genus backbone for
+# the genera MIBiG covers, with all 2,526 active MIBiG reference clusters
+# grafted onto it (`engine/gtdb_mibig_bundled.db`). Rebuild that file with:
+#
+#   python scripts/build_gtdb_subset.py --gtdb <bac120_metadata.tsv[.gz]> \
+#       --mibig <mibig-json/data> --out data/gtdb_mibig_subset.tsv
+#   BGCSCAPE_DATABASE_URL=sqlite+pysqlite:///./gtdb_mibig_bundled.db \
+#       bgcscape init-db && bgcscape ingest gtdb data/gtdb_mibig_subset.tsv \
+#       && bgcscape ingest mibig <mibig-json/data> && bgcscape graft-taxonomy
+#
+# For a larger tree or live data, point BGCSCAPE_DATABASE_URL at Postgres
+# and run the full ingestion pipeline (antiSMASH + BiG-SCAPE) against it.
 
 FROM python:3.13-slim AS base
 
@@ -29,14 +35,10 @@ RUN pip install ".[api,export]"
 
 COPY . .
 
-# Generate the bundled demo database at the path the app will read at
-# runtime. init-db creates the schema; seed-demo fills it (~80 genomes /
-# ~400 BGCs / ~70 families).
-ENV BGCSCAPE_DATABASE_URL=sqlite+pysqlite:////app/data/demo.db \
+# Serve the pre-built GTDB + MIBiG database (checked in, see header).
+ENV BGCSCAPE_DATABASE_URL=sqlite+pysqlite:////app/data/bgcscape.db \
     BGCSCAPE_ENVIRONMENT=production
-RUN mkdir -p /app/data \
-    && bgcscape init-db \
-    && bgcscape seed-demo
+RUN mkdir -p /app/data && cp gtdb_mibig_bundled.db /app/data/bgcscape.db
 
 # Listen on $PORT when the platform provides one (Render sets it; Hugging
 # Face Spaces expects 7860 — set a PORT=7860 Space variable), else 8080.

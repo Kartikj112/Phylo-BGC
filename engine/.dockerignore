@@ -1,11 +1,12 @@
-# Keep the build context small and never ship local databases — the demo
-# DB is regenerated inside the image (see Dockerfile).
+# Keep the build context small and never ship stray local databases — but
+# DO ship the one pre-built dataset the image serves.
 .git
 .gitignore
 **/__pycache__
 **/*.pyc
 *.db
 *.sqlite3
+!gtdb_mibig_bundled.db
 .pytest_cache
 .mypy_cache
 .ruff_cache

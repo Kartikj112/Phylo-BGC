@@ -203,6 +203,32 @@ def ingest_bigscape_cmd(
         )
 
 
+@app.command("graft-taxonomy")
+def graft_taxonomy() -> None:
+    """Attach parent-less species (typically from MIBiG) to their GTDB genus.
+
+    MIBiG entries carry only an organism name, so they ingest as root-level
+    orphan species. Run this after `ingest gtdb` + `ingest mibig` to map
+    them onto the GTDB tree by genus name. Nomenclatural, not phylogenetic;
+    organisms whose genus isn't in GTDB's bacterial taxonomy (fungi,
+    plants) are left unparented on purpose. Idempotent.
+    """
+    from bgcscape.ingest.graft import graft_orphan_species
+
+    with session_scope() as session:
+        report = graft_orphan_species(session)
+    typer.echo(
+        f"Grafted {report.grafted} species onto a GTDB genus "
+        f"({report.already_placed} already placed, {report.unmatched} unmatched)."
+    )
+    if report.unmatched_examples:
+        typer.echo("Unmatched (left unparented — genus not in GTDB bacterial taxonomy):")
+        for name in report.unmatched_examples:
+            typer.echo(f"  {name}")
+        if report.unmatched > len(report.unmatched_examples):
+            typer.echo(f"  ... and {report.unmatched - len(report.unmatched_examples)} more")
+
+
 @app.command("seed-demo")
 def seed_demo(
     genomes: int = typer.Option(80, help="How many synthetic genomes to generate."),

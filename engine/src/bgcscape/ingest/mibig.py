@@ -124,6 +124,17 @@ class ParsedMibigEntry:
     raw: dict[str, Any] = field(repr=False)
 
 
+def _hybrid_subtype(mapped: list[BGCClass]) -> str:
+    """Canonical `nrps+pks`-style subtype for a hybrid — the frontend
+    splits `subtype` on `+` and expects BGCClass *values*, not MIBiG's
+    product vocabulary ("NRP", "Polyketide"). Order-preserving, de-duped."""
+    seen: list[str] = []
+    for cls in mapped:
+        if cls.value not in seen:
+            seen.append(cls.value)
+    return "+".join(seen)
+
+
 def _map_bgc_class(class_names: list[str]) -> tuple[BGCClass, str | None]:
     if not class_names:
         return BGCClass.OTHER, None
@@ -131,9 +142,8 @@ def _map_bgc_class(class_names: list[str]) -> tuple[BGCClass, str | None]:
     if len(set(mapped)) == 1:
         # Either a single class, or several MIBiG sub-blocks that all
         # collapse to the same BGCClass (not a real hybrid).
-        subtype = "+".join(class_names) if len(class_names) > 1 else None
-        return mapped[0], subtype
-    return BGCClass.HYBRID, "+".join(class_names)
+        return mapped[0], None
+    return BGCClass.HYBRID, _hybrid_subtype(mapped)
 
 
 def detect_mibig_schema(raw: dict[str, Any]) -> str:
@@ -197,10 +207,11 @@ def parse_mibig_entry_v3(raw: dict[str, Any]) -> ParsedMibigEntry:
     if not mapped:
         bgc_class, subtype = BGCClass.OTHER, None
     elif len(set(mapped)) == 1:
-        bgc_class = mapped[0]
-        subtype = "+".join(class_names) if len(class_names) > 1 else None
+        bgc_class, subtype = mapped[0], None
     else:
-        bgc_class, subtype = BGCClass.HYBRID, "+".join(class_names)
+        # Canonical nrps+pks-style, not MIBiG 3.x's "NRP+Polyketide": the
+        # frontend splits this on "+" and needs BGCClass values.
+        bgc_class, subtype = BGCClass.HYBRID, _hybrid_subtype(mapped)
 
     compounds: list[ParsedMibigCompound] = []
     for index, compound_raw in enumerate(cluster.get("compounds", [])):

@@ -41,6 +41,10 @@ import {
   familyTreeIndex,
   bgcFamilyIndex,
   collapseToFamily,
+  groupUnplacedTaxa,
+  findMibigEntry,
+  findTaxonKeyByName,
+  UNPLACED_KEY,
   bgcMatchesActiveClasses,
   computeTreeLayout,
   countBgcClasses,
@@ -1095,6 +1099,78 @@ describe("family distribution — the central question", () => {
     expect(idx.get(nrpsBgc.id)).toEqual([FAM_SHARED]);
     const pksBgc = coel.direct_genomes[0]!.bgcs.find((b) => b.bgc_class === "pks")!;
     expect(idx.has(pksBgc.id)).toBe(false); // no family membership
+  });
+
+  it("groupUnplacedTaxa folds root-level orphans under one node, leaving the domain alone", () => {
+    const withOrphans = toRootDisplayNode({
+      id: null,
+      name: "root",
+      rank: null,
+      genome_count: 6,
+      bgc_class_counts: { nrps: 2, pks: 1 },
+      direct_genomes: [],
+      children: [
+        // the real GTDB tree
+        { ...tree.children[0]!, genome_count: 4, bgc_class_counts: { nrps: 1, pks: 1 } },
+        // MIBiG orphans with no GTDB placement
+        {
+          id: "orphan-1",
+          name: "Aspergillus oryzae",
+          rank: "species",
+          genome_count: 1,
+          bgc_class_counts: { nrps: 1 },
+          direct_genomes: [],
+          children: [],
+        },
+        {
+          id: "orphan-2",
+          name: "Alternaria alternata",
+          rank: "species",
+          genome_count: 1,
+          bgc_class_counts: { pks: 0, nrps: 0 },
+          direct_genomes: [],
+          children: [],
+        },
+      ],
+    });
+    const grouped = groupUnplacedTaxa(withOrphans);
+    expect(grouped.children).toHaveLength(2); // domain + bucket
+    const bucket = grouped.children.find((c) => c.id === UNPLACED_KEY)!;
+    expect(bucket.name).toBe("Unplaced organisms");
+    expect(bucket.children.map((c) => c.name).sort()).toEqual([
+      "Alternaria alternata",
+      "Aspergillus oryzae",
+    ]);
+    expect(bucket.genome_count).toBe(2);
+    expect(grouped.children.some((c) => c.rank === "domain")).toBe(true);
+  });
+
+  it("groupUnplacedTaxa is a no-op when every top-level node is a domain", () => {
+    const root = toRootDisplayNode(tree);
+    expect(groupUnplacedTaxa(root)).toBe(root);
+  });
+
+  it("findMibigEntry resolves an accession to a genome, clade and class", () => {
+    // Give a fixture BGC a MIBiG accession by hand.
+    const t = buildFixtureTree();
+    const coel = findTaxonByName(t, "Streptomyces coelicolor")!;
+    coel.direct_genomes[0]!.bgcs[0]!.mibig_accession = "BGC9999999";
+    coel.direct_genomes[0]!.bgcs[0]!.bgc_class = "nrps";
+    const hit = findMibigEntry(toRootDisplayNode(t), "BGC9999999");
+    expect(hit).not.toBeNull();
+    expect(hit!.genomeId).toBe(coel.direct_genomes[0]!.id);
+    expect(hit!.bgcClasses).toEqual(["nrps"]);
+    // framed on the nearest genus/family ancestor
+    expect(hit!.focusKey).toBe(findTaxonByName(t, "Streptomyces")!.id);
+    expect(findMibigEntry(toRootDisplayNode(t), "BGC0000000")).toBeNull();
+  });
+
+  it("findTaxonKeyByName is case-insensitive and returns a usable key", () => {
+    const root = toRootDisplayNode(tree);
+    expect(findTaxonKeyByName(root, "streptomyces")).toBe(
+      findTaxonByName(tree, "Streptomyces")!.id,
+    );
+    expect(findTaxonKeyByName(root, "nope")).toBeNull();
   });
 
   it("collapseToFamily keeps member lineages open and folds the rest", () => {

@@ -52,7 +52,9 @@ def test_parse_hybrid_class_entry_maps_to_hybrid_with_joined_subtype():
     parsed = parse_mibig_entry(_load_fixture("mibig_test_entry_active_hybrid_class.json"))
 
     assert parsed.bgc_class is BGCClass.HYBRID
-    assert parsed.subtype == "NRPS+PKS"
+    # Canonical BGCClass values, not MIBiG's own vocabulary — the frontend
+    # splits this on "+" and matches it against the class filter.
+    assert parsed.subtype == "nrps+pks"
     assert len(parsed.compounds) == 2
     assert {c.name for c in parsed.compounds} == {"Testomycin B1", "Testomycin B2"}
     # Second compound has no databaseIds at all.
