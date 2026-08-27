@@ -65,6 +65,14 @@ jobs:
           BGCSCAPE_TEST_DATABASE_URL: postgresql+psycopg://bgcscape:bgcscape@localhost:5432/bgcscape_test
         run: pytest -v
 
+      # The test-suite step above fills bgcscape_test with tables via
+      # create_all (no alembic_version row). The migration smoke test needs
+      # a genuinely empty database, so reset the schema first.
+      - name: Reset the Postgres schema before the migration smoke test
+        env:
+          PGPASSWORD: bgcscape
+        run: psql -h localhost -U bgcscape -d bgcscape_test -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+
       - name: Alembic upgrade smoke test (Postgres)
         working-directory: engine
         env:
