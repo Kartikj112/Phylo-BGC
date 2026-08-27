@@ -844,3 +844,498 @@ export function applyGenomeFilters(
   if (matched === 0) return { root, matched: 0, filteredEverythingOut: true };
   return { root: filtered, matched, filteredEverythingOut: false };
 }
+
+/* ===========================================================================
+ * GCF distribution across the tree — the product's central question.
+ *
+ * "Where is this gene cluster family found across the tree of life, and what
+ * does its distribution look like?" These pure functions turn the raw
+ * `family_ids` already carried on every BGCSummary into the aggregate
+ * quantities a reader would otherwise have to reconstruct by eye: how many
+ * genomes, how many clades at each rank, how concentrated, how broad, how
+ * many separate lineages, how many lone occurrences.
+ *
+ * Everything here is DESCRIPTIVE. Nothing infers horizontal gene transfer,
+ * gene loss, or any evolutionary process — `patternLabel` states only what is
+ * observed in the loaded dataset. The same caution the comparison endpoint
+ * takes (see api/comparison.py) applies: absence from a clade is "not found
+ * in this dataset", not "the clade lacks it".
+ *
+ * Meant to run against the FULL (unpruned, unfiltered) tree, so the numbers
+ * are stable dataset-wide properties rather than artefacts of the current
+ * view. Complexity is one pass over the tree; the results are memoised by the
+ * page on [fullRoot, familyId] and handed to the canvas as ready-made Sets,
+ * which also removes the previous per-node nodeHasFamily() recursion.
+ * ======================================================================== */
+
+const RANKS_BROAD_TO_DEEP = [
+  "domain",
+  "phylum",
+  "class",
+  "order",
+  "family",
+  "genus",
+  "species",
+] as const;
+
+export interface FamilyMembershipSets {
+  /** nodeKey() of every node — taxon or genome — whose subtree carries at
+   * least one BGC in the family. Drives the "which parts of the tree does
+   * this reach" highlight in O(1) per node at render time. */
+  nodeKeys: Set<string>;
+  /** nodeKey() of every genome node that itself carries a family member. */
+  genomeKeys: Set<string>;
+  /** nodeKey() → member-bearing genome count in that subtree (inclusive).
+   * A missing key means zero. */
+  memberGenomeCountByNode: Map<string, number>;
+  /** nodeKey() → member BGC count in that subtree (inclusive). */
+  memberBgcCountByNode: Map<string, number>;
+}
+
+export function familyMembershipSets(
+  root: TaxonDisplayNode,
+  familyId: string | null,
+): FamilyMembershipSets {
+  const nodeKeys = new Set<string>();
+  const genomeKeys = new Set<string>();
+  const memberGenomeCountByNode = new Map<string, number>();
+  const memberBgcCountByNode = new Map<string, number>();
+  if (!familyId) return { nodeKeys, genomeKeys, memberGenomeCountByNode, memberBgcCountByNode };
+  const fid = familyId;
+
+  function walk(node: DisplayNode): { genomes: number; bgcs: number } {
+    const key = nodeKey(node);
+    if (node._kind === "genome") {
+      const bgcs = node.bgcs.filter((b) => b.family_ids.includes(fid)).length;
+      if (bgcs > 0) {
+        genomeKeys.add(key);
+        nodeKeys.add(key);
+        memberGenomeCountByNode.set(key, 1);
+        memberBgcCountByNode.set(key, bgcs);
+      }
+      return { genomes: bgcs > 0 ? 1 : 0, bgcs };
+    }
+    let genomes = 0;
+    let bgcs = 0;
+    for (const g of node.direct_genomes) {
+      const r = walk({ ...g, _kind: "genome" });
+      genomes += r.genomes;
+      bgcs += r.bgcs;
+    }
+    for (const c of node.children) {
+      const r = walk({ ...c, _kind: "taxon" });
+      genomes += r.genomes;
+      bgcs += r.bgcs;
+    }
+    if (bgcs > 0) {
+      nodeKeys.add(key);
+      memberGenomeCountByNode.set(key, genomes);
+      memberBgcCountByNode.set(key, bgcs);
+    }
+    return { genomes, bgcs };
+  }
+
+  walk(root);
+  return { nodeKeys, genomeKeys, memberGenomeCountByNode, memberBgcCountByNode };
+}
+
+/** Occupancy of one taxonomic rank by a family: how many distinct taxa at
+ * that rank carry it, out of how many exist in the tree. "3 of 34 genera"
+ * says far more than "3 genera". */
+export interface RankOccupancy {
+  rank: string;
+  containing: number;
+  total: number;
+}
+
+/** A clade that wraps some or all of a family's occurrences — used both for
+ * the tree brackets and for the plain-language summary. */
+export interface EnclosingClade {
+  key: string;
+  name: string;
+  rank: string | null;
+  memberGenomes: number;
+}
+
+export interface FamilyDistribution {
+  familyId: string;
+  memberBgcCount: number;
+  memberGenomeCount: number;
+  totalGenomes: number;
+  /** memberGenomeCount / totalGenomes, 0..1 — "found in X% of genomes". */
+  prevalence: number;
+  /** occupancy per taxonomic rank, broad → deep, only ranks the tree has. */
+  byRank: RankOccupancy[];
+  /** the deepest single taxon whose subtree contains EVERY occurrence, or
+   * null when the family spans more than one top-level lineage. */
+  commonAncestor: EnclosingClade | null;
+  /** the tightest clade(s) wrapping the occurrences: one entry when there is
+   * a common ancestor, several when the family sits in disjoint lineages. */
+  enclosingClades: EnclosingClade[];
+  /** the broadest rank at which the family occupies more than one taxon —
+   * i.e. how deep you go before its distribution splits. null when it never
+   * splits (a single tip lineage). */
+  spreadRank: string | null;
+  /** distinct taxa at spreadRank the family occupies (1 when it never splits). */
+  separateLineages: number;
+  /** the single taxon holding the largest share of occurrences, taken at the
+   * broadest informative rank present (phylum, else genus, …). */
+  dominantClade: { name: string; rank: string; share: number } | null;
+  /** dominantClade.share; 1 when confined to one clade, 0 when empty. */
+  concentration: number;
+  /** phyla occupied ÷ phyla present. null when the tree has no phylum rank
+   * (e.g. MIBiG-only data, which is a flat fan of species). */
+  phylumBreadth: number | null;
+  /** occurrences that sit alone in their genus, with at least one other
+   * member-bearing genus elsewhere — lone hits away from the main mass. */
+  isolatedOccurrences: number;
+  /** a purely descriptive one-liner. Never an evolutionary inference. */
+  patternLabel: string;
+}
+
+export function rankPlural(rank: string | null | undefined): string {
+  switch (rank) {
+    case "domain":
+      return "domains";
+    case "phylum":
+      return "phyla";
+    case "class":
+      return "classes";
+    case "order":
+      return "orders";
+    case "family":
+      return "families";
+    case "genus":
+      return "genera";
+    case "species":
+      return "species";
+    default:
+      return rank ? `${rank}s` : "lineages";
+  }
+}
+
+/** The tightest clade(s) that wrap a family's occurrences. Returns one clade
+ * when a single taxon contains every occurrence; one per disjoint lineage
+ * otherwise. A clade that funnels all its members through a single child
+ * taxon is skipped in favour of that child — the point is the *smallest*
+ * wrapper, not the first. */
+export function familyEnclosingClades(
+  root: TaxonDisplayNode,
+  familyId: string | null,
+): EnclosingClade[] {
+  if (!familyId) return [];
+  const { memberGenomeCountByNode } = familyMembershipSets(root, familyId);
+  if ((memberGenomeCountByNode.get(nodeKey(root)) ?? 0) === 0) return [];
+
+  const out: EnclosingClade[] = [];
+
+  function descend(node: DisplayNode): void {
+    if (node._kind === "genome") {
+      out.push({ key: nodeKey(node), name: node.accession, rank: null, memberGenomes: 1 });
+      return;
+    }
+    const childrenWithMembers: DisplayNode[] = [
+      ...node.children.map((c) => ({ ...c, _kind: "taxon" as const })),
+      ...node.direct_genomes.map((g) => ({ ...g, _kind: "genome" as const })),
+    ].filter((c) => (memberGenomeCountByNode.get(nodeKey(c)) ?? 0) > 0);
+
+    if (node.id === null) {
+      // synthetic root: each member-bearing lineage is wrapped on its own.
+      for (const child of childrenWithMembers) descend(child);
+      return;
+    }
+    if (
+      childrenWithMembers.length === 1 &&
+      childrenWithMembers[0]!._kind === "taxon" &&
+      node.rank !== "species"
+    ) {
+      descend(childrenWithMembers[0]!);
+      return;
+    }
+    out.push({
+      key: nodeKey(node),
+      name: node.name,
+      rank: node.rank,
+      memberGenomes: memberGenomeCountByNode.get(nodeKey(node)) ?? 0,
+    });
+  }
+
+  descend(root);
+  return out;
+}
+
+function describeFamilyPattern(d: {
+  memberGenomeCount: number;
+  commonAncestor: EnclosingClade | null;
+  enclosingClades: EnclosingClade[];
+  spreadRank: string | null;
+  separateLineages: number;
+  dominantClade: { name: string; rank: string; share: number } | null;
+  concentration: number;
+  isolatedOccurrences: number;
+}): string {
+  if (d.memberGenomeCount === 0) return "Not found in the loaded tree";
+
+  let main: string;
+  if (d.memberGenomeCount === 1) {
+    const where = d.commonAncestor?.name ?? d.enclosingClades[0]?.name ?? "one genome";
+    main = `Single occurrence, in ${where}`;
+  } else if (d.spreadRank === null && d.commonAncestor) {
+    main = `Confined to ${d.commonAncestor.name}`;
+  } else if (d.commonAncestor) {
+    const rankNote = d.commonAncestor.rank ? ` (${d.commonAncestor.rank})` : "";
+    main = `Within ${d.commonAncestor.name}${rankNote}, across ${d.separateLineages} ${rankPlural(d.spreadRank)}`;
+  } else if (d.concentration >= 0.75 && d.dominantClade) {
+    const pct = Math.round(d.dominantClade.share * 100);
+    const others = d.separateLineages - 1;
+    main = `Concentrated in ${d.dominantClade.name} (${pct}% of occurrences)${
+      others > 0 ? `, also in ${others} other ${rankPlural(d.dominantClade.rank)}` : ""
+    }`;
+  } else {
+    main = `Dispersed across ${d.separateLineages} ${rankPlural(d.spreadRank ?? "lineage")}`;
+  }
+
+  if (d.isolatedOccurrences > 0) {
+    main += ` · ${d.isolatedOccurrences} isolated single-genome occurrence${
+      d.isolatedOccurrences === 1 ? "" : "s"
+    }`;
+  }
+  return main;
+}
+
+/** The full distribution picture for one family. Returns null only when no
+ * family id is given; an unknown id yields a well-formed "empty" result so
+ * callers never have to special-case it. */
+export function familyDistribution(
+  root: TaxonDisplayNode,
+  familyId: string | null,
+): FamilyDistribution | null {
+  if (!familyId) return null;
+
+  const { memberGenomeCountByNode, memberBgcCountByNode } = familyMembershipSets(root, familyId);
+  const rootKey = nodeKey(root);
+  const memberGenomeCount = memberGenomeCountByNode.get(rootKey) ?? 0;
+  const memberBgcCount = memberBgcCountByNode.get(rootKey) ?? 0;
+  const totalGenomes = root.genome_count;
+
+  const totalByRank = new Map<string, number>();
+  const containingByRank = new Map<string, number>();
+  const generaMemberCounts: number[] = [];
+
+  (function walk(node: DisplayNode): void {
+    if (node._kind === "genome") return;
+    if (node.rank) {
+      totalByRank.set(node.rank, (totalByRank.get(node.rank) ?? 0) + 1);
+      const membersHere = memberGenomeCountByNode.get(nodeKey(node)) ?? 0;
+      if (membersHere > 0) {
+        containingByRank.set(node.rank, (containingByRank.get(node.rank) ?? 0) + 1);
+        if (node.rank === "genus") generaMemberCounts.push(membersHere);
+      }
+    }
+    node.children.forEach((c) => walk({ ...c, _kind: "taxon" }));
+  })(root);
+
+  const byRank: RankOccupancy[] = RANKS_BROAD_TO_DEEP.filter(
+    (r) => (totalByRank.get(r) ?? 0) > 0,
+  ).map((r) => ({
+    rank: r,
+    containing: containingByRank.get(r) ?? 0,
+    total: totalByRank.get(r) ?? 0,
+  }));
+
+  const enclosingClades = familyEnclosingClades(root, familyId);
+  const commonAncestor =
+    enclosingClades.length === 1 && enclosingClades[0]!.rank !== null ? enclosingClades[0]! : null;
+
+  const spreadRank = RANKS_BROAD_TO_DEEP.find((r) => (containingByRank.get(r) ?? 0) > 1) ?? null;
+  const separateLineages = spreadRank ? (containingByRank.get(spreadRank) ?? 1) : 1;
+
+  const domRank: string | null =
+    (totalByRank.get("phylum") ?? 0) > 0
+      ? "phylum"
+      : (totalByRank.get("genus") ?? 0) > 0
+        ? "genus"
+        : (RANKS_BROAD_TO_DEEP.find((r) => (totalByRank.get(r) ?? 0) > 0) ?? null);
+
+  let dominantClade: FamilyDistribution["dominantClade"] = null;
+  if (domRank && memberGenomeCount > 0) {
+    let bestName = "";
+    let bestCount = 0;
+    (function walk(node: DisplayNode): void {
+      if (node._kind === "genome") return;
+      if (node.rank === domRank) {
+        const c = memberGenomeCountByNode.get(nodeKey(node)) ?? 0;
+        if (c > bestCount) {
+          bestCount = c;
+          bestName = node.name;
+        }
+      }
+      node.children.forEach((child) => walk({ ...child, _kind: "taxon" }));
+    })(root);
+    if (bestCount > 0) {
+      dominantClade = { name: bestName, rank: domRank, share: bestCount / memberGenomeCount };
+    }
+  }
+  const concentration = memberGenomeCount === 0 ? 0 : dominantClade ? dominantClade.share : 1;
+
+  const phylaTotal = totalByRank.get("phylum") ?? 0;
+  const phylaContaining = containingByRank.get("phylum") ?? 0;
+  const phylumBreadth = phylaTotal > 0 ? phylaContaining / phylaTotal : null;
+
+  const generaWithMembers = generaMemberCounts.length;
+  const isolatedOccurrences =
+    generaWithMembers >= 2 ? generaMemberCounts.filter((n) => n === 1).length : 0;
+
+  const patternLabel = describeFamilyPattern({
+    memberGenomeCount,
+    commonAncestor,
+    enclosingClades,
+    spreadRank,
+    separateLineages,
+    dominantClade,
+    concentration,
+    isolatedOccurrences,
+  });
+
+  return {
+    familyId,
+    memberBgcCount,
+    memberGenomeCount,
+    totalGenomes,
+    prevalence: totalGenomes > 0 ? memberGenomeCount / totalGenomes : 0,
+    byRank,
+    commonAncestor,
+    enclosingClades,
+    spreadRank,
+    separateLineages,
+    dominantClade,
+    concentration,
+    phylumBreadth,
+    isolatedOccurrences,
+    patternLabel,
+  };
+}
+
+/** A cheap per-family distribution summary for EVERY family in the tree,
+ * built in a single pass. Used to make the family browser searchable and
+ * sortable by distribution shape without running the full
+ * `familyDistribution` for each one. */
+export interface FamilyIndexEntry {
+  genomeCount: number;
+  speciesCount: number;
+  genusCount: number;
+  phylumCount: number;
+  /** phylum names carrying the family, for a compact browser glyph. */
+  phyla: string[];
+  bgcClasses: string[];
+}
+
+export function familyTreeIndex(root: TaxonDisplayNode): Map<string, FamilyIndexEntry> {
+  const acc = new Map<
+    string,
+    {
+      genomes: Set<string>;
+      species: Set<string>;
+      genera: Set<string>;
+      phyla: Set<string>;
+      classes: Set<string>;
+    }
+  >();
+
+  const get = (fid: string) => {
+    let e = acc.get(fid);
+    if (!e) {
+      e = { genomes: new Set(), species: new Set(), genera: new Set(), phyla: new Set(), classes: new Set() };
+      acc.set(fid, e);
+    }
+    return e;
+  };
+
+  function walk(node: DisplayNode, ancestry: { rank: string | null; name: string }[]): void {
+    if (node._kind === "genome") {
+      const phylum = ancestry.find((a) => a.rank === "phylum")?.name;
+      const genus = ancestry.find((a) => a.rank === "genus")?.name;
+      const species = ancestry.find((a) => a.rank === "species")?.name;
+      for (const bgc of node.bgcs) {
+        for (const fid of bgc.family_ids) {
+          const e = get(fid);
+          e.genomes.add(nodeKey(node));
+          if (phylum) e.phyla.add(phylum);
+          if (genus) e.genera.add(genus);
+          if (species) e.species.add(species);
+          for (const cls of bgcComponentClasses(bgc)) e.classes.add(cls);
+        }
+      }
+      return;
+    }
+    const next = node.rank ? [...ancestry, { rank: node.rank, name: node.name }] : ancestry;
+    node.direct_genomes.forEach((g) => walk({ ...g, _kind: "genome" }, next));
+    node.children.forEach((c) => walk({ ...c, _kind: "taxon" }, next));
+  }
+
+  walk(root, []);
+
+  const out = new Map<string, FamilyIndexEntry>();
+  for (const [fid, e] of acc) {
+    out.set(fid, {
+      genomeCount: e.genomes.size,
+      speciesCount: e.species.size,
+      genusCount: e.genera.size,
+      phylumCount: e.phyla.size,
+      phyla: [...e.phyla].sort(),
+      bgcClasses: [...e.classes].sort(),
+    });
+  }
+  return out;
+}
+
+/** bgc id → the families it belongs to. Lets a BGC selection offer "show
+ * this cluster's family across the tree" without a second request — the
+ * family_ids are already on every BGCSummary in the tree payload. */
+export function bgcFamilyIndex(root: TaxonDisplayNode): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  (function walk(node: DisplayNode): void {
+    if (node._kind === "genome") {
+      for (const b of node.bgcs) {
+        if (b.family_ids.length) out.set(b.id, [...b.family_ids]);
+      }
+      return;
+    }
+    node.direct_genomes.forEach((g) => walk({ ...g, _kind: "genome" }));
+    node.children.forEach((c) => walk({ ...c, _kind: "taxon" }));
+  })(root);
+  return out;
+}
+
+/**
+ * Frame the tree on a family: the collapse set that keeps every lineage
+ * containing the family fully expanded and folds everything else down to a
+ * single summary glyph. Turns "a few pale nodes lost in a large canvas"
+ * into "the containing lineages, and a rim of collapsed context".
+ *
+ * `memberNodeKeys` is `familyMembershipSets(...).nodeKeys`. Only the
+ * shallowest non-member node on each branch is collapsed — collapsing its
+ * descendants too would be redundant and leave stale keys on re-expand,
+ * the same rule collapseToLevel follows.
+ */
+export function collapseToFamily(
+  root: TaxonDisplayNode,
+  memberNodeKeys: ReadonlySet<string>,
+): Set<string> {
+  const collapsed = new Set<string>();
+
+  function walk(node: DisplayNode): void {
+    if (node._kind === "genome") return;
+    const key = nodeKey(node);
+    if (!memberNodeKeys.has(key)) {
+      if (node.id !== null) collapsed.add(key);
+      return; // nothing below a collapsed node needs a key
+    }
+    node.children.forEach((c) => walk({ ...c, _kind: "taxon" }));
+  }
+
+  // The synthetic root is never collapsed; its children are evaluated
+  // individually so non-member top-level clades fold away too.
+  root.children.forEach((c) => walk({ ...c, _kind: "taxon" }));
+  return collapsed;
+}

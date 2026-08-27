@@ -35,6 +35,12 @@ import {
   bgcInFamily,
   genomeHasFamily,
   nodeHasFamily,
+  familyMembershipSets,
+  familyEnclosingClades,
+  familyDistribution,
+  familyTreeIndex,
+  bgcFamilyIndex,
+  collapseToFamily,
   bgcMatchesActiveClasses,
   computeTreeLayout,
   countBgcClasses,
@@ -944,5 +950,167 @@ describe("genome filters", () => {
     const result = applyGenomeFilters(root, { ...EMPTY_FILTERS, minBgcCount: 9999 });
     expect(result.filteredEverythingOut).toBe(true);
     expect(result.root).toBe(root);
+  });
+});
+
+describe("family distribution — the central question", () => {
+  const tree = buildFixtureTree();
+  const root = toRootDisplayNode(tree);
+
+  it("returns null only when no family id is given", () => {
+    expect(familyDistribution(root, null)).toBeNull();
+    expect(familyDistribution(root, FAM_SHARED)).not.toBeNull();
+  });
+
+  it("membership sets flag every node on the path to a member, and nothing else", () => {
+    const { nodeKeys, genomeKeys } = familyMembershipSets(root, FAM_SHARED);
+    const coel = findTaxonByName(tree, "Streptomyces coelicolor")!;
+    const setae = findTaxonByName(tree, "Kitasatospora setae")!;
+    expect(genomeKeys.has(coel.direct_genomes[0]!.id)).toBe(true);
+    expect(genomeKeys.has(setae.direct_genomes[0]!.id)).toBe(true);
+    expect(nodeKeys.has(findTaxonByName(tree, "Streptomycetaceae")!.id!)).toBe(true);
+    expect(nodeKeys.has(findTaxonByName(tree, "Kitasatospora")!.id!)).toBe(true);
+    // a sibling species with no member of this family is never flagged
+    expect(nodeKeys.has(findTaxonByName(tree, "Streptomyces venezuelae")!.id!)).toBe(false);
+  });
+
+  it("counts a scattered family across the right ranks and names its common ancestor", () => {
+    const d = familyDistribution(root, FAM_SHARED)!;
+    expect(d.memberGenomeCount).toBe(2);
+    expect(d.memberBgcCount).toBe(2);
+    expect(d.byRank.find((r) => r.rank === "genus")!.containing).toBe(2);
+    const phylum = d.byRank.find((r) => r.rank === "phylum")!;
+    expect(phylum.containing).toBe(1);
+    expect(phylum.total).toBe(1);
+    expect(d.spreadRank).toBe("genus");
+    expect(d.separateLineages).toBe(2);
+    expect(d.commonAncestor?.name).toBe("Streptomycetaceae");
+    expect(d.patternLabel).toContain("Streptomycetaceae");
+    expect(d.patternLabel).toContain("2 genera");
+  });
+
+  it("prevalence is member genomes over every genome in the tree", () => {
+    const d = familyDistribution(root, FAM_SHARED)!;
+    expect(d.totalGenomes).toBe(4);
+    expect(d.prevalence).toBeCloseTo(0.5, 5);
+  });
+
+  it("a confined family reports a single tip lineage", () => {
+    const d = familyDistribution(root, FAM_LOCAL)!;
+    expect(d.memberGenomeCount).toBe(1);
+    expect(d.spreadRank).toBeNull();
+    expect(d.separateLineages).toBe(1);
+    expect(d.enclosingClades).toHaveLength(1);
+    expect(d.enclosingClades[0]!.name).toBe("Streptomyces avermitilis");
+    expect(d.patternLabel).toContain("Single occurrence");
+  });
+
+  it("an unknown family id yields an empty distribution, not a crash", () => {
+    const d = familyDistribution(root, "no-such-family")!;
+    expect(d.memberGenomeCount).toBe(0);
+    expect(d.enclosingClades).toEqual([]);
+    expect(d.patternLabel).toBe("Not found in the loaded tree");
+  });
+
+  it("splits into disjoint enclosing clades when a family spans two top-level lineages", () => {
+    const twoPhyla = toRootDisplayNode({
+      id: null,
+      name: "root",
+      rank: null,
+      genome_count: 2,
+      bgc_class_counts: { nrps: 2 },
+      direct_genomes: [],
+      children: ["A", "B"].map((p, i) => ({
+        id: `phy-${p}`,
+        name: `Phylum${p}`,
+        rank: "phylum" as const,
+        genome_count: 1,
+        bgc_class_counts: { nrps: 1 },
+        direct_genomes: [],
+        children: [
+          {
+            id: `gen-${p}`,
+            name: `Genus${p}`,
+            rank: "genus" as const,
+            genome_count: 1,
+            bgc_class_counts: { nrps: 1 },
+            direct_genomes: [
+              {
+                id: `gm-${p}`,
+                accession: `SYN_${i}.1`,
+                assembly_level: "complete_genome" as const,
+                is_mag: false,
+                bgcs: [
+                  {
+                    id: `b-${p}`,
+                    bgc_class: "nrps" as const,
+                    subtype: null,
+                    mibig_accession: null,
+                    evidence_level: "predicted" as const,
+                    family_ids: ["fam-x"],
+                  },
+                ],
+              },
+            ],
+            children: [],
+          },
+        ],
+      })),
+    });
+    const d = familyDistribution(twoPhyla, "fam-x")!;
+    expect(d.commonAncestor).toBeNull();
+    expect(d.enclosingClades.map((c) => c.name).sort()).toEqual(["GenusA", "GenusB"]);
+    expect(d.spreadRank).toBe("phylum");
+    expect(d.separateLineages).toBe(2);
+    expect(d.phylumBreadth).toBe(1);
+  });
+
+  it("familyEnclosingClades returns the tightest wrapper, not the first", () => {
+    // FAM_SHARED funnels through domain→…→family before branching into two
+    // genera, so the wrapper is the family node, not Bacteria.
+    const clades = familyEnclosingClades(root, FAM_SHARED);
+    expect(clades).toHaveLength(1);
+    expect(clades[0]!.name).toBe("Streptomycetaceae");
+    expect(clades[0]!.rank).toBe("family");
+  });
+
+  it("familyTreeIndex summarises every family in one pass", () => {
+    const idx = familyTreeIndex(root);
+    const shared = idx.get(FAM_SHARED)!;
+    expect(shared.genomeCount).toBe(2);
+    expect(shared.genusCount).toBe(2);
+    expect(shared.phylumCount).toBe(1);
+    expect(shared.phyla).toEqual(["Actinomycetota"]);
+
+    const local = idx.get(FAM_LOCAL)!;
+    expect(local.genomeCount).toBe(1);
+    expect(local.genusCount).toBe(1);
+    expect(local.speciesCount).toBe(1);
+  });
+
+  it("bgcFamilyIndex maps a cluster id to its families", () => {
+    const idx = bgcFamilyIndex(root);
+    const coel = findTaxonByName(tree, "Streptomyces coelicolor")!;
+    const nrpsBgc = coel.direct_genomes[0]!.bgcs.find((b) => b.bgc_class === "nrps")!;
+    expect(idx.get(nrpsBgc.id)).toEqual([FAM_SHARED]);
+    const pksBgc = coel.direct_genomes[0]!.bgcs.find((b) => b.bgc_class === "pks")!;
+    expect(idx.has(pksBgc.id)).toBe(false); // no family membership
+  });
+
+  it("collapseToFamily keeps member lineages open and folds the rest", () => {
+    const { nodeKeys } = familyMembershipSets(root, FAM_SHARED);
+    const collapsed = collapseToFamily(root, nodeKeys);
+    // non-member siblings of a member genus fold to glyphs
+    expect(collapsed.has(findTaxonByName(tree, "Streptomyces avermitilis")!.id!)).toBe(true);
+    expect(collapsed.has(findTaxonByName(tree, "Streptomyces venezuelae")!.id!)).toBe(true);
+    // member lineages stay expanded
+    expect(collapsed.has(findTaxonByName(tree, "Streptomyces")!.id!)).toBe(false);
+    expect(collapsed.has(findTaxonByName(tree, "Kitasatospora")!.id!)).toBe(false);
+    expect(collapsed.has(findTaxonByName(tree, "Actinomycetota")!.id!)).toBe(false);
+    // the layout still resolves and drops the collapsed descendants
+    const layout = computeTreeLayout(root, collapsed, 800);
+    expect(
+      layout.nodes.some((n) => n.data._kind === "genome" && n.data.accession.includes("AVERMITILIS")),
+    ).toBe(false);
   });
 });

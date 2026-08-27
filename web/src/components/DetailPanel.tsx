@@ -1,6 +1,6 @@
 "use client";
 
-import { ExternalLink, MapPin, X } from "lucide-react";
+import { ExternalLink, MapPin, Share2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { fetchBgc, fetchGenome } from "@/lib/api-client";
 import type { BGCDetail, GenomeDetail } from "@/lib/api-types";
@@ -12,9 +12,14 @@ interface DetailPanelProps {
   selection: Selection;
   onClose: () => void;
   onSelectBgc: (bgcId: string) => void;
+  /** Families the selected BGC belongs to (from the tree payload's
+   * family_ids). Lets the panel pivot from one cluster to "where is this
+   * cluster's family across the tree". */
+  familyIds?: string[];
+  onShowFamily?: (familyId: string) => void;
 }
 
-export function DetailPanel({ selection, onClose, onSelectBgc }: DetailPanelProps) {
+export function DetailPanel({ selection, onClose, onSelectBgc, familyIds, onShowFamily }: DetailPanelProps) {
   const [genome, setGenome] = useState<GenomeDetail | null>(null);
   const [bgc, setBgc] = useState<BGCDetail | null>(null);
   const [loading, setLoading] = useState(false);
@@ -65,7 +70,9 @@ export function DetailPanel({ selection, onClose, onSelectBgc }: DetailPanelProp
         {loading && <div className="text-sm text-ink-muted">Loading…</div>}
         {error && <div className="text-sm text-red-700">{error}</div>}
         {genome && <GenomeDetailView genome={genome} onSelectBgc={onSelectBgc} />}
-        {bgc && <BgcDetailView bgc={bgc} />}
+        {bgc && (
+          <BgcDetailView bgc={bgc} familyIds={familyIds ?? []} onShowFamily={onShowFamily} />
+        )}
       </div>
     </div>
   );
@@ -271,7 +278,15 @@ function GenomeDetailView({ genome, onSelectBgc }: { genome: GenomeDetail; onSel
   );
 }
 
-function BgcDetailView({ bgc }: { bgc: BGCDetail }) {
+function BgcDetailView({
+  bgc,
+  familyIds,
+  onShowFamily,
+}: {
+  bgc: BGCDetail;
+  familyIds: string[];
+  onShowFamily?: (familyId: string) => void;
+}) {
   return (
     <>
       <div className="mb-1 text-sm text-ink">
@@ -285,6 +300,26 @@ function BgcDetailView({ bgc }: { bgc: BGCDetail }) {
       <div className="mb-1 font-mono text-xs text-ink-muted">{bgc.genome_accession}</div>
       {bgc.mibig_accession && <div className="mb-1 text-xs text-ink-muted">MIBiG: {bgc.mibig_accession}</div>}
       <EvidenceBadge level={bgc.evidence_level} />
+
+      {familyIds.length > 0 && onShowFamily && (
+        <div className="mt-4 rounded border border-line bg-paper p-2.5">
+          <div className="mb-1.5 text-xs uppercase tracking-wider text-ink-muted">
+            Gene cluster {familyIds.length === 1 ? "family" : "families"}
+          </div>
+          <div className="flex flex-col gap-1">
+            {familyIds.map((fid) => (
+              <button
+                key={fid}
+                onClick={() => onShowFamily(fid)}
+                className="flex items-center gap-1.5 text-left text-xs text-signal hover:underline"
+              >
+                <Share2 size={11} className="flex-shrink-0" />
+                Show this family&apos;s distribution across the tree
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="mb-2 mt-4 text-xs uppercase tracking-wider text-ink-muted">Known / predicted products</div>
       {bgc.compounds.length === 0 && <div className="text-sm text-ink-faint">None recorded</div>}

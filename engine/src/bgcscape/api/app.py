@@ -10,6 +10,7 @@ Requires the `api` extra: `pip install -e ".[api]"`.
 """
 from __future__ import annotations
 
+import os
 import uuid
 from collections.abc import Iterator
 from typing import Annotated
@@ -87,8 +88,11 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# Dev-friendly default. Tighten this (specific origins, not "*") before any
-# real deployment — not done here because there's no deployment target yet.
+# Origins are read from BGCSCAPE_CORS_ALLOW_ORIGINS (comma-separated) so a
+# deployment can lock the API to its own frontend without a code change;
+# the default stays "*" for local dev, matching prior behaviour. Set e.g.
+# BGCSCAPE_CORS_ALLOW_ORIGINS=https://your-app.vercel.app in production.
+#
 # allow_methods must include POST for /api/v1/export, and OPTIONS for the
 # browser preflight that precedes any POST carrying a JSON content-type.
 # This was ["GET"] until the export endpoint shipped, which made SVG/PDF
@@ -96,9 +100,12 @@ app = FastAPI(
 # server-side test passed — FastAPI's TestClient never issues preflight
 # requests, so 24 API tests covered the endpoint without covering the way
 # a browser actually reaches it. See test_export_endpoint_allows_browser_preflight.
+_cors_origins = [
+    o.strip() for o in os.getenv("BGCSCAPE_CORS_ALLOW_ORIGINS", "*").split(",") if o.strip()
+] or ["*"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )

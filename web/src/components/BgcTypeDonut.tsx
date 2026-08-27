@@ -48,7 +48,7 @@ export function BgcTypeDonut() {
   const remainder = data.slice(5).reduce((sum, d) => sum + d.count, 0);
 
   return (
-    <div className="pointer-events-auto rounded border border-line bg-card/95 p-3 shadow-sm backdrop-blur">
+    <div className="pointer-events-auto rounded border border-line bg-card p-3 shadow-sm">
       <div className="mb-2 text-xs uppercase tracking-wider text-ink-muted">BGCs by type</div>
       <div className="flex items-center gap-3">
         <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`} className="flex-shrink-0">

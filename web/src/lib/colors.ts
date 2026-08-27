@@ -20,6 +20,17 @@ export const COLORS = {
   lineStrong: "#C4C6BF",
   signal: "#2C5F52",
   signalWash: "#E7EEEC",
+  /** Presence-track + selected-family highlight fills. `present` is the
+   * signal green at full weight; `presentSoft` backs bands and washes;
+   * `absent` is the hollow-cell stroke. Kept distinct from the BGC-class
+   * palette so "does this clade carry the selected family" never collides
+   * with "what class are its clusters". */
+  present: "#2C5F52",
+  presentSoft: "#BFD6CF",
+  absent: "#D8D9D3",
+  /** How far non-members recede when a family is selected — a gentle step
+   * back, not the near-invisible 0.15 used for hard class/search filters. */
+  recedeOpacity: 0.32,
 } as const;
 
 export const BGC_CLASS_COLORS: Record<string, string> = {

@@ -4,9 +4,11 @@ import { useMemo, useRef, useState } from "react";
 import { Breadcrumbs } from "@/components/Breadcrumbs";
 import { BgcTypeDonut } from "@/components/BgcTypeDonut";
 import { ClassFilterRail } from "@/components/ClassFilterRail";
+import { DistributionSummaryBar } from "@/components/DistributionSummaryBar";
 import { FilterPanel } from "@/components/FilterPanel";
 import { ComparisonPanel } from "@/components/ComparisonPanel";
 import { ExportButton } from "@/components/ExportButton";
+import { GcfDetailPanel } from "@/components/GcfDetailPanel";
 import { HeatmapView } from "@/components/HeatmapView";
 import { LevelControl } from "@/components/LevelControl";
 import { SankeyView } from "@/components/SankeyView";
@@ -15,19 +17,25 @@ import { FamilyRail } from "@/components/FamilyRail";
 import { Header } from "@/components/Header";
 import { TreeCanvas } from "@/components/TreeCanvas";
 import { useTaxonomyTree } from "@/hooks/useTaxonomyTree";
+import type { BGCFamilySummary, TaxonTreeNode } from "@/lib/api-types";
 import { CLASS_ORDER } from "@/lib/colors";
 import {
+  bgcFamilyIndex,
+  collapseToFamily,
   collapseToLevel,
   collectMatchKeys,
   countBgcClasses,
-  countTotalGenomes,
   EMPTY_FILTERS,
   applyFocus,
   applyGenomeFilters,
+  familyDistribution,
+  familyMembershipSets,
+  familyTreeIndex,
   pruneToBgcBearing,
   ranksPresent,
   toRootDisplayNode,
   type CollapseLevel,
+  type FamilyIndexEntry,
   type GenomeFilters,
   type TreeOrientation,
 } from "@/lib/tree-logic";
@@ -49,6 +57,13 @@ export default function HomePage() {
   const [onlyWithBgcs, setOnlyWithBgcs] = useState(true);
   const [focusKey, setFocusKey] = useState<string | null>(null);
   const [filters, setFilters] = useState<GenomeFilters>(EMPTY_FILTERS);
+  // Set of families the browser has loaded, so the summary/detail panels
+  // can resolve the selected id to a label + classes without a request.
+  const [familiesList, setFamiliesList] = useState<BGCFamilySummary[]>([]);
+  // Whether the tree is currently framed on the selected family's lineages.
+  const [autoFramed, setAutoFramed] = useState(false);
+  // Bumped to ask the canvas to recentre after a layout-reshaping change.
+  const [fitSignal, setFitSignal] = useState(0);
 
   function toggleComparisonTaxon(taxonId: string): void {
     setComparisonTaxonIds((prev) =>
@@ -71,6 +86,95 @@ export default function HomePage() {
   );
   const root = focused?.root ?? null;
 
+  // ----- GCF distribution: the central question -----------------------------
+  // All derived from `family_ids` already present on every BGC in the tree
+  // payload, computed against the FULL tree so the numbers are stable
+  // dataset properties rather than artefacts of the current view.
+  const familyIndex = useMemo<Map<string, FamilyIndexEntry>>(
+    () => (fullRoot ? familyTreeIndex(fullRoot) : new Map()),
+    [fullRoot],
+  );
+  const bgcFamIndex = useMemo<Map<string, string[]>>(
+    () => (fullRoot ? bgcFamilyIndex(fullRoot) : new Map()),
+    [fullRoot],
+  );
+  const totalPhyla = useMemo(() => {
+    if (!fullRoot) return 0;
+    let n = 0;
+    const walk = (node: TaxonTreeNode) => {
+      if (node.rank === "phylum") n += 1;
+      node.children.forEach(walk);
+    };
+    walk(fullRoot);
+    return n;
+  }, [fullRoot]);
+  const familyMembership = useMemo(
+    () => (fullRoot && selectedFamilyId ? familyMembershipSets(fullRoot, selectedFamilyId) : null),
+    [fullRoot, selectedFamilyId],
+  );
+  const familyDist = useMemo(
+    () => (fullRoot ? familyDistribution(fullRoot, selectedFamilyId) : null),
+    [fullRoot, selectedFamilyId],
+  );
+  const familyEnclosingKeys = useMemo(
+    () => new Set((familyDist?.enclosingClades ?? []).map((c) => c.key)),
+    [familyDist],
+  );
+  const selectedFamily = useMemo(
+    () => familiesList.find((f) => f.id === selectedFamilyId),
+    [familiesList, selectedFamilyId],
+  );
+  const enclosingTaxonIds = useMemo(
+    () => (familyDist?.enclosingClades ?? []).filter((c) => c.rank !== null).map((c) => c.key),
+    [familyDist],
+  );
+  const canCompareEnclosing = enclosingTaxonIds.length >= 2;
+  const selectedBgcFamilyIds = useMemo(
+    () => (selection?.kind === "bgc" ? (bgcFamIndex.get(selection.id) ?? []) : []),
+    [selection, bgcFamIndex],
+  );
+
+  function selectFamily(id: string | null): void {
+    setSelectedFamilyId(id);
+    // Focusing the whole interface on a family; a stale genome/BGC panel
+    // would compete with the distribution view.
+    setSelection(null);
+    if (id && fullRoot) {
+      const membership = familyMembershipSets(fullRoot, id);
+      if (membership.genomeKeys.size > 0) {
+        setAutoFramed(true);
+        setCollapsed(collapseToFamily(fullRoot, membership.nodeKeys));
+        setActiveLevel(null);
+      } else {
+        setAutoFramed(false);
+        setCollapsed(new Set());
+      }
+    } else {
+      setAutoFramed(false);
+      setCollapsed(new Set());
+      setActiveLevel(null);
+    }
+    setFitSignal((n) => n + 1);
+  }
+
+  function toggleFraming(): void {
+    if (!selectedFamilyId || !fullRoot) return;
+    if (autoFramed) {
+      setAutoFramed(false);
+      setCollapsed(new Set());
+    } else {
+      const membership = familyMembership ?? familyMembershipSets(fullRoot, selectedFamilyId);
+      setAutoFramed(true);
+      setCollapsed(collapseToFamily(fullRoot, membership.nodeKeys));
+      setActiveLevel(null);
+    }
+    setFitSignal((n) => n + 1);
+  }
+
+  function compareEnclosing(): void {
+    if (enclosingTaxonIds.length >= 2) setComparisonTaxonIds(enclosingTaxonIds);
+  }
+
   function focusNode(key: string | null): void {
     setFocusKey(key);
     // Focusing into a collapsed clade must open it, or the new root
@@ -82,7 +186,9 @@ export default function HomePage() {
         return next;
       });
       setActiveLevel(null);
+      setAutoFramed(false);
     }
+    setFitSignal((n) => n + 1);
   }
   const classCounts = useMemo(() => (root ? countBgcClasses(root) : {}), [root]);
   const availableRanks = useMemo(() => (root ? ranksPresent(root) : new Set<string>()), [root]);
@@ -95,7 +201,9 @@ export default function HomePage() {
   function selectLevel(level: CollapseLevel): void {
     if (!root) return;
     setActiveLevel(level);
+    setAutoFramed(false);
     setCollapsed(collapseToLevel(root, level));
+    setFitSignal((n) => n + 1);
   }
 
   function toggleCollapse(key: string): void {
@@ -103,6 +211,7 @@ export default function HomePage() {
     // preset, so the highlight is cleared rather than left claiming a
     // depth that isn't true any more.
     setActiveLevel(null);
+    setAutoFramed(false);
     setCollapsed((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
@@ -144,7 +253,10 @@ export default function HomePage() {
           {(["horizontal", "radial"] as const).map((mode) => (
             <button
               key={mode}
-              onClick={() => setOrientation(mode)}
+              onClick={() => {
+                setOrientation(mode);
+                setFitSignal((n) => n + 1);
+              }}
               title={mode === "horizontal" ? "Horizontal tree" : "Circular tree"}
               className={`px-2 py-1 text-xs ${
                 orientation === mode ? "bg-signal-wash text-signal" : "text-ink-muted hover:text-ink"
@@ -165,6 +277,18 @@ export default function HomePage() {
           searchQuery={query}
         />
       </Header>
+
+      {view === "tree" && selectedFamilyId && familyDist && (
+        <DistributionSummaryBar
+          family={selectedFamily}
+          distribution={familyDist}
+          autoFramed={autoFramed}
+          onToggleFraming={toggleFraming}
+          onCompareEnclosing={compareEnclosing}
+          canCompareEnclosing={canCompareEnclosing}
+          onClear={() => selectFamily(null)}
+        />
+      )}
 
       {view === "tree" && focused && (
         <Breadcrumbs path={focused.path} focusLost={focused.focusLost} onNavigate={focusNode} />
@@ -219,18 +343,28 @@ export default function HomePage() {
             onToggle={toggleClass}
             onReset={() => setActiveClasses(new Set(CLASS_ORDER))}
           />
-          <FamilyRail selectedFamilyId={selectedFamilyId} onSelectFamily={setSelectedFamilyId} />
+          <FamilyRail
+            selectedFamilyId={selectedFamilyId}
+            onSelectFamily={selectFamily}
+            familyIndex={familyIndex}
+            totalPhyla={totalPhyla}
+            onFamiliesLoaded={setFamiliesList}
+          />
         </div>
 
-        <div className="relative flex-1 overflow-auto p-6">
+        <div className={`relative flex-1 p-6 ${view === "tree" ? "overflow-hidden" : "overflow-auto"}`}>
           {view === "tree" && root && (
-            <div className="pointer-events-none absolute bottom-4 right-4 z-10">
+            <div className="pointer-events-none absolute bottom-4 left-1/2 z-10 -translate-x-1/2">
               <BgcTypeDonut />
             </div>
           )}
           {view === "flow" && <SankeyView />}
           {view === "heatmap" && <HeatmapView />}
-          {view === "tree" && loading && <div className="text-sm text-ink-muted">Loading taxonomy tree…</div>}
+          {view === "tree" && loading && (
+            <div className="flex h-full items-center justify-center text-sm text-ink-muted">
+              Loading taxonomy tree…
+            </div>
+          )}
           {view === "tree" && error && (
             <div className="max-w-md text-sm text-red-700">
               Couldn&apos;t reach the API ({error.message}). Is <code className="font-mono">uvicorn
@@ -253,16 +387,34 @@ export default function HomePage() {
               onSelectBgc={(id) => setSelection({ kind: "bgc", id })}
               svgRef={svgRef}
               orientation={orientation}
+              familyMembership={familyMembership}
+              familyEnclosingKeys={familyEnclosingKeys}
+              familyLabel={selectedFamily?.label ?? null}
+              fitSignal={fitSignal}
               onFocusNode={focusNode}
             />
           )}
         </div>
 
-        <DetailPanel
-          selection={selection}
-          onClose={() => setSelection(null)}
-          onSelectBgc={(id) => setSelection({ kind: "bgc", id })}
-        />
+        {selection ? (
+          <DetailPanel
+            selection={selection}
+            onClose={() => setSelection(null)}
+            onSelectBgc={(id) => setSelection({ kind: "bgc", id })}
+            familyIds={selectedBgcFamilyIds}
+            onShowFamily={selectFamily}
+          />
+        ) : selectedFamilyId ? (
+          <GcfDetailPanel
+            familyId={selectedFamilyId}
+            family={selectedFamily}
+            distribution={familyDist}
+            onClose={() => selectFamily(null)}
+            onSelectGenome={(id) => setSelection({ kind: "genome", id })}
+            onCompareEnclosing={compareEnclosing}
+            canCompareEnclosing={canCompareEnclosing}
+          />
+        ) : null}
       </div>
 
       <ComparisonPanel

@@ -1,7 +1,7 @@
 "use client";
 
 import * as d3 from "d3";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DisplayNode, TaxonDisplayNode } from "@/lib/api-types";
 import { BGC_CLASS_COLORS, BGC_CLASS_LABELS, COLORS, classColor } from "@/lib/colors";
 import {
@@ -26,6 +26,7 @@ import {
   isLeftHalf,
   rankAbbreviation,
   subtreeBgcCount,
+  type FamilyMembershipSets,
   type TreeOrientation,
 } from "@/lib/tree-logic";
 
@@ -44,10 +45,22 @@ interface TreeCanvasProps {
   onFocusNode: (key: string) => void;
   svgRef?: React.Ref<SVGSVGElement>;
   orientation: TreeOrientation;
+  /** Precomputed family membership over the FULL tree (see tree-logic's
+   * familyMembershipSets). When present it replaces the per-node
+   * nodeHasFamily() recursion and drives the distribution highlight. */
+  familyMembership?: FamilyMembershipSets | null;
+  /** nodeKey() of the tightest clade(s) wrapping the selected family — get
+   * a ring so "the smallest clade that contains this" reads at a glance. */
+  familyEnclosingKeys?: ReadonlySet<string>;
+  familyLabel?: string | null;
+  /** Bump to ask the canvas to recentre (family select, frame toggle …). */
+  fitSignal?: number;
 }
 
 const TREE_WIDTH = 760;
-const SVG_VIEWBOX_WIDTH = 900;
+const H_MARGIN_LEFT = 210;
+const H_MARGIN_RIGHT = 300;
+const PRESENCE_GUTTER = 150;
 
 export function TreeCanvas({
   root,
@@ -64,6 +77,10 @@ export function TreeCanvas({
   onFocusNode,
   svgRef,
   orientation,
+  familyMembership,
+  familyEnclosingKeys,
+  familyLabel,
+  fitSignal,
 }: TreeCanvasProps) {
   // Searching forces open the path to every match — a hit inside a
   // collapsed clade would otherwise never render, which made search look
@@ -80,31 +97,102 @@ export function TreeCanvas({
   const isRadial = orientation === "radial";
   const nodes = isRadial ? radial.nodes : horizontal.nodes;
   const links = isRadial ? radial.links : horizontal.links;
-  const height = isRadial ? radial.size : horizontal.height;
 
-  // Zoom and pan via d3.zoom: wheel to zoom about the cursor, middle-drag
-  // to pan. Left-drag is deliberately excluded from the filter — it is
-  // click-to-select and shift-click-to-compare, and d3.zoom would swallow
-  // both. The transform is applied to a wrapper <g> rather than the <svg>
-  // so exported SVG geometry stays in figure coordinates.
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const zoomLayerRef = useRef<SVGGElement | null>(null);
   const localSvgRef = useRef<SVGSVGElement | null>(null);
+  const zoomBehaviorRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   const [zoom, setZoom] = useState({ k: 1, x: 0, y: 0 });
+  const [vb, setVb] = useState({ w: 1000, h: 700 });
+
+  // Keep the viewBox locked to the container's pixel size so 1 viewBox unit
+  // == 1 CSS pixel — the tree is the stage, it fills the space it is given
+  // and is navigated by zoom/pan rather than a scrollbar.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const measure = () => {
+      const w = el.clientWidth || 1000;
+      const h = el.clientHeight || 700;
+      setVb((prev) => (prev.w === w && prev.h === h ? prev : { w, h }));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // Current layout, read by fitView so it always frames what's on screen
+  // without re-running on every collapse toggle.
+  const layoutRef = useRef<{ hNodes: typeof horizontal.nodes; rSize: number }>({
+    hNodes: [],
+    rSize: 0,
+  });
+  layoutRef.current = { hNodes: horizontal.nodes, rSize: radial.size };
+  const vbRef = useRef(vb);
+  vbRef.current = vb;
+
+  const fitView = useCallback(() => {
+    const svgEl = localSvgRef.current;
+    const behavior = zoomBehaviorRef.current;
+    const el = containerRef.current;
+    if (!svgEl || !behavior || !el) return;
+    const cw = el.clientWidth || vbRef.current.w;
+    const ch = el.clientHeight || vbRef.current.h;
+
+    let bx: number;
+    let by: number;
+    let bw: number;
+    let bh: number;
+    if (isRadial) {
+      bx = 0;
+      by = 0;
+      bw = layoutRef.current.rSize || 600;
+      bh = layoutRef.current.rSize || 600;
+    } else {
+      const ns = layoutRef.current.hNodes;
+      if (ns.length === 0) return;
+      const xs = ns.map((n) => n.x);
+      const ys = ns.map((n) => n.y);
+      const minX = Math.min(...xs);
+      const maxX = Math.max(...xs);
+      const minY = Math.min(...ys);
+      const maxY = Math.max(...ys);
+      bx = minY - H_MARGIN_LEFT;
+      by = minX - 30;
+      bw = maxY - minY + H_MARGIN_LEFT + H_MARGIN_RIGHT;
+      bh = maxX - minX + 60;
+    }
+    const k = Math.max(0.12, Math.min(cw / bw, ch / bh, 1.3));
+    const tx = (cw - bw * k) / 2 - bx * k;
+    const ty = (ch - bh * k) / 2 - by * k;
+    d3.select(svgEl).call(behavior.transform, d3.zoomIdentity.translate(tx, ty).scale(k));
+  }, [isRadial]);
 
   useEffect(() => {
     const svgEl = localSvgRef.current;
     if (!svgEl) return;
     const behavior = d3
       .zoom<SVGSVGElement, unknown>()
-      .scaleExtent([0.25, 8])
-      .filter((event: any) => event.type === "wheel" || event.button === 1)
+      .scaleExtent([0.1, 8])
+      .filter((event: any) => {
+        if (event.type === "wheel") return true;
+        if (event.button === 1) return true; // middle-drag pan
+        // Left-drag pans only when it starts on empty canvas, never on a
+        // node or label (those are select / compare / focus).
+        if (event.type === "mousedown" && event.button === 0) {
+          const t = event.target as Element | null;
+          return !!t && (t === svgEl || t.getAttribute?.("data-canvas-bg") === "true");
+        }
+        return false;
+      })
       .on("zoom", (event) => {
         const t = event.transform;
         setZoom({ k: t.k, x: t.x, y: t.y });
       });
+    zoomBehaviorRef.current = behavior;
     const selection = d3.select(svgEl);
     selection.call(behavior);
-    // Middle-drag otherwise triggers the browser's autoscroll cursor.
     const suppressAutoscroll = (e: MouseEvent) => {
       if (e.button === 1) e.preventDefault();
     };
@@ -114,6 +202,14 @@ export function TreeCanvas({
       svgEl.removeEventListener("mousedown", suppressAutoscroll);
     };
   }, []);
+
+  // Recentre on the changes that reshape what's drawn — orientation, focus
+  // (root identity), viewport size, family selection / framing — but NOT on
+  // an individual collapse toggle, which would make the view jump.
+  useEffect(() => {
+    const id = requestAnimationFrame(fitView);
+    return () => cancelAnimationFrame(id);
+  }, [fitView, root, vb.w, vb.h, selectedFamilyId, fitSignal]);
 
   const setSvgRef = (el: SVGSVGElement | null) => {
     localSvgRef.current = el;
@@ -142,16 +238,21 @@ export function TreeCanvas({
   );
 
   const dimAll = activeClasses.size < Object.keys(BGC_CLASS_COLORS).length;
+  const familyActive = selectedFamilyId !== null;
 
-  // Scale branch weight against the largest subtree actually on screen,
-  // so collapsing a clade rescales the rest rather than flattening it.
+  const isFamilyMember = useCallback(
+    (node: DisplayNode): boolean => {
+      if (!familyActive) return false;
+      if (familyMembership) return familyMembership.nodeKeys.has(nodeKey(node));
+      return nodeHasFamily(node, selectedFamilyId);
+    },
+    [familyActive, familyMembership, selectedFamilyId],
+  );
+
   const maxSubtreeCount = useMemo(
     () => Math.max(1, ...nodes.map((n) => subtreeBgcCount(n.data))),
     [nodes],
   );
-
-  // Glyphs scale against the largest clade currently drawn, so collapsing
-  // or focusing rescales the rest rather than leaving everything tiny.
   const maxGenomeCount = useMemo(
     () => Math.max(1, ...nodes.map((n) => (n.data._kind === "taxon" ? n.data.genome_count : 1))),
     [nodes],
@@ -169,118 +270,202 @@ export function TreeCanvas({
       ).length
     : 0;
 
+  // Presence track (horizontal only): a fixed column aligned to the tips,
+  // so "which genomes carry this family" is one vertical scan rather than a
+  // hunt for teal rings.
+  const genomeLeaves = useMemo(
+    () => (isRadial ? [] : horizontal.nodes.filter((n) => n.data._kind === "genome")),
+    [isRadial, horizontal.nodes],
+  );
+  const trackX = useMemo(
+    () => (genomeLeaves.length ? Math.max(...genomeLeaves.map((n) => n.y)) + PRESENCE_GUTTER : 0),
+    [genomeLeaves],
+  );
+
   return (
-    <svg
-      ref={setSvgRef}
-      width="100%"
-      height={height}
-      viewBox={`0 0 ${isRadial ? radial.size : SVG_VIEWBOX_WIDTH} ${height}`}
-    >
-      <g ref={zoomLayerRef} transform={`translate(${zoom.x},${zoom.y}) scale(${zoom.k})`}>
-      <g transform={isRadial ? `translate(${radial.size / 2},${radial.size / 2})` : "translate(30,20)"}>
-        {links.map((link, i) => {
-          const target = link.target.data;
-          const width = branchWidth(target, maxSubtreeCount);
-          const dominant = dominantBgcClass(target);
-          // Tint toward the dominant class, but keep it muted: the branch
-          // is context, and saturated colour here would compete with the
-          // BGC tick marks that carry the precise signal.
-          const stroke = dominant ? (BGC_CLASS_COLORS[dominant] ?? COLORS.lineStrong) : COLORS.lineStrong;
-          return (
-            <path
-              key={i}
-              d={(isRadial ? radialLinkGenerator(link) : linkGenerator(link)) ?? undefined}
-              fill="none"
-              stroke={stroke}
-              strokeWidth={width}
-              strokeOpacity={dominant ? 0.45 : 0.6}
-              strokeLinecap="round"
-            />
-          );
-        })}
+    <div ref={containerRef} className="relative h-full w-full">
+      <svg
+        ref={setSvgRef}
+        width="100%"
+        height="100%"
+        viewBox={`0 0 ${vb.w} ${vb.h}`}
+        style={{ display: "block", cursor: "grab" }}
+      >
+        <rect
+          data-canvas-bg="true"
+          x={0}
+          y={0}
+          width={vb.w}
+          height={vb.h}
+          fill="transparent"
+          pointerEvents="all"
+        />
+        <g ref={zoomLayerRef} transform={`translate(${zoom.x},${zoom.y}) scale(${zoom.k})`}>
+          <g
+            data-figure-root="true"
+            transform={isRadial ? `translate(${radial.size / 2},${radial.size / 2})` : "translate(0,0)"}
+          >
+            {/* Presence track */}
+            {!isRadial && familyActive && familyMembership && genomeLeaves.length > 0 && (
+              <g>
+                <text
+                  x={trackX + 6}
+                  y={Math.min(...genomeLeaves.map((n) => n.x)) - 16}
+                  fontSize={9}
+                  fill={COLORS.inkFaint}
+                  className="font-mono"
+                >
+                  {familyLabel ?? "GCF"} present
+                </text>
+                {genomeLeaves.map((n) => {
+                  const present = familyMembership.genomeKeys.has(nodeKey(n.data));
+                  return (
+                    <g key={`pt-${nodeKey(n.data)}`} transform={`translate(0,${n.x})`}>
+                      <line
+                        x1={n.y + 10}
+                        y1={0}
+                        x2={trackX}
+                        y2={0}
+                        stroke={present ? COLORS.presentSoft : COLORS.line}
+                        strokeWidth={0.75}
+                        strokeDasharray="2 3"
+                        opacity={present ? 0.7 : 0.3}
+                      />
+                      {present ? (
+                        <rect x={trackX} y={-5} width={10} height={10} rx={2} fill={COLORS.present} />
+                      ) : (
+                        <rect
+                          x={trackX}
+                          y={-5}
+                          width={10}
+                          height={10}
+                          rx={2}
+                          fill="none"
+                          stroke={COLORS.absent}
+                          strokeWidth={1.25}
+                        />
+                      )}
+                    </g>
+                  );
+                })}
+              </g>
+            )}
 
-        {nodes.map((n) => {
-          const node = n.data;
-          const key = nodeKey(node);
-          const isGenome = node._kind === "genome";
-          const isMatch = matchesQuery(node, searchQuery);
-          const hidden = hiddenChildrenCount(node, openCollapsed);
+            {links.map((link, i) => {
+              const target = link.target.data;
+              const width = branchWidth(target, maxSubtreeCount);
+              const dominant = dominantBgcClass(target);
+              const onFamilyPath = familyActive && isFamilyMember(target);
+              const stroke = onFamilyPath
+                ? COLORS.present
+                : dominant
+                  ? (BGC_CLASS_COLORS[dominant] ?? COLORS.lineStrong)
+                  : COLORS.lineStrong;
+              return (
+                <path
+                  key={i}
+                  d={(isRadial ? radialLinkGenerator(link) : linkGenerator(link)) ?? undefined}
+                  fill="none"
+                  stroke={stroke}
+                  strokeWidth={onFamilyPath ? Math.max(width, 2.5) : width}
+                  strokeOpacity={onFamilyPath ? 0.85 : dominant ? 0.45 : 0.6}
+                  strokeLinecap="round"
+                />
+              );
+            })}
 
-          const dimmed =
-            dimAll && !isGenome && ![...nodeVisibleClasses(node)].some((c) => activeClasses.has(c));
-          const genomeDimmed = dimAll && isGenome && !genomeMatchesActiveClasses(node, activeClasses);
+            {nodes.map((n) => {
+              const node = n.data;
+              const key = nodeKey(node);
+              const isGenome = node._kind === "genome";
+              const isMatch = matchesQuery(node, searchQuery);
+              const hidden = hiddenChildrenCount(node, openCollapsed);
 
-          // Family selection dims everything the family doesn't reach, so
-          // its distribution across the tree reads at a glance. Stacked
-          // with (not replacing) class filtering — both can be active.
-          const familyDimmed = selectedFamilyId !== null && !nodeHasFamily(node, selectedFamilyId);
-          const inSelectedFamily = selectedFamilyId !== null && nodeHasFamily(node, selectedFamilyId);
+              const dimmed =
+                dimAll && !isGenome && ![...nodeVisibleClasses(node)].some((c) => activeClasses.has(c));
+              const genomeDimmed = dimAll && isGenome && !genomeMatchesActiveClasses(node, activeClasses);
 
-          // Dim everything off a matching branch, rather than only
-          // recolouring hits: at ~150 nodes the eye needs the surrounding
-          // noise removed to find them at all.
-          const searchDimmed = searchQuery.trim() !== "" && !nodeMatchesOrContains(node, searchQuery);
+              const memberHere = isFamilyMember(node);
+              const familyDimmed = familyActive && !memberHere;
+              const inSelectedFamily = memberHere;
+              const isEnclosing = memberHere && !!familyEnclosingKeys?.has(key);
 
-          const opacity = dimmed || genomeDimmed || familyDimmed || searchDimmed ? 0.15 : 1;
+              const searchDimmed =
+                searchQuery.trim() !== "" && !nodeMatchesOrContains(node, searchQuery);
 
-          return (
-            <g
-              key={key}
-              transform={
-                isRadial
-                  ? `rotate(${(n.x * 180) / Math.PI - 90}) translate(${n.y},0)`
-                  : `translate(${n.y},${n.x})`
-              }
-              opacity={opacity}
-            >
-              {!isGenome && (
-                <TaxonNode
-                  node={node}
-                  isRadial={isRadial}
-                  angle={n.x}
-                  showLabel={
-                    !isRadial ||
-                    hasRoomForLabel(n.y, radial.angularStep, zoom.k, isAnchorRank(node.rank))
+              const hardDimmed = dimmed || genomeDimmed || searchDimmed;
+              const opacity = hardDimmed ? 0.15 : familyDimmed ? COLORS.recedeOpacity : 1;
+
+              return (
+                <g
+                  key={key}
+                  transform={
+                    isRadial
+                      ? `rotate(${(n.x * 180) / Math.PI - 90}) translate(${n.y},0)`
+                      : `translate(${n.y},${n.x})`
                   }
-                  hiddenCount={hidden}
-                  matched={isMatch}
-                  inSelectedFamily={inSelectedFamily}
-                  inComparison={node.id !== null && comparisonTaxonIds.includes(node.id)}
-                  maxGenomeCount={maxGenomeCount}
-                  onToggleCollapse={() => onToggleCollapse(key)}
-                  onFocus={() => onFocusNode(key)}
-                  onToggleComparison={() => node.id !== null && onToggleComparisonTaxon(node.id)}
-                />
-              )}
-              {isGenome && (
-                <GenomeNode
-                  node={node}
-                  isRadial={isRadial}
-                  angle={n.x}
-                  showLabel={!isRadial || hasRoomForLabel(n.y, radial.angularStep, zoom.k)}
-                  matched={isMatch}
-                  dimmedBySelection={selectedId !== null && selectedId !== node.id}
-                  selectedFamilyId={selectedFamilyId}
-                  onSelectGenome={() => onSelectGenome(node.id)}
-                  onSelectBgc={onSelectBgc}
-                />
-              )}
-            </g>
-          );
-        })}
-      </g>
-      </g>
+                  opacity={opacity}
+                >
+                  {!isGenome && (
+                    <TaxonNode
+                      node={node}
+                      isRadial={isRadial}
+                      angle={n.x}
+                      showLabel={
+                        !isRadial ||
+                        hasRoomForLabel(n.y, radial.angularStep, zoom.k, isAnchorRank(node.rank))
+                      }
+                      hiddenCount={hidden}
+                      matched={isMatch}
+                      inSelectedFamily={inSelectedFamily}
+                      isEnclosing={isEnclosing}
+                      inComparison={node.id !== null && comparisonTaxonIds.includes(node.id)}
+                      maxGenomeCount={maxGenomeCount}
+                      onToggleCollapse={() => onToggleCollapse(key)}
+                      onFocus={() => onFocusNode(key)}
+                      onToggleComparison={() =>
+                        node.id !== null && onToggleComparisonTaxon(node.id)
+                      }
+                    />
+                  )}
+                  {isGenome && (
+                    <GenomeNode
+                      node={node}
+                      isRadial={isRadial}
+                      angle={n.x}
+                      showLabel={!isRadial || hasRoomForLabel(n.y, radial.angularStep, zoom.k)}
+                      matched={isMatch}
+                      isEnclosing={isEnclosing}
+                      dimmedBySelection={selectedId !== null && selectedId !== node.id}
+                      selectedFamilyId={selectedFamilyId}
+                      onSelectGenome={() => onSelectGenome(node.id)}
+                      onSelectBgc={onSelectBgc}
+                    />
+                  )}
+                </g>
+              );
+            })}
+          </g>
+        </g>
 
-      {/* Outside the zoom layer, so it stays legible at any scale. Tells
-          the user labels were withheld for space rather than missing — the
-          same confusion the search fix addressed. */}
-      {hiddenLabelCount > 0 && (
-        <text x={12} y={20} fontSize={11} fill={COLORS.inkFaint}>
-          {hiddenLabelCount} label{hiddenLabelCount === 1 ? "" : "s"} hidden for space · scroll to zoom in,
-          middle-drag to pan
-        </text>
-      )}
-    </svg>
+        {hiddenLabelCount > 0 && (
+          <text x={12} y={20} fontSize={11} fill={COLORS.inkFaint}>
+            {hiddenLabelCount} label{hiddenLabelCount === 1 ? "" : "s"} hidden for space · scroll to
+            zoom in, drag to pan
+          </text>
+        )}
+      </svg>
+
+      <div className="pointer-events-none absolute right-3 top-3 flex gap-1.5">
+        <button
+          onClick={fitView}
+          className="pointer-events-auto rounded border border-line bg-card px-2 py-1 text-xs text-ink-muted shadow-sm hover:border-line-strong hover:text-ink"
+          title="Fit the tree to the screen"
+        >
+          Recenter
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -292,6 +477,7 @@ function TaxonNode({
   hiddenCount,
   matched,
   inSelectedFamily,
+  isEnclosing,
   inComparison,
   maxGenomeCount,
   onToggleCollapse,
@@ -305,6 +491,7 @@ function TaxonNode({
   hiddenCount: number;
   matched: boolean;
   inSelectedFamily: boolean;
+  isEnclosing: boolean;
   inComparison: boolean;
   maxGenomeCount: number;
   onToggleCollapse: () => void;
@@ -313,8 +500,6 @@ function TaxonNode({
 }) {
   const isHighRank = node.rank === "domain" || node.rank === "phylum";
   const badge = rankAbbreviation(node.rank);
-  // In radial mode a label on the left half would render upside down, so
-  // it's rotated 180 degrees and anchored from the other side.
   const flip = isRadial && isLeftHalf(angle);
   const labelAnchor = isRadial ? (flip ? "end" : "start") : "end";
   const labelX = isRadial ? (flip ? -14 : 14) : -9;
@@ -322,11 +507,11 @@ function TaxonNode({
   const badgeX = isRadial ? (flip ? 8 : -20) : -node.name.length * 6.6 - 22;
   return (
     <>
-      {/* A collapsed clade renders as a summary rather than a dot:
-          width encodes genome count, the stacked bar its BGC class
-          composition. Collapsing therefore SUMMARISES rather than hides,
-          which is what makes a zoomed-out view more interpretable instead
-          of less. */}
+      {/* The tightest clade wrapping the selected family gets a ring, so
+          "the smallest group that contains this" is visible without reading
+          the summary. */}
+      {isEnclosing && <circle r={9} fill="none" stroke={COLORS.present} strokeWidth={1.75} />}
+
       {hiddenCount > 0 ? (
         <CladeGlyph
           node={node}
@@ -338,18 +523,13 @@ function TaxonNode({
         <circle
           r={4.5}
           fill={COLORS.paper}
-          stroke={COLORS.ink}
-          strokeWidth={1.25}
+          stroke={inSelectedFamily ? COLORS.present : COLORS.ink}
+          strokeWidth={inSelectedFamily ? 1.75 : 1.25}
           className="cursor-pointer"
           onClick={onToggleCollapse}
         />
       )}
-      {/* Shift-click adds/removes this clade from the comparison, leaving
-          plain click as collapse/expand — the far more frequent action,
-          which shouldn't get harder to reach because a second mode exists. */}
-      {/* A highlighter wash behind the label. Recolouring alone wasn't
-          enough: signal teal against body ink is nearly indistinguishable
-          at 12px, so a working search read as a dead one. */}
+
       {matched && !isRadial && (
         <rect
           x={-9 - node.name.length * 6.6 - 4}
@@ -363,9 +543,6 @@ function TaxonNode({
         />
       )}
 
-      {/* Rank badge (D/P/C/O/F/G/S — GTDB has no kingdom rank, so no K).
-          Rendered as its own glyph rather than prefixed into the label so
-          it stays visually subordinate to the organism name. */}
       {badge && showLabel && (
         <g transform={labelTransform}>
           <rect
@@ -392,33 +569,37 @@ function TaxonNode({
       )}
 
       {showLabel && (
-      <text
-        x={labelX}
-        textAnchor={labelAnchor}
-        transform={labelTransform}
-        dy="0.32em"
-        fontStyle={node.rank === "species" ? "italic" : "normal"}
-        fontSize={isHighRank ? 13 : 12}
-        fontWeight={matched || isHighRank || inSelectedFamily || inComparison ? 600 : 400}
-        fill={matched ? "#8A6D0B" : inSelectedFamily || inComparison ? COLORS.signal : COLORS.ink}
-        className="cursor-pointer"
-        onClick={(e) => {
-          if (e.shiftKey) {
-            e.stopPropagation();
-            onToggleComparison();
+        <text
+          x={labelX}
+          textAnchor={labelAnchor}
+          transform={labelTransform}
+          dy="0.32em"
+          fontStyle={node.rank === "species" ? "italic" : "normal"}
+          fontSize={isHighRank ? 13 : 12}
+          fontWeight={matched || isHighRank || inSelectedFamily || inComparison ? 600 : 400}
+          fill={
+            matched
+              ? "#8A6D0B"
+              : inSelectedFamily || inComparison
+                ? COLORS.signal
+                : COLORS.ink
           }
-        }}
-        onDoubleClick={(e) => {
-          // Double-click focuses. Single click is left free for
-          // collapse/compare, both of which are more frequent.
-          e.stopPropagation();
-          onFocus();
-        }}
-      >
-        {inComparison ? "\u25C6 " : ""}
-        {node.name}
-        {hiddenCount > 0 ? ` (+${hiddenCount})` : ""}
-      </text>
+          className="cursor-pointer"
+          onClick={(e) => {
+            if (e.shiftKey) {
+              e.stopPropagation();
+              onToggleComparison();
+            }
+          }}
+          onDoubleClick={(e) => {
+            e.stopPropagation();
+            onFocus();
+          }}
+        >
+          {inComparison ? "◆ " : ""}
+          {node.name}
+          {hiddenCount > 0 ? ` (+${hiddenCount})` : ""}
+        </text>
       )}
     </>
   );
@@ -454,8 +635,6 @@ function CladeGlyph({
       </title>
 
       {summary.bgcCount === 0 ? (
-        // No clusters anywhere below: an outline, so an empty clade is
-        // visibly different from an unrendered one.
         <rect
           x={x}
           y={-height / 2}
@@ -518,6 +697,7 @@ function GenomeNode({
   angle,
   showLabel,
   matched,
+  isEnclosing,
   dimmedBySelection,
   selectedFamilyId,
   onSelectGenome,
@@ -528,6 +708,7 @@ function GenomeNode({
   angle: number;
   showLabel: boolean;
   matched: boolean;
+  isEnclosing: boolean;
   dimmedBySelection: boolean;
   selectedFamilyId: string | null;
   onSelectGenome: () => void;
@@ -539,49 +720,40 @@ function GenomeNode({
   const dominantColor = dominant ? (BGC_CLASS_COLORS[dominant] ?? COLORS.inkMuted) : COLORS.inkMuted;
   return (
     <g className="cursor-pointer" onClick={onSelectGenome} opacity={dimmedBySelection ? 0.55 : 1}>
-      {/* The label is the ONLY thing that gets flipped on the left half.
-          Wrapping the whole group in rotate(180) — as this did — also sent
-          the BGC tick marks inward toward the hub, because in the parent
-          frame +x is always radially outward regardless of hemisphere.
-          Ticks therefore stay in the unflipped frame below. */}
       <g transform={flip ? "rotate(180)" : undefined}>
-      {/* Node size encodes BGC count, so a genome with fifty clusters
-          doesn't compete for attention with one that has none. Empty
-          genomes stay visible but subdued -- they are evolutionary
-          context, not noise, and removing them would misrepresent the
-          phylogeny. */}
-      <circle
-        r={tier.radius}
-        fill={tier.muted ? COLORS.line : dominantColor}
-        stroke={tier.muted ? COLORS.lineStrong : COLORS.ink}
-        strokeWidth={tier.muted ? 0.75 : 1}
-        opacity={tier.muted ? 0.65 : 1}
-      />
-      {matched && showLabel && (
-        <rect
-          x={flip ? -node.accession.length * 6.9 - 14 : 6}
-          y={-8}
-          width={node.accession.length * 6.9 + 8}
-          height={16}
-          fill="#FDF3C7"
-          stroke="#E8C84A"
-          strokeWidth={0.75}
-          rx={2}
+        {isEnclosing && <circle r={tier.radius + 4} fill="none" stroke={COLORS.present} strokeWidth={1.75} />}
+        <circle
+          r={tier.radius}
+          fill={tier.muted ? COLORS.line : dominantColor}
+          stroke={tier.muted ? COLORS.lineStrong : COLORS.ink}
+          strokeWidth={tier.muted ? 0.75 : 1}
+          opacity={tier.muted ? 0.65 : 1}
         />
-      )}
-      {showLabel && (
-        <text
-          x={flip ? -(tier.radius + 6) : tier.radius + 6}
-          textAnchor={flip ? "end" : "start"}
-          dy="0.32em"
-          fontSize={11.5}
-          fontWeight={matched ? 600 : 400}
-          fill={matched ? COLORS.ink : COLORS.inkMuted}
-          className="font-mono"
-        >
-          {node.accession}
-        </text>
-      )}
+        {matched && showLabel && (
+          <rect
+            x={flip ? -node.accession.length * 6.9 - 14 : 6}
+            y={-8}
+            width={node.accession.length * 6.9 + 8}
+            height={16}
+            fill="#FDF3C7"
+            stroke="#E8C84A"
+            strokeWidth={0.75}
+            rx={2}
+          />
+        )}
+        {showLabel && (
+          <text
+            x={flip ? -(tier.radius + 6) : tier.radius + 6}
+            textAnchor={flip ? "end" : "start"}
+            dy="0.32em"
+            fontSize={11.5}
+            fontWeight={matched ? 600 : 400}
+            fill={matched ? COLORS.ink : COLORS.inkMuted}
+            className="font-mono"
+          >
+            {node.accession}
+          </text>
+        )}
       </g>
       {node.bgcs.map((b, i) => {
         const colors = classColor(b.bgc_class, b.subtype);
@@ -596,9 +768,6 @@ function GenomeNode({
               onSelectBgc(b.id);
             }}
           >
-            {/* A ring rather than a color change: the tick's fill already
-                encodes BGC class, which must stay readable while a family
-                is selected. */}
             {inFamily && (
               <rect
                 x={x - 2}

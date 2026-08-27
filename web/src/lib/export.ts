@@ -116,14 +116,57 @@ export function serializeSvgForExport(source: SVGSVGElement): string {
   clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
   clone.setAttribute("xmlns:xlink", "http://www.w3.org/1999/xlink");
 
-  // A responsive width="100%" is meaningless outside the page; the
-  // viewBox carries the real dimensions, so pin width/height to it.
-  const viewBox = clone.getAttribute("viewBox");
-  if (viewBox) {
-    const parts = viewBox.split(/[\s,]+/);
-    if (parts.length === 4) {
-      clone.setAttribute("width", String(parts[2]));
-      clone.setAttribute("height", String(parts[3]));
+  // The on-screen SVG fills the viewport and is navigated by pan/zoom, so
+  // its viewBox is the container size and its content sits under a
+  // translate/scale. For export we want the figure itself, tightly framed
+  // and in its own coordinates: crop the viewBox to the drawing's bounding
+  // box and neutralise the pan/zoom transform. Falls back to copying the
+  // viewBox when the figure marker or getBBox isn't available (e.g. the
+  // unit-test DOM), which keeps older behaviour byte-for-byte.
+  let framed = false;
+  try {
+    const srcFigure = source.querySelector("[data-figure-root]");
+    const cloneFigure = clone.querySelector("[data-figure-root]");
+    if (
+      srcFigure &&
+      cloneFigure &&
+      typeof (srcFigure as SVGGraphicsElement).getBBox === "function"
+    ) {
+      const bb = (srcFigure as SVGGraphicsElement).getBBox();
+      if (bb && bb.width > 0 && bb.height > 0) {
+        const t = /translate\(\s*(-?[\d.]+)[\s,]+(-?[\d.]+)\s*\)/.exec(
+          cloneFigure.getAttribute("transform") ?? "",
+        );
+        const ox = t ? parseFloat(t[1]!) : 0;
+        const oy = t ? parseFloat(t[2]!) : 0;
+        const pad = 24;
+        const x = bb.x + ox - pad;
+        const y = bb.y + oy - pad;
+        const w = bb.width + pad * 2;
+        const h = bb.height + pad * 2;
+        clone.setAttribute("viewBox", `${x} ${y} ${w} ${h}`);
+        clone.setAttribute("width", String(Math.round(w)));
+        clone.setAttribute("height", String(Math.round(h)));
+        clone.querySelector("[data-canvas-bg]")?.remove();
+        const zoomLayer = clone.querySelector("g");
+        zoomLayer?.setAttribute("transform", "translate(0,0) scale(1)");
+        framed = true;
+      }
+    }
+  } catch {
+    /* fall through to the viewBox copy below */
+  }
+
+  if (!framed) {
+    // A responsive width="100%" is meaningless outside the page; the
+    // viewBox carries the real dimensions, so pin width/height to it.
+    const viewBox = clone.getAttribute("viewBox");
+    if (viewBox) {
+      const parts = viewBox.split(/[\s,]+/);
+      if (parts.length === 4) {
+        clone.setAttribute("width", String(parts[2]));
+        clone.setAttribute("height", String(parts[3]));
+      }
     }
   }
 

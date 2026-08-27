@@ -1,0 +1,39 @@
+# Fly.io config for the BGC-scape API.
+#
+#   cd engine
+#   fly launch --no-deploy   # first time: creates the app, keeps this file
+#   fly deploy
+#
+# The app name below is a placeholder — `fly launch` will prompt for a
+# unique one and rewrite it here. No secrets are required to run; to lock
+# CORS to your frontend after both sides are deployed:
+#
+#   fly secrets set BGCSCAPE_CORS_ALLOW_ORIGINS=https://<your-app>.vercel.app
+
+app = "bgc-scape-api"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  BGCSCAPE_ENVIRONMENT = "production"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/api/v1/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

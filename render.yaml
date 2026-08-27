@@ -1,0 +1,24 @@
+# Render Blueprint for the BGC-scape API (card-free free tier).
+#
+# In the Render dashboard: New → Blueprint → connect this GitHub repo.
+# Render reads this file, builds engine/Dockerfile, and gives you
+# https://<name>.onrender.com. Free web services spin down after ~15 min
+# idle and cold-start in ~30-60s.
+#
+# After the frontend is on Vercel, lock CORS by uncommenting the env var
+# below (or set it in the dashboard) and redeploying.
+
+services:
+  - type: web
+    name: bgc-scape-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./engine/Dockerfile
+    dockerContext: ./engine
+    healthCheckPath: /api/v1/health
+    autoDeploy: true
+    envVars:
+      - key: BGCSCAPE_ENVIRONMENT
+        value: production
+      # - key: BGCSCAPE_CORS_ALLOW_ORIGINS
+      #   value: https://your-project.vercel.app

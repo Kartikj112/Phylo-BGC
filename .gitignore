@@ -22,6 +22,11 @@ out/
 next-env.d.ts
 *.tsbuildinfo
 
+# Local env files (the *.example templates stay tracked). NEXT_PUBLIC_API_URL
+# is set per-environment: web/.env.local for local dev, the Vercel project
+# settings for the deployment.
+.env*.local
+
 # Regeneratable API contract snapshot — the generated TS types
 # (web/src/lib/api-schema.generated.ts) ARE committed; this raw dump
 # isn't, see `bgcscape dump-openapi-schema` in cli/main.py.
