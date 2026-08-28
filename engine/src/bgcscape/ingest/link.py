@@ -48,6 +48,11 @@ PLACEMENT_METHOD_LABELS: dict[str, str] = {
     "ncbi_taxid": "Matched to a GTDB genome by NCBI taxonomy ID",
     "ncbi_species_taxid": "Matched to a GTDB genome by NCBI species taxonomy ID",
     "gtdb_species": "Matched to a GTDB genome by species name",
+    "ncbi_species_name": (
+        "Matched to a GTDB genome by its NCBI organism name -- GTDB has since "
+        "reclassified this organism, so it appears on the tree under GTDB's "
+        "current name for it, not the name MIBiG records"
+    ),
     "genus": "Placed at genus level only -- GTDB has no genome for this organism",
     "unplaced": "Not placed on the GTDB tree",
 }

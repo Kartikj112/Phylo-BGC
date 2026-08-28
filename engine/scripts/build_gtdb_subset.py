@@ -146,6 +146,14 @@ def main() -> None:
     by_species_taxid: dict[int, tuple[str, bool, str]] = {}
     by_binomial: dict[str, tuple[str, bool, str]] = {}
     by_genus: dict[str, tuple[str, bool, str]] = {}
+    # GTDB reclassifies organisms, so an entry can be absent from
+    # `gtdb_taxonomy` under the name MIBiG uses while the same genome is
+    # right there under `ncbi_organism_name`. Salinispora arenicola is the
+    # clean example: GTDB moved the genus, so a gtdb_taxonomy lookup misses
+    # it entirely and 4 characterized clusters fall off the tree even though
+    # GTDB has the genome. These two indexes are the NCBI-name fallback.
+    by_ncbi_binomial: dict[str, tuple[str, bool, str]] = {}
+    by_ncbi_genus: dict[str, tuple[str, bool, str]] = {}
     rows: dict[str, str] = {}  # gtdb accession -> raw metadata line
 
     def offer(bucket: dict, key, accession: str, is_rep: bool, line: str) -> None:
@@ -158,7 +166,11 @@ def main() -> None:
         cols = header.split("\t")
         idx = {c: i for i, c in enumerate(cols)}
         need = max(
-            idx["gtdb_taxonomy"], idx["ncbi_taxid"], idx["ncbi_species_taxid"], idx["gtdb_representative"]
+            idx["gtdb_taxonomy"],
+            idx["ncbi_taxid"],
+            idx["ncbi_species_taxid"],
+            idx["gtdb_representative"],
+            idx["ncbi_organism_name"],
         )
 
         scanned = 0
@@ -203,6 +215,15 @@ def main() -> None:
             if genus_norm and genus_norm in want_genus:
                 offer(by_genus, genus_norm, accession, is_rep, raw)
 
+            ncbi_name = row[idx["ncbi_organism_name"]]
+            if ncbi_name:
+                ncbi_bin = binomial(ncbi_name)
+                ncbi_gen = normalize_genus(genus_token(ncbi_name))
+                if ncbi_bin and ncbi_bin in want_binomial:
+                    offer(by_ncbi_binomial, ncbi_bin, accession, is_rep, raw)
+                if ncbi_gen and ncbi_gen in want_genus:
+                    offer(by_ncbi_genus, ncbi_gen, accession, is_rep, raw)
+
     print(f"scanned {scanned} GTDB genomes")
 
     # Resolve each MIBiG entry, strongest match first.
@@ -217,6 +238,13 @@ def main() -> None:
             hit, method = by_species_taxid[e["taxid"]], "ncbi_species_taxid"
         elif e["binomial"] and e["binomial"] in by_binomial:
             hit, method = by_binomial[e["binomial"]], "gtdb_species"
+        elif e["binomial"] and e["binomial"] in by_ncbi_binomial:
+            # Weakest of the genome-level matches, so it is tried last: it
+            # says "GTDB holds this genome, under a name it has since
+            # revised". The cluster still lands on GTDB's own lineage for
+            # that genome, which is the honest placement — MIBiG's organism
+            # name stays on the record.
+            hit, method = by_ncbi_binomial[e["binomial"]], "ncbi_species_name"
 
         if hit is not None:
             mapping.append((e["accession"], hit[0], method))
@@ -225,7 +253,7 @@ def main() -> None:
         else:
             # No genome-level hit. Keep a genus representative so
             # `graft-taxonomy` can still place the organism on the tree.
-            genus_hit = by_genus.get(e["genus"])
+            genus_hit = by_genus.get(e["genus"]) or by_ncbi_genus.get(e["genus"])
             if genus_hit is not None:
                 rows[genus_hit[0]] = genus_hit[2]
                 methods["genus_only"] += 1
@@ -233,10 +261,20 @@ def main() -> None:
                 methods["unplaced"] += 1
 
     total = max(len(entries), 1)
-    placed = sum(methods[m] for m in ("ncbi_taxid", "ncbi_species_taxid", "gtdb_species"))
+    placed = sum(
+        methods[m]
+        for m in ("ncbi_taxid", "ncbi_species_taxid", "gtdb_species", "ncbi_species_name")
+    )
     print()
     print(f"MIBiG entry placement ({len(entries)} active):")
-    for m in ("ncbi_taxid", "ncbi_species_taxid", "gtdb_species", "genus_only", "unplaced"):
+    for m in (
+        "ncbi_taxid",
+        "ncbi_species_taxid",
+        "gtdb_species",
+        "ncbi_species_name",
+        "genus_only",
+        "unplaced",
+    ):
         if methods[m]:
             print(f"  {m:20} {methods[m]:5}  ({100 * methods[m] // total}%)")
     print(f"  -> genome-level      {placed:5}  ({100 * placed // total}%)")

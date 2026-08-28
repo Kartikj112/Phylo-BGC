@@ -9,9 +9,9 @@ Two independently deployed pieces:
 
 The API image serves a **real read-only dataset** baked in
 (`engine/gtdb_mibig_bundled.db`): all 2,437 active **MIBiG 4.0** reference
-clusters mapped onto the **GTDB R11-RS232** tree. 1,629 (66%) are matched to a
-specific GTDB genome by NCBI taxonomy ID; another 284 are placed at genus level,
-giving **78% on the real domain-to-species backbone**. The remainder are
+clusters mapped onto the **GTDB R11-RS232** tree. 1,849 (75%) are matched to a
+specific GTDB genome; another 109 are placed at genus level, giving **80% on
+the real domain-to-species backbone**. The remainder are
 eukaryotes (GTDB is prokaryote-only) and sit in an "Unplaced organisms" group.
 Only genomes that actually carry a characterized cluster are ingested -- 1,739
 of GTDB's 879,000 -- which is what keeps the tree renderable. No database
@@ -191,8 +191,22 @@ comes from matching that organism to a GTDB genome. Precedence, strongest first:
 | `ncbi_taxid` | MIBiG's taxid equals GTDB's `ncbi_taxid` | 1,589 |
 | `ncbi_species_taxid` | MIBiG's taxid equals GTDB's `ncbi_species_taxid` | 9 |
 | `gtdb_species` | binomial names agree | 31 |
-| genus only | no genome for the organism; grafted to its genus | 284 |
-| unplaced | genus absent from GTDB (mostly fungi and plants) | 524 |
+| `ncbi_species_name` | binomial agrees with GTDB's `ncbi_organism_name` | 220 |
+| genus only | no genome for the organism; grafted to its genus | 109 |
+| unplaced | organism absent from GTDB (fungi and plants) | 479 |
+
+`ncbi_species_name` exists because **GTDB reclassifies organisms**. A genome
+can be in GTDB while the name MIBiG uses no longer appears anywhere in
+`gtdb_taxonomy` — *Salinispora arenicola* is the clean case: GTDB moved the
+genus, so a `gtdb_taxonomy` lookup misses it entirely even though the genome
+is right there under `ncbi_organism_name`. Matching that column as a last
+resort moved 220 entries to genome-level placement: 75% of the corpus is now
+placed on a specific genome, up from 66%.
+
+The cluster still lands on GTDB's own lineage for the matched genome — so it
+appears under GTDB's *current* name for the organism, not the name MIBiG
+records. MIBiG's organism name stays on the entry, and the placement method
+is shown in the UI, so the two can be told apart.
 
 A match says *this cluster was characterized in this organism, and this is
 GTDB's genome for that organism*. It does **not** say the cluster was called on
