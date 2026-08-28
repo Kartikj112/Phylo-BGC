@@ -25,7 +25,7 @@ from collections import defaultdict
 from sqlalchemy.orm import Session
 
 from bgcscape.api.schemas import BGCSummary, GenomeSummary, TaxonTreeNode
-from bgcscape.models import BGC, BGCFamilyMembership, Genome, Taxon
+from bgcscape.models import BGC, BGCCompoundLink, BGCFamilyMembership, Compound, Genome, Taxon
 
 
 def _load_genome_summaries(session: Session) -> dict[uuid.UUID, list[GenomeSummary]]:
@@ -48,6 +48,17 @@ def _load_genome_summaries(session: Session) -> dict[uuid.UUID, list[GenomeSumma
     ):
         memberships_by_bgc[bgc_id].append(family_id)
 
+    # Compound names per BGC, in one flat join — same reasoning as the rest
+    # of this loader: no ORM objects, no `raw_annotation` decode.
+    compounds_by_bgc: dict[uuid.UUID, list[str]] = defaultdict(list)
+    for bgc_id, name in (
+        session.query(BGCCompoundLink.bgc_id, Compound.name)
+        .join(Compound, Compound.id == BGCCompoundLink.compound_id)
+        .all()
+    ):
+        if name:
+            compounds_by_bgc[bgc_id].append(name)
+
     bgcs_by_genome: dict[uuid.UUID, list[BGCSummary]] = defaultdict(list)
     for bgc_id, genome_id, bgc_class, subtype, mibig_accession, evidence_level in session.query(
         BGC.id, BGC.genome_id, BGC.bgc_class, BGC.subtype, BGC.mibig_accession, BGC.evidence_level
@@ -60,6 +71,7 @@ def _load_genome_summaries(session: Session) -> dict[uuid.UUID, list[GenomeSumma
                 mibig_accession=mibig_accession,
                 evidence_level=evidence_level,
                 family_ids=memberships_by_bgc.get(bgc_id, []),
+                compounds=compounds_by_bgc.get(bgc_id, []),
             )
         )
 

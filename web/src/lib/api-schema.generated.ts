@@ -536,6 +536,11 @@ export interface components {
              * @default []
              */
             family_ids: string[];
+            /**
+             * Compounds
+             * @default []
+             */
+            compounds: string[];
         };
         /** BGCTypeCount */
         BGCTypeCount: {

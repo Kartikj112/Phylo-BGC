@@ -699,7 +699,7 @@ describe("pruning to BGC-bearing genomes", () => {
       is_mag: false,
       bgcs: [{
         id: "b1", bgc_class: "nrps" as const, subtype: null,
-        mibig_accession: null, evidence_level: "predicted" as const, family_ids: [],
+        mibig_accession: null, evidence_level: "predicted" as const, family_ids: [], compounds: [],
       }],
     };
     const empties = Array.from({ length: 5 }, (_, i) => ({
@@ -902,7 +902,7 @@ describe("genome filters", () => {
   }
   const bgc = (mibig: string | null = null) => ({
     id: `b${Math.random()}`, bgc_class: "nrps" as const, subtype: null,
-    mibig_accession: mibig, evidence_level: "predicted" as const, family_ids: [],
+    mibig_accession: mibig, evidence_level: "predicted" as const, family_ids: [], compounds: [],
   });
 
   it("no active filter passes everything", () => {
@@ -1052,6 +1052,7 @@ describe("family distribution — the central question", () => {
                     mibig_accession: null,
                     evidence_level: "predicted" as const,
                     family_ids: ["fam-x"],
+                    compounds: [],
                   },
                 ],
               },

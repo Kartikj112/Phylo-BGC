@@ -30,6 +30,15 @@ class BGCSummary(BaseModel):
     BGC is legitimately a member of different families at different
     BiG-SCAPE clustering cutoffs (see ingest/bigscape.py), so collapsing
     this to one id would silently pick an arbitrary cutoff's answer."""
+    compounds: list[str] = []
+    """Names of the compounds this cluster is recorded as producing.
+
+    Carried in the tree payload so the interface can answer "where is
+    kocurin made?" — a product name is how a researcher actually refers to
+    a cluster, and searching only taxa and accessions made that question
+    unanswerable. A list because MIBiG records multiple products for many
+    clusters. Short strings, and the payload is gzipped; measured cost is a
+    few KB over the wire."""
 
 
 class GenomeSummary(BaseModel):

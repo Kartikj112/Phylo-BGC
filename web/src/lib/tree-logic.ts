@@ -92,10 +92,31 @@ export function hiddenChildrenCount(node: DisplayNode, collapsed: ReadonlySet<st
   return toDisplayChildren(node)?.length ?? 0;
 }
 
+/**
+ * Does this cluster answer the query?
+ *
+ * Matches the compound names MIBiG records for it, and its MIBiG accession.
+ * A product name ("kocurin") is how a researcher actually refers to a
+ * cluster — searching only taxa and genome accessions made the most natural
+ * question you can ask this tool unanswerable.
+ */
+export function bgcMatchesQuery(bgc: BGCSummary, query: string): boolean {
+  const trimmed = query.trim().toLowerCase();
+  if (!trimmed) return false;
+  if (bgc.mibig_accession && bgc.mibig_accession.toLowerCase().includes(trimmed)) return true;
+  return (bgc.compounds ?? []).some((name) => name.toLowerCase().includes(trimmed));
+}
+
 export function matchesQuery(node: DisplayNode, query: string): boolean {
   const trimmed = query.trim();
   if (!trimmed) return false;
-  return nodeLabel(node).toLowerCase().includes(trimmed.toLowerCase());
+  if (nodeLabel(node).toLowerCase().includes(trimmed.toLowerCase())) return true;
+  // A genome also matches on what its clusters MAKE. Routing this through
+  // matchesQuery rather than a parallel path means the force-open-collapsed
+  // -clades logic, the dimming and the header match count all pick compound
+  // hits up for free — they already call this.
+  if (node._kind === "genome") return node.bgcs.some((b) => bgcMatchesQuery(b, query));
+  return false;
 }
 
 /**

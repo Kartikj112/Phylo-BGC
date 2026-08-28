@@ -6,24 +6,25 @@ import type { DisplayNode, TaxonDisplayNode } from "@/lib/api-types";
 import { BGC_CLASS_COLORS, BGC_CLASS_LABELS, CLADE_REGION_OPACITY, COLORS, cladeHue, classColor } from "@/lib/colors";
 import {
   bgcInFamily,
+  bgcMatchesQuery,
   bgcSizeTier,
   branchWidth,
   cladeSummary,
-  dominantBgcClass,
-  glyphWidth,
-  computeTreeLayout,
-  genomeMatchesActiveClasses,
-  hiddenChildrenCount,
-  effectiveCollapsed,
-  matchesQuery,
-  nodeHasFamily,
-  nodeMatchesOrContains,
-  nodeKey,
-  nodeVisibleClasses,
   computeRadialTreeLayout,
+  computeTreeLayout,
+  dominantBgcClass,
+  effectiveCollapsed,
+  genomeMatchesActiveClasses,
+  glyphWidth,
   hasRoomForLabel,
+  hiddenChildrenCount,
   isAnchorRank,
   isLeftHalf,
+  matchesQuery,
+  nodeHasFamily,
+  nodeKey,
+  nodeMatchesOrContains,
+  nodeVisibleClasses,
   rankAbbreviation,
   subtreeBgcCount,
   type FamilyMembershipSets,
@@ -94,6 +95,15 @@ const TREE_WIDTH = 760;
  * clade rather than clipping it. */
 const REGION_PAD = 10;
 const REGION_ANGLE_PAD = 0.006;
+/** Search-hit highlight. Deliberately the brightest thing on the canvas —
+ * it marks the one cluster the reader asked for, and has to win against
+ * the BGC-class palette underneath it. */
+const SEARCH_HIT_FILL = "#FFE94A";
+const SEARCH_HIT_STROKE = "#B8930B";
+/** Room left around the framed matches, and the ceiling on how far a search
+ * may zoom in — a lone hit should still be shown in context. */
+const SEARCH_FIT_PADDING = 180;
+const SEARCH_ZOOM_MAX = 1.6;
 const H_MARGIN_LEFT = 210;
 const H_MARGIN_RIGHT = 300;
 const PRESENCE_GUTTER = 150;
@@ -234,6 +244,66 @@ export function TreeCanvas({
     const ty = (ch - bh * k) / 2 - by * k;
     d3.select(svgEl).call(behavior.transform, d3.zoomIdentity.translate(tx, ty).scale(k));
   }, [isRadial]);
+
+  /** Frame an explicit box, in zoom-layer coordinates. */
+  const fitToBox = useCallback(
+    (bx: number, by: number, bw: number, bh: number, maxZoom: number) => {
+      const svgEl = localSvgRef.current;
+      const behavior = zoomBehaviorRef.current;
+      const el = containerRef.current;
+      if (!svgEl || !behavior || !el || bw <= 0 || bh <= 0) return;
+      const cw = el.clientWidth || vbRef.current.w;
+      const ch = el.clientHeight || vbRef.current.h;
+      const k = Math.max(0.12, Math.min(cw / bw, ch / bh, maxZoom));
+      const tx = (cw - bw * k) / 2 - bx * k;
+      const ty = (ch - bh * k) / 2 - by * k;
+      d3.select(svgEl).call(behavior.transform, d3.zoomIdentity.translate(tx, ty).scale(k));
+    },
+    [],
+  );
+
+  /**
+   * Zoom to whatever the search found.
+   *
+   * A hit deep in a large tree is expanded and highlighted but can easily be
+   * off-screen, which reads as "no result". Framing the matches turns the
+   * search into navigation. Capped at SEARCH_ZOOM_MAX so a single hit does
+   * not slam the view to maximum magnification and lose all surrounding
+   * context — the point is to show WHERE in the tree it sits.
+   */
+  const fitToMatches = useCallback(() => {
+    if (!searchQuery.trim()) return false;
+    const hits = nodes.filter((n) => matchesQuery(n.data, searchQuery));
+    if (hits.length === 0) return false;
+
+    const pts = hits.map((n) => {
+      const p = drawnPos(n, isRadial, nodeOffsets);
+      if (!isRadial) return { x: p.y, y: p.x };
+      const a = p.x - Math.PI / 2;
+      // Zoom-layer coords: the figure root is translated by size/2 in radial.
+      return { x: p.y * Math.cos(a) + radial.size / 2, y: p.y * Math.sin(a) + radial.size / 2 };
+    });
+    const xs = pts.map((p) => p.x);
+    const ys = pts.map((p) => p.y);
+    const pad = SEARCH_FIT_PADDING;
+    const bx = Math.min(...xs) - pad;
+    const by = Math.min(...ys) - pad;
+    fitToBox(bx, by, Math.max(...xs) - Math.min(...xs) + pad * 2,
+             Math.max(...ys) - Math.min(...ys) + pad * 2, SEARCH_ZOOM_MAX);
+    return true;
+  }, [searchQuery, nodes, isRadial, nodeOffsets, radial.size, fitToBox]);
+
+  // Re-frame when the query changes. Depends on `nodes` too, because a hit
+  // inside a collapsed clade only gets a position once the search has forced
+  // that clade open — framing before that would target a node that is not
+  // laid out yet.
+  useEffect(() => {
+    if (!searchQuery.trim()) return;
+    const id = requestAnimationFrame(() => {
+      fitToMatches();
+    });
+    return () => cancelAnimationFrame(id);
+  }, [searchQuery, fitToMatches]);
 
   useEffect(() => {
     const svgEl = localSvgRef.current;
@@ -687,6 +757,7 @@ export function TreeCanvas({
                       angle={n.x}
                       showLabel={!isRadial || hasRoomForLabel(n.y, radial.angularStep, scale)}
                       matched={isMatch}
+                      searchQuery={searchQuery}
                       isEnclosing={isEnclosing}
                       dimmedBySelection={selectedId !== null && selectedId !== node.id}
                       selectedFamilyId={selectedFamilyId}
@@ -964,6 +1035,7 @@ function GenomeNode({
   angle,
   showLabel,
   matched,
+  searchQuery,
   isEnclosing,
   dimmedBySelection,
   selectedFamilyId,
@@ -975,6 +1047,9 @@ function GenomeNode({
   angle: number;
   showLabel: boolean;
   matched: boolean;
+  /** Needed per-cluster: a genome can match on one product while its other
+   * clusters do not, and highlighting all of them would misreport the hit. */
+  searchQuery: string;
   isEnclosing: boolean;
   dimmedBySelection: boolean;
   selectedFamilyId: string | null;
@@ -1036,6 +1111,7 @@ function GenomeNode({
         const x = base;
         const primary = colors[0] ?? COLORS.inkFaint;
         const inFamily = bgcInFamily(b, selectedFamilyId);
+        const isHit = bgcMatchesQuery(b, searchQuery);
         return (
           <g
             key={b.id}
@@ -1044,6 +1120,22 @@ function GenomeNode({
               onSelectBgc(b.id);
             }}
           >
+            {/* A search hit is marked on the CLUSTER itself, not just its
+                genome's label: "where is kocurin made" is answered by the
+                bar, and a highlight on the row alone would leave the reader
+                counting bars to find which one. */}
+            {isHit && (
+              <rect
+                x={bx(-3, 13)}
+                y={-9}
+                width={13}
+                height={18}
+                fill={SEARCH_HIT_FILL}
+                stroke={SEARCH_HIT_STROKE}
+                strokeWidth={1.5}
+                rx={2.5}
+              />
+            )}
             {inFamily && (
               <rect
                 x={bx(-2, 11)}

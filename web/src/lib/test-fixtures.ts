@@ -3,7 +3,12 @@ import type { BGCSummary, GenomeSummary, TaxonTreeNode } from "./api-types";
 let counter = 0;
 const nid = (prefix: string): string => `${prefix}-${counter++}`;
 
-function bgc(bgc_class: string, subtype: string | null, family_ids: string[] = []): BGCSummary {
+function bgc(
+  bgc_class: string,
+  subtype: string | null,
+  family_ids: string[] = [],
+  compounds: string[] = [],
+): BGCSummary {
   return {
     id: nid("bgc"),
     bgc_class: bgc_class as BGCSummary["bgc_class"],
@@ -11,6 +16,7 @@ function bgc(bgc_class: string, subtype: string | null, family_ids: string[] = [
     mibig_accession: null,
     evidence_level: "predicted",
     family_ids,
+    compounds,
   };
 }
 
