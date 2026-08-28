@@ -875,7 +875,22 @@ function CladeGlyph({
 
   let offset = 0;
   return (
-    <g className="cursor-pointer" onClick={onToggleCollapse}>
+    // The rotate(180) is what makes the negated `x` above come out RADIALLY
+    // OUTWARD on the left hemisphere.
+    //
+    // Without it the negation was uncompensated, so every glyph on the left
+    // half grew back towards the centre — measured 31 of 31 inward on the
+    // left against 28 of 28 outward on the right. The labels already flip
+    // this way (see TaxonNode's labelTransform); the glyph negated its x but
+    // never got the matching rotation, which is exactly the pair that has to
+    // travel together. Flipping the whole glyph as a unit also keeps its
+    // position relative to the badge and label identical on both halves, so
+    // no new overlap is introduced.
+    <g
+      className="cursor-pointer"
+      transform={flip ? "rotate(180)" : undefined}
+      onClick={onToggleCollapse}
+    >
       <title>
         {node.name}: {summary.genomeCount} genome{summary.genomeCount === 1 ? "" : "s"},{" "}
         {summary.bgcCount} BGC{summary.bgcCount === 1 ? "" : "s"}
@@ -1006,10 +1021,19 @@ function GenomeNode({
             {node.accession}
           </text>
         )}
-      </g>
+      {/* The barcode and MAG tag live INSIDE the flip group, so the whole
+          genome node mirrors as one unit on the left hemisphere: everything
+          radiates outward and reads the right way up. They used to sit
+          outside it, which left the barcode unmirrored relative to its own
+          label and put the MAG tag — which had a rotate(180) but a positive
+          x, so nothing cancelled — inside the circle. */}
       {node.bgcs.map((b, i) => {
         const colors = classColor(b.bgc_class, b.subtype);
-        const x = (showLabel ? BARCODE_START_X : 12) + i * BARCODE_TICK_WIDTH;
+        const base = (showLabel ? BARCODE_START_X : 12) + i * BARCODE_TICK_WIDTH;
+        // Mirror into the flipped frame: a rect at [v, v+w] must become
+        // [-(v+w), -v] so rotate(180) lands it back outward.
+        const bx = (offset: number, w: number) => (flip ? -(base + offset) - w : base + offset);
+        const x = base;
         const primary = colors[0] ?? COLORS.inkFaint;
         const inFamily = bgcInFamily(b, selectedFamilyId);
         return (
@@ -1022,7 +1046,7 @@ function GenomeNode({
           >
             {inFamily && (
               <rect
-                x={x - 2}
+                x={bx(-2, 11)}
                 y={-7.5}
                 width={11}
                 height={15}
@@ -1033,11 +1057,17 @@ function GenomeNode({
               />
             )}
             {colors.length === 1 ? (
-              <rect x={x} y={-5} width={7} height={10} fill={primary} rx={1} />
+              <rect x={bx(0, 7)} y={-5} width={7} height={10} fill={primary} rx={1} />
             ) : (
               <>
-                <rect x={x} y={-5} width={3.5} height={10} fill={primary} />
-                <rect x={x + 3.5} y={-5} width={3.5} height={10} fill={colors[1] ?? COLORS.inkFaint} />
+                <rect x={bx(0, 3.5)} y={-5} width={3.5} height={10} fill={primary} />
+                <rect
+                  x={bx(3.5, 3.5)}
+                  y={-5}
+                  width={3.5}
+                  height={10}
+                  fill={colors[1] ?? COLORS.inkFaint}
+                />
               </>
             )}
           </g>
@@ -1045,16 +1075,20 @@ function GenomeNode({
       })}
       {node.is_mag && showLabel && (
         <text
-          x={(showLabel ? BARCODE_START_X : 12) + node.bgcs.length * BARCODE_TICK_WIDTH + 6}
+          x={
+            flip
+              ? -((showLabel ? BARCODE_START_X : 12) + node.bgcs.length * BARCODE_TICK_WIDTH + 6)
+              : (showLabel ? BARCODE_START_X : 12) + node.bgcs.length * BARCODE_TICK_WIDTH + 6
+          }
           dy="0.32em"
           fontSize={9.5}
           fill={COLORS.inkFaint}
-          transform={flip ? "rotate(180)" : undefined}
           textAnchor={flip ? "end" : "start"}
         >
           MAG
         </text>
       )}
+      </g>
     </g>
   );
 }

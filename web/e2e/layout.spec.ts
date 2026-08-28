@@ -126,3 +126,55 @@ test("hierarchy regions render behind the tree and can be turned off", async ({ 
   await page.waitForTimeout(400);
   expect(await regions.count()).toBe(0);
 });
+
+test("in radial view every label and BGC bar radiates outward", async ({ page }) => {
+  await ready(page);
+
+  // The regression: `CladeGlyph` negated its x for the left hemisphere but,
+  // unlike the labels, was not wrapped in the matching rotate(180) — so
+  // nothing cancelled the negation and every glyph on the left half grew
+  // back towards the centre. Measured before the fix: 31 of 31 inward on the
+  // left against 28 of 28 outward on the right.
+  //
+  // Compared against the node's own origin via getScreenCTM rather than a
+  // bounding box, because a collapsed node renders its glyph INSTEAD of a
+  // circle and SVG <g> reports a zero-size rect.
+  const result = await page.evaluate(() => {
+    const figure = document.querySelector("svg [data-figure-root='true']") as SVGGElement;
+    const svg = figure.ownerSVGElement!;
+    const originOf = (el: SVGGraphicsElement) => {
+      const p = svg.createSVGPoint();
+      p.x = 0;
+      p.y = 0;
+      return p.matrixTransform(el.getScreenCTM()!);
+    };
+    const centre = originOf(figure);
+    const out = { left: { outward: 0, inward: 0 }, right: { outward: 0, inward: 0 } };
+
+    for (const title of Array.from(document.querySelectorAll("g[data-node-key] title"))) {
+      const glyph = title.parentElement as unknown as SVGGraphicsElement;
+      const host = title.closest("g[data-node-key]") as unknown as SVGGraphicsElement | null;
+      const rect = glyph.querySelector("rect");
+      if (!host || !rect) continue;
+
+      const node = originOf(host);
+      const box = rect.getBoundingClientRect();
+      const nodeR = Math.hypot(node.x - centre.x, node.y - centre.y);
+      const glyphR = Math.hypot(box.x + box.width / 2 - centre.x, box.y + box.height / 2 - centre.y);
+      if (nodeR < 1) continue; // the root sits at the centre; no direction
+
+      const side = node.x >= centre.x ? "right" : "left";
+      out[side][glyphR > nodeR ? "outward" : "inward"] += 1;
+    }
+    return out;
+  });
+
+  expect(result.left.outward + result.left.inward, "no glyphs sampled on the left half")
+    .toBeGreaterThan(0);
+  expect(result.right.outward + result.right.inward, "no glyphs sampled on the right half")
+    .toBeGreaterThan(0);
+  expect(result.left.inward, `${result.left.inward} clade glyphs point inward on the left half`)
+    .toBe(0);
+  expect(result.right.inward, `${result.right.inward} clade glyphs point inward on the right half`)
+    .toBe(0);
+});
