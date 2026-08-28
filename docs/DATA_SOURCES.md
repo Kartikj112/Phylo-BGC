@@ -92,6 +92,35 @@ of this repo.
     `antismash/common/secmet/features/region/structures.py`. This is the
     join key to BiG-SCAPE output (see below).
 
+## NCBI Taxonomy
+
+- **Used for:** eukaryote lineages. GTDB is prokaryote-only, so MIBiG's fungi
+  and plants (*Aspergillus*, *Penicillium*, *Fusarium*, *Arabidopsis* —
+  roughly a fifth of the characterized clusters) have no GTDB representation
+  at all and arrive as bare species with nothing above them. Every one
+  already carries an `ncbi_taxid` from MIBiG, so placement is a direct
+  lookup, not a name match.
+- **Data license:** public domain (a US Government work). NCBI requests
+  citation but imposes no restriction on use or redistribution.
+- **Version pinning:** `taxdump.tar.gz` is a rolling file with no version
+  number, so `bgcscape ingest ncbi-taxonomy --version` records the download
+  date and that string lands on the `Source` row and in exported figures.
+- **Files needed:** `nodes.dmp`, `names.dmp`, `merged.dmp` (the last one
+  matters: NCBI retires taxids by merging them, and MIBiG entries can predate
+  a merge).
+- **Ranks kept:** the canonical Linnaean set only — domain, kingdom, phylum,
+  class, order, family, genus, species. Measured across the 271 organisms
+  this actually places, `clade` alone appears 958 times and `no rank` 70;
+  keeping them would triple the depth of every lineage without adding a rank
+  a biologist would cite. Organisms NCBI ranks below species (62 are `strain`,
+  e.g. *Aspergillus nidulans* FGSC A4) hang under their species.
+- **NOT merged with GTDB.** The two are different methodologies that
+  disagree, so the interface serves them as separate views — the "Tree" tab
+  is GTDB, "Eukaryotes" is NCBI, and the header names whichever is on screen.
+  A merged tree would be a hybrid a reader could not pick apart.
+- **URL:** https://www.ncbi.nlm.nih.gov/taxonomy · dumps at
+  https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/
+
 ## NCBI / GenBank
 
 - Public sequence data; standard NCBI usage terms apply (no login required

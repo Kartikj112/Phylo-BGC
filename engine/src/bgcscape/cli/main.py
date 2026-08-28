@@ -84,6 +84,14 @@ SOURCE_METADATA: dict[str, dict[str, str]] = {
         "license": "AGPL-3.0 (tool); family assignments stored as derived output",
         "citation": "Navarro-Munoz JC et al. A computational framework for systematic exploration of biosynthetic diversity.",
     },
+    "NCBI Taxonomy": {
+        "url": "https://www.ncbi.nlm.nih.gov/taxonomy",
+        "license": "Public domain (US Government work); citation requested",
+        "citation": (
+            "Schoch CL et al. NCBI Taxonomy: a comprehensive update on curation, "
+            "resources and tools. Database (Oxford)."
+        ),
+    },
     "MIBiG shared compound": {
         "url": "https://mibig.secondarymetabolites.org/",
         "license": "Derived from MIBiG compound annotations (open access)",
@@ -363,6 +371,67 @@ def link_mibig_cmd(
         )
         for example in report.missing_examples:
             typer.echo(f"    {example}")
+
+
+@ingest_app.command("ncbi-taxonomy")
+def ingest_ncbi_taxonomy_cmd(
+    taxdump: Path = typer.Argument(
+        ...,
+        help="Directory holding NCBI's nodes.dmp / names.dmp / merged.dmp "
+        "(extract taxdump.tar.gz).",
+    ),
+    version: str = typer.Option(
+        ..., help="Dump version to record on the Source row, e.g. the download date (2026-08-28)."
+    ),
+    eukaryotes_only: bool = typer.Option(
+        True,
+        help="Only place organisms under Eukaryota. GTDB already covers prokaryotes, and "
+        "mixing the two taxonomies on one backbone would hide a real methodological "
+        "disagreement.",
+    ),
+) -> None:
+    """Give eukaryotes a lineage from NCBI Taxonomy.
+
+    GTDB is prokaryote-only, so MIBiG's fungi and plants arrive as bare
+    species with nothing above them. Every one already carries an
+    `ncbi_taxid`, so this is a direct lookup rather than a name match.
+
+    The result is a SEPARATE Eukaryota tree, not a graft onto the GTDB
+    backbone: the two taxonomies use different methodologies and disagree,
+    so the interface serves them as distinct views rather than silently
+    interleaving them.
+    """
+    from bgcscape.ingest.ncbi_taxonomy import ingest_ncbi_lineages
+
+    if not (taxdump / "nodes.dmp").exists():
+        raise typer.BadParameter(f"nodes.dmp not found in {taxdump}")
+
+    with session_scope() as session:
+        source = _get_or_create_source(
+            session,
+            name="NCBI Taxonomy",
+            source_type=SourceType.REFERENCE_DATABASE,
+            version=version,
+        )
+        report = ingest_ncbi_lineages(
+            session, source, taxdump, eukaryotes_only=eukaryotes_only
+        )
+
+    typer.echo(
+        f"Attached {report.species_attached} organism(s) to an NCBI lineage; "
+        f"created {report.taxa_created} lineage node(s), reused {report.taxa_reused}."
+    )
+    if report.strains_under_species:
+        typer.echo(
+            f"  {report.strains_under_species} strain/subspecies-level organism(s) placed "
+            "under their species."
+        )
+    if report.skipped_non_eukaryote:
+        typer.echo(f"  {report.skipped_non_eukaryote} non-eukaryote(s) left on the GTDB tree.")
+    if report.unresolved:
+        typer.echo(f"  {report.unresolved} taxid(s) could not be resolved in this dump.")
+    for example in report.examples:
+        typer.echo(f"    {example}")
 
 
 @app.command("graft-taxonomy")

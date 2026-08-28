@@ -142,7 +142,24 @@ python scripts/build_gtdb_subset.py     --gtdb    ../../../bac120_metadata.tsv.g
 
 # 2. Build the database (schema via Alembic, then every ingest step).
 python scripts/build_bundled_db.py     --mibig ../../../data/mibig_json_4.0/mibig_json_4.0     --out   gtdb_mibig_bundled.db
+
+# 3. Eukaryotes. GTDB is prokaryote-only, so MIBiG's fungi and plants need
+#    NCBI Taxonomy. Download taxdump.tar.gz from
+#    https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/ and extract at least
+#    nodes.dmp, names.dmp and merged.dmp.
+BGCSCAPE_DATABASE_URL=sqlite+pysqlite:///./gtdb_mibig_bundled.db \
+  bgcscape ingest ncbi-taxonomy ../../../data/taxdump --version 2026-08-28
 ```
+
+Step 3 is separate from `build_bundled_db.py` because it needs a 78 MB
+download the build script cannot fetch for you. It takes unplaced clusters
+from **491 to 25** — what remains are metagenomes, plasmids and
+"uncultured X", which no taxonomy can place.
+
+The result is served as its own view (the **Eukaryotes** tab), NOT grafted
+onto the GTDB backbone: the two taxonomies use different methodologies and
+disagree, so a merged tree would be a hybrid a reader could not pick apart.
+The header names whichever taxonomy is on screen.
 
 The build is a script rather than a list of commands here for a reason: when
 it was prose, the prose drifted. The documented sequence omitted

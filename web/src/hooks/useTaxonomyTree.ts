@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { fetchTaxonomyTree } from "@/lib/api-client";
+import { fetchTaxonomyTree, type TreeScope } from "@/lib/api-client";
 import type { TaxonTreeNode } from "@/lib/api-types";
 
 interface UseTaxonomyTreeResult {
@@ -10,7 +10,7 @@ interface UseTaxonomyTreeResult {
   error: Error | null;
 }
 
-export function useTaxonomyTree(): UseTaxonomyTreeResult {
+export function useTaxonomyTree(scope: TreeScope = "all"): UseTaxonomyTreeResult {
   const [tree, setTree] = useState<TaxonTreeNode | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
@@ -19,7 +19,7 @@ export function useTaxonomyTree(): UseTaxonomyTreeResult {
     let cancelled = false;
     setLoading(true);
 
-    fetchTaxonomyTree()
+    fetchTaxonomyTree(scope)
       .then((data) => {
         if (cancelled) return;
         setTree(data);
@@ -36,7 +36,7 @@ export function useTaxonomyTree(): UseTaxonomyTreeResult {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [scope]);
 
   return { tree, loading, error };
 }

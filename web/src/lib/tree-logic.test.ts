@@ -4,6 +4,7 @@ import {
   MIN_BRANCH_WIDTH,
   MIN_LABEL_ARC_PX,
   RANK_ABBREVIATIONS,
+  RANK_DEPTH_ORDER,
   computeRadialTreeLayout,
   hasRoomForLabel,
   isAnchorRank,
@@ -470,12 +471,25 @@ describe("branch weighting", () => {
 });
 
 describe("rank badges", () => {
-  it("uses GTDB's own rank letters — domain, not kingdom", () => {
+  it("uses GTDB's own rank letters, and D is its top rank", () => {
     expect(rankAbbreviation("domain")).toBe("D");
     expect(rankAbbreviation("phylum")).toBe("P");
     expect(rankAbbreviation("species")).toBe("S");
-    // There is no kingdom rank in GTDB, so nothing should map to K.
-    expect(Object.values(RANK_ABBREVIATIONS)).not.toContain("K");
+  });
+
+  it("has a K badge for eukaryotes, which GTDB alone would never need", () => {
+    // This used to assert nothing mapped to K — true while GTDB was the only
+    // taxonomy, since its top rank is domain. NCBI ranks eukaryotes with a
+    // kingdom (Eukaryota -> Fungi -> Ascomycota), so the badge now exists and
+    // appears only in the eukaryote tree.
+    expect(rankAbbreviation("kingdom")).toBe("K");
+    expect(RANK_DEPTH_ORDER.indexOf("kingdom")).toBe(
+      RANK_DEPTH_ORDER.indexOf("domain") + 1,
+    );
+    // ...and it sits above phylum, or "Show down to" would order wrongly.
+    expect(RANK_DEPTH_ORDER.indexOf("kingdom")).toBeLessThan(
+      RANK_DEPTH_ORDER.indexOf("phylum"),
+    );
   });
 
   it("returns null for the synthetic root, which has no rank", () => {

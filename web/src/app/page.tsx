@@ -46,7 +46,15 @@ import {
 } from "@/lib/tree-logic";
 
 export default function HomePage() {
-  const { tree, loading, error } = useTaxonomyTree();
+  const [view, setView] = useState<"tree" | "eukaryotes" | "flow" | "heatmap">("tree");
+  // Two taxonomies, two views. GTDB (genome-based) and NCBI (literature-based)
+  // are different methodologies that disagree, so the eukaryotes GTDB cannot
+  // represent get their own tree rather than being grafted onto the bacterial
+  // backbone — a merged tree would be a hybrid a reader could not pick apart.
+  // Both use the same canvas and the same controls.
+  const isTreeView = view === "tree" || view === "eukaryotes";
+  const treeScope = view === "eukaryotes" ? "eukaryote" : "prokaryote";
+  const { tree, loading, error } = useTaxonomyTree(treeScope);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [activeClasses, setActiveClasses] = useState<Set<string>>(new Set(CLASS_ORDER));
   const [query, setQuery] = useState("");
@@ -59,7 +67,6 @@ export default function HomePage() {
   // question the tool exists to answer. Horizontal is better for reading
   // exact lineages and stays one click away.
   const [orientation, setOrientation] = useState<TreeOrientation>("radial");
-  const [view, setView] = useState<"tree" | "flow" | "heatmap">("tree");
   const [activeLevel, setActiveLevel] = useState<CollapseLevel | null>(null);
   // Defaults to on: a real GTDB ingest is mostly genomes antiSMASH has
   // never been run on, and showing them buries the signal.
@@ -158,6 +165,21 @@ export default function HomePage() {
     () => (selection?.kind === "bgc" ? (bgcFamIndex.get(selection.id) ?? []) : []),
     [selection, bgcFamIndex],
   );
+
+  // Switching taxonomy loads a different tree, so view state keyed to the old
+  // one has to go: collapse keys are node ids that do not exist in the other
+  // tree, and the initial-collapse guard must re-arm or the new tree would
+  // render fully expanded.
+  useEffect(() => {
+    initialCollapseApplied.current = false;
+    setCollapsed(new Set());
+    setActiveLevel(null);
+    setFocusKey(null);
+    setSelection(null);
+    setSelectedFamilyId(null);
+    setComparisonTaxonIds([]);
+    setNodeOffsets(new Map());
+  }, [treeScope]);
 
   // Open on a readable summary, not on every leaf at once.
   //
@@ -331,11 +353,20 @@ export default function HomePage() {
     <div className="flex h-screen w-full flex-col bg-paper">
       <Header query={query} onQueryChange={setQuery} genomeCount={genomeCount}
         totalGenomes={pruned?.totalGenomes ?? 0}
-        matchCount={matchCount}>
+        matchCount={matchCount}
+        taxonomyLabel={view === "eukaryotes" ? "NCBI Taxonomy" : "GTDB"}>
         <div className="flex flex-shrink-0 overflow-hidden rounded border border-line">
-          {([["tree", "Tree"], ["flow", "Flows"], ["heatmap", "Matrix"]] as const).map(([id, label]) => (
+          {(
+            [
+              ["tree", "Tree", "Prokaryotes on the GTDB backbone"],
+              ["eukaryotes", "Eukaryotes", "Fungi and plants, ranked by NCBI Taxonomy — GTDB is prokaryote-only and cannot represent them"],
+              ["flow", "Flows", "Phylum to genus to BGC class"],
+              ["heatmap", "Matrix", "Clade by BGC class"],
+            ] as const
+          ).map(([id, label, hint]) => (
             <button
               key={id}
+              title={hint}
               onClick={() => setView(id)}
               className={`px-2.5 py-1 text-xs ${
                 view === id ? "bg-signal-wash text-signal" : "text-ink-muted hover:text-ink"
@@ -346,7 +377,7 @@ export default function HomePage() {
           ))}
         </div>
 
-        {view === "tree" && (
+        {isTreeView && (
         <div className="flex flex-shrink-0 overflow-hidden rounded border border-line">
           {(["horizontal", "radial"] as const).map((mode) => (
             <button
@@ -366,7 +397,7 @@ export default function HomePage() {
         </div>
         )}
 
-        {view === "tree" && (
+        {isTreeView && (
           <button
             onClick={() => setAlignedGlyphs((v) => !v)}
             title={
@@ -382,7 +413,7 @@ export default function HomePage() {
           </button>
         )}
 
-        {view === "tree" && (
+        {isTreeView && (
           <button
             onClick={() => setShowRegions((v) => !v)}
             title={
@@ -398,7 +429,7 @@ export default function HomePage() {
           </button>
         )}
 
-        {view === "tree" && (
+        {isTreeView && (
           <button
             onClick={autoArrange}
             disabled={nodeOffsets.size === 0}
@@ -434,7 +465,7 @@ export default function HomePage() {
         totalGenomes={pruned?.totalGenomes ?? 0}
       />
 
-      {view === "tree" && selectedFamilyId && familyDist && (
+      {isTreeView && selectedFamilyId && familyDist && (
         <DistributionSummaryBar
           family={selectedFamily}
           distribution={familyDist}
@@ -446,7 +477,7 @@ export default function HomePage() {
         />
       )}
 
-      {view === "tree" && focused && (
+      {isTreeView && focused && (
         <Breadcrumbs path={focused.path} focusLost={focused.focusLost} onNavigate={focusNode} />
       )}
 
@@ -508,32 +539,32 @@ export default function HomePage() {
           />
         </div>
 
-        <div className={`relative flex-1 p-6 ${view === "tree" ? "overflow-hidden" : "overflow-auto"}`}>
+        <div className={`relative flex-1 p-6 ${isTreeView ? "overflow-hidden" : "overflow-auto"}`}>
           {/* Bottom-right, out of the tree's way. It is context for the tree,
               not a peer of it, so it sits in the corner the eye reaches last
               and never crosses the centre where the radial layout puts its
               densest structure. Hidden below lg, where the tree needs the
               whole viewport more than the breakdown does. */}
-          {view === "tree" && root && (
+          {isTreeView && root && (
             <div className="pointer-events-none absolute bottom-4 right-4 z-10 hidden lg:block">
               <BgcTypeDonut />
             </div>
           )}
           {view === "flow" && <SankeyView />}
           {view === "heatmap" && <HeatmapView />}
-          {view === "tree" && loading && (
+          {isTreeView && loading && (
             <div className="flex h-full items-center justify-center text-sm text-ink-muted">
               Loading taxonomy tree…
             </div>
           )}
-          {view === "tree" && error && (
+          {isTreeView && error && (
             <div className="max-w-md text-sm text-red-700">
               Couldn&apos;t reach the API ({error.message}). Is <code className="font-mono">uvicorn
               bgcscape.api.app:app</code> running, and does <code className="font-mono">NEXT_PUBLIC_API_URL</code>{" "}
               point at it? See <code className="font-mono">web/.env.local.example</code>.
             </div>
           )}
-          {view === "tree" && root && (
+          {isTreeView && root && (
             <TreeCanvas
               root={root}
               collapsed={collapsed}

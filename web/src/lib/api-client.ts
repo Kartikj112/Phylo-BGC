@@ -48,8 +48,16 @@ async function getJson<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export function fetchTaxonomyTree(): Promise<TaxonTreeNode> {
-  return getJson<TaxonTreeNode>("/api/v1/taxonomy-tree");
+/** Which taxonomy to draw.
+ *
+ * The corpus holds two — GTDB for prokaryotes, NCBI for the fungi and plants
+ * GTDB cannot represent — and they are served as separate views rather than
+ * merged, because the two disagree and a hybrid tree could not be picked
+ * apart by a reader. */
+export type TreeScope = "all" | "prokaryote" | "eukaryote";
+
+export function fetchTaxonomyTree(scope: TreeScope = "all"): Promise<TaxonTreeNode> {
+  return getJson<TaxonTreeNode>(`/api/v1/taxonomy-tree?scope=${scope}`);
 }
 
 /** Both BGC-class vocabularies, plus the note explaining how they differ.

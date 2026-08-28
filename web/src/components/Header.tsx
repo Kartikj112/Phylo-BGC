@@ -8,10 +8,22 @@ interface HeaderProps {
   genomeCount: number;
   totalGenomes?: number;
   matchCount?: number | null;
+  /** Which taxonomy the tree on screen came from. Not decoration: the
+   * eukaryote view is NCBI, the prokaryote view is GTDB, and labelling both
+   * "GTDB" would misattribute half the corpus. */
+  taxonomyLabel?: string;
   children?: React.ReactNode;
 }
 
-export function Header({ query, onQueryChange, genomeCount, totalGenomes, matchCount, children }: HeaderProps) {
+export function Header({
+  query,
+  onQueryChange,
+  genomeCount,
+  totalGenomes,
+  matchCount,
+  taxonomyLabel = "GTDB",
+  children,
+}: HeaderProps) {
   return (
     <div className="flex flex-shrink-0 items-center gap-4 border-b border-line bg-card px-4 py-3">
       <div className="flex flex-shrink-0 items-center gap-2">
@@ -52,7 +64,7 @@ export function Header({ query, onQueryChange, genomeCount, totalGenomes, matchC
           {totalGenomes && totalGenomes !== genomeCount
             ? `${genomeCount} of ${totalGenomes} genomes`
             : `${genomeCount} genome${genomeCount === 1 ? "" : "s"}`}{" "}
-          · taxonomic tree (GTDB)
+          · taxonomic tree ({taxonomyLabel})
         </span>
       </span>
     </div>

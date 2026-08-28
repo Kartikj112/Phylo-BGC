@@ -28,7 +28,16 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get Taxonomy Tree */
+        /**
+         * Get Taxonomy Tree
+         * @description The aggregated taxonomy tree.
+         *
+         *     `scope` selects which taxonomy: `prokaryote` is the GTDB backbone,
+         *     `eukaryote` is the NCBI lineage for the fungi and plants GTDB cannot
+         *     represent, `all` is both. They are served separately because GTDB and
+         *     NCBI are different methodologies that disagree — a merged tree would be a
+         *     hybrid the reader could not pick apart. See tree_builder.TreeScope.
+         */
         get: operations["get_taxonomy_tree_api_v1_taxonomy_tree_get"];
         put?: never;
         post?: never;
@@ -1015,7 +1024,7 @@ export interface components {
          * TaxonRank
          * @enum {string}
          */
-        TaxonRank: "domain" | "phylum" | "class" | "order" | "family" | "genus" | "species";
+        TaxonRank: "domain" | "kingdom" | "phylum" | "class" | "order" | "family" | "genus" | "species";
         /**
          * TaxonTreeNode
          * @description A node in the rendered tree. The API always returns a single root
@@ -1108,7 +1117,9 @@ export interface operations {
     };
     get_taxonomy_tree_api_v1_taxonomy_tree_get: {
         parameters: {
-            query?: never;
+            query?: {
+                scope?: "all" | "prokaryote" | "eukaryote";
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -1122,6 +1133,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TaxonTreeNode"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

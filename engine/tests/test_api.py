@@ -613,7 +613,16 @@ def test_heatmap_carries_the_absence_caveat(api_client):
 
 
 def test_heatmap_rejects_an_unknown_rank(api_client):
-    assert api_client.get("/api/v1/heatmap", params={"rank": "kingdom"}).status_code == 422
+    # "kingdom" used to be the example here, but it became a REAL rank when
+    # NCBI eukaryote lineages were added (GTDB never emits one). Pick a rank
+    # that is genuinely not in the vocabulary.
+    assert api_client.get("/api/v1/heatmap", params={"rank": "subphylum"}).status_code == 422
+    assert api_client.get("/api/v1/heatmap", params={"rank": "clade"}).status_code == 422
+
+
+def test_heatmap_accepts_the_kingdom_rank(api_client):
+    """Eukaryote lineages rank fungi by kingdom, so the heatmap must offer it."""
+    assert api_client.get("/api/v1/heatmap", params={"rank": "kingdom"}).status_code == 200
 
 
 # --- lineage, genome metadata, BGC type counts (Chunk A) -------------------------

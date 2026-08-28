@@ -474,12 +474,15 @@ export function dominantBgcClass(node: DisplayNode): string | null {
 
 /**
  * Rank abbreviations, matching GTDB's own taxonomy-string prefixes
- * (`d__Bacteria;p__...;c__...`). Note there is no "kingdom" here: GTDB's
- * top rank is domain, so the badge is D, not K. Using K would be wrong
- * for the data this tool actually renders.
+ * (`d__Bacteria;p__...;c__...`).
+ *
+ * GTDB's top rank is domain and it never emits a kingdom, so a bacterial
+ * tree simply never shows K. NCBI ranks eukaryotes with one
+ * (Eukaryota -> Fungi -> Ascomycota), so the eukaryote view does.
  */
 export const RANK_ABBREVIATIONS: Record<string, string> = {
   domain: "D",
+  kingdom: "K",
   phylum: "P",
   class: "C",
   order: "O",
@@ -605,6 +608,11 @@ export function isAnchorRank(rank: string | null | undefined): boolean {
  */
 export const RANK_DEPTH_ORDER = [
   "domain",
+  // Only the NCBI eukaryote tree uses this: GTDB is prokaryote-only and its
+  // top rank is domain. It still has to appear in the ORDER, or a kingdom
+  // node scores rankDepth -1, is treated like an unrankable orphan, and can
+  // never be collapsed by "Show down to".
+  "kingdom",
   "phylum",
   "class",
   "order",
@@ -617,6 +625,9 @@ export type CollapseLevel = (typeof RANK_DEPTH_ORDER)[number] | "genome";
 
 export const COLLAPSE_LEVELS: { id: CollapseLevel; label: string; badge: string }[] = [
   { id: "domain", label: "Domain", badge: "D" },
+  // Present only in the eukaryote tree; `ranksPresent` disables it for the
+  // bacterial one rather than offering a level that would do nothing.
+  { id: "kingdom", label: "Kingdom", badge: "K" },
   { id: "phylum", label: "Phylum", badge: "P" },
   { id: "class", label: "Class", badge: "C" },
   { id: "order", label: "Order", badge: "O" },

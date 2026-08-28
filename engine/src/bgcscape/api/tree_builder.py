@@ -21,11 +21,13 @@ from __future__ import annotations
 
 import uuid
 from collections import defaultdict
+from typing import Literal
 
 from sqlalchemy.orm import Session
 
 from bgcscape.api.schemas import BGCSummary, GenomeSummary, TaxonTreeNode
 from bgcscape.models import BGC, BGCCompoundLink, BGCFamilyMembership, Compound, Genome, Taxon
+from bgcscape.models.taxonomy import TaxonRank
 
 
 def _load_genome_summaries(session: Session) -> dict[uuid.UUID, list[GenomeSummary]]:
@@ -112,7 +114,20 @@ def _load_genome_summaries(session: Session) -> dict[uuid.UUID, list[GenomeSumma
     return by_taxon
 
 
-def build_taxonomy_tree(session: Session) -> TaxonTreeNode:
+#: Name of the eukaryote domain root, as NCBI writes it.
+EUKARYOTA = "Eukaryota"
+
+#: Which taxonomy a tree is scoped to.
+#:
+#: The corpus holds two: GTDB for prokaryotes and NCBI for eukaryotes. They
+#: are different methodologies that disagree, so the interface serves them as
+#: separate views rather than interleaving them into one hybrid tree a reader
+#: would have no way to pick apart. `all` exists because the API should be
+#: able to describe everything the database actually contains.
+TreeScope = Literal["all", "prokaryote", "eukaryote"]
+
+
+def build_taxonomy_tree(session: Session, scope: TreeScope = "all") -> TaxonTreeNode:
     taxa = session.query(Taxon.id, Taxon.parent_id, Taxon.name, Taxon.rank).all()
     genomes_by_taxon = _load_genome_summaries(session)
 
@@ -121,6 +136,19 @@ def build_taxonomy_tree(session: Session) -> TaxonTreeNode:
         children_by_parent[taxon.parent_id].append(taxon)
     for siblings in children_by_parent.values():
         siblings.sort(key=lambda t: t.name)
+
+    # Scoping happens at the top level only: everything below a domain root
+    # belongs to that domain's taxonomy, so filtering the roots partitions the
+    # whole tree. Organisms with no lineage at all (metagenomes, plasmids,
+    # "uncultured X") are parent-less non-domain nodes; they belong to neither
+    # taxonomy and stay with the prokaryote view, which is where the interface
+    # already groups them as "Unplaced organisms".
+    if scope != "all":
+        roots = children_by_parent.get(None, [])
+        is_euk = lambda t: t.name == EUKARYOTA and t.rank == TaxonRank.DOMAIN  # noqa: E731
+        children_by_parent[None] = [
+            t for t in roots if is_euk(t) == (scope == "eukaryote")
+        ]
 
     def build_node(taxon) -> TaxonTreeNode:
         direct_genomes = genomes_by_taxon.get(taxon.id, [])

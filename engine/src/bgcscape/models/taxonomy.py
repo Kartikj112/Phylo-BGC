@@ -13,6 +13,12 @@ from bgcscape.models.base import Base, ProvenanceMixin, TimestampMixin
 
 class TaxonRank(str, enum.Enum):
     DOMAIN = "domain"
+    # NCBI ranks eukaryotes with a kingdom between domain and phylum
+    # (Eukaryota -> Fungi -> Ascomycota); GTDB, being prokaryote-only, has no
+    # use for it and never emits one. Both vocabularies therefore coexist in
+    # this column, and a tree is scoped to one taxonomy at a time rather than
+    # interleaving them — see api/tree_builder.py's TreeScope.
+    KINGDOM = "kingdom"
     PHYLUM = "phylum"
     CLASS = "class"
     ORDER = "order"

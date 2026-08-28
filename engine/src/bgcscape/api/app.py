@@ -63,6 +63,7 @@ from bgcscape.api.schemas import (
     TaxonTreeNode,
 )
 from bgcscape.api.tree_builder import (
+    TreeScope,
     build_taxonomy_tree,
     component_classes,
     load_classified_bgc_rows,
@@ -179,8 +180,19 @@ def health() -> dict[str, str]:
 
 
 @app.get("/api/v1/taxonomy-tree", response_model=TaxonTreeNode)
-def get_taxonomy_tree(session: Session = Depends(get_session)) -> TaxonTreeNode:
-    return build_taxonomy_tree(session)
+def get_taxonomy_tree(
+    scope: TreeScope = "all",
+    session: Session = Depends(get_session),
+) -> TaxonTreeNode:
+    """The aggregated taxonomy tree.
+
+    `scope` selects which taxonomy: `prokaryote` is the GTDB backbone,
+    `eukaryote` is the NCBI lineage for the fungi and plants GTDB cannot
+    represent, `all` is both. They are served separately because GTDB and
+    NCBI are different methodologies that disagree — a merged tree would be a
+    hybrid the reader could not pick apart. See tree_builder.TreeScope.
+    """
+    return build_taxonomy_tree(session, scope=scope)
 
 
 @app.get("/api/v1/tree", response_model=LazyTreeResponse)
