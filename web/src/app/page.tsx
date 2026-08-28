@@ -81,6 +81,11 @@ export default function HomePage() {
   // Hierarchy regions are on by default but dismissible: they are a reading
   // aid, and a reader preparing a figure may want the tree bare.
   const [showRegions, setShowRegions] = useState(true);
+  // Cluster glyphs on one aligned track (default) vs the original barcode
+  // hanging off each node. A toggle rather than a silent replacement: the
+  // inline form is still the better read when only a handful of tips are on
+  // screen, and it makes the two directly comparable.
+  const [alignedGlyphs, setAlignedGlyphs] = useState(true);
 
   function toggleComparisonTaxon(taxonId: string): void {
     setComparisonTaxonIds((prev) =>
@@ -363,6 +368,22 @@ export default function HomePage() {
 
         {view === "tree" && (
           <button
+            onClick={() => setAlignedGlyphs((v) => !v)}
+            title={
+              alignedGlyphs
+                ? "Cluster glyphs share one aligned track, so counts and classes line up across the whole tree. Click to hang them off each node instead."
+                : "Cluster glyphs hang off each node. Click to align them on a shared track so rows can be compared."
+            }
+            className={`flex-shrink-0 whitespace-nowrap rounded border border-line px-2 py-1 text-xs ${
+              alignedGlyphs ? "bg-signal-wash text-signal" : "text-ink-muted hover:text-ink"
+            }`}
+          >
+            Aligned
+          </button>
+        )}
+
+        {view === "tree" && (
+          <button
             onClick={() => setShowRegions((v) => !v)}
             title={
               showRegions
@@ -535,6 +556,7 @@ export default function HomePage() {
               nodeOffsets={nodeOffsets}
               onNodeDrag={nudgeNode}
               showRegions={showRegions}
+              alignedGlyphs={alignedGlyphs}
             />
           )}
         </div>

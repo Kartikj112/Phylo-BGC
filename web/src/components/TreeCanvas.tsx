@@ -62,6 +62,9 @@ interface TreeCanvasProps {
   onNodeDrag?: (key: string, dx: number, dy: number) => void;
   /** Draw the subtle taxonomic-nesting regions behind the tree. */
   showRegions?: boolean;
+  /** Put cluster glyphs on one aligned track instead of hanging them off
+   * each node. Off restores the original spaced barcode. */
+  alignedGlyphs?: boolean;
 }
 
 /** A node's drawn position, after any manual drag.
@@ -95,6 +98,8 @@ const TREE_WIDTH = 760;
  * clade rather than clipping it. */
 const REGION_PAD = 10;
 const REGION_ANGLE_PAD = 0.006;
+/** Floor on the zoom fade, so regions never vanish entirely. */
+const REGION_MIN_FADE = 0.18;
 /** Search-hit highlight. Deliberately the brightest thing on the canvas —
  * it marks the one cluster the reader asked for, and has to win against
  * the BGC-class palette underneath it. */
@@ -107,6 +112,15 @@ const SEARCH_ZOOM_MAX = 1.6;
 const H_MARGIN_LEFT = 210;
 const H_MARGIN_RIGHT = 300;
 const PRESENCE_GUTTER = 150;
+/** Gap between the deepest tip and the aligned glyph track. Enough that a
+ * long taxon label clears the branch tips before the track begins. */
+const GLYPH_TRACK_GUTTER = 26;
+/** Per-cluster segment width in the aligned bar, and the cap beyond which
+ * segments compress rather than the bar growing without bound (one genome in
+ * the bundled corpus carries 53 clusters; unbounded, that is a 583px run
+ * that sweeps through its neighbours). */
+const GLYPH_SEGMENT_WIDTH = 7;
+const GLYPH_MAX_WIDTH = 120;
 
 /** Log-scale step below which a zoom change cannot alter label visibility.
  * ~1.5% — far finer than the spacing at which `hasRoomForLabel` flips, so
@@ -136,6 +150,7 @@ export function TreeCanvas({
   nodeOffsets,
   onNodeDrag,
   showRegions = true,
+  alignedGlyphs = true,
 }: TreeCanvasProps) {
   // Searching forces open the path to every match — a hit inside a
   // collapsed clade would otherwise never render, which made search look
@@ -489,6 +504,29 @@ export function TreeCanvas({
     () => (isRadial ? [] : horizontal.nodes.filter((n) => n.data._kind === "genome")),
     [isRadial, horizontal.nodes],
   );
+
+  /**
+   * Where the aligned annotation track sits — one shared baseline for every
+   * rendered tip, in the layout's depth units (x in horizontal, radius in
+   * radial).
+   *
+   * Glyphs used to hang a fixed 132px off each node, and nodes sit at
+   * different depths, so no two rows shared a baseline: comparing what two
+   * clades carry meant comparing bars that started in different places. The
+   * standard phylogenetics idiom (iTOL, GraPhlAn, anvi'o) puts leaf
+   * annotations in an aligned track joined by leader lines, and this project
+   * already had the pattern — `trackX` does exactly this for the
+   * family-presence column, just in one orientation for one column. This
+   * generalises it.
+   *
+   * Measured over rendered TIPS (a collapsed clade is visually a leaf), not
+   * genomes, so the ring stays flush when clades are collapsed.
+   */
+  const glyphTrackAt = useMemo(() => {
+    const tips = nodes.filter((n) => !n.children || n.children.length === 0);
+    if (tips.length === 0) return 0;
+    return Math.max(...tips.map((n) => n.y)) + GLYPH_TRACK_GUTTER;
+  }, [nodes]);
   /**
    * Subtle background regions showing the taxonomic nesting.
    *
@@ -553,6 +591,21 @@ export function TreeCanvas({
     return out.sort((p, q) => p.opacity - q.opacity);
   }, [nodes, isRadial, nodeOffsets]);
 
+  /**
+   * Regions recede as you zoom in.
+   *
+   * Their opacity was tuned at the default framing, but they scale with
+   * everything else — zoomed into a single clade a region becomes a slab
+   * covering the viewport and washes the tree out. Their job is to show
+   * nesting when you can see the whole shape; once you are inside one clade
+   * the nesting is no longer the question, so they step back rather than
+   * dominate.
+   */
+  const regionFade = useMemo(
+    () => Math.max(REGION_MIN_FADE, Math.min(1, Math.pow(1 / Math.max(scale, 0.001), 0.85))),
+    [scale],
+  );
+
   const regionArc = useMemo(
     () => d3.arc<{ a0: number; a1: number; r0: number; r1: number }>()
       .startAngle((d) => d.a0)
@@ -603,7 +656,7 @@ export function TreeCanvas({
                       key={r.key}
                       d={regionArc({ a0: r.a0, a1: r.a1, r0: r.r0, r1: r.r1 }) ?? undefined}
                       fill={r.fill}
-                      fillOpacity={r.opacity}
+                      fillOpacity={r.opacity * regionFade}
                     />
                   ) : (
                     <rect
@@ -614,7 +667,7 @@ export function TreeCanvas({
                       height={Math.max(0, r.x1 - r.x0)}
                       rx={6}
                       fill={r.fill}
-                      fillOpacity={r.opacity}
+                      fillOpacity={r.opacity * regionFade}
                     />
                   ),
                 )}
@@ -743,6 +796,7 @@ export function TreeCanvas({
                       isEnclosing={isEnclosing}
                       inComparison={node.id !== null && comparisonTaxonIds.includes(node.id)}
                       maxGenomeCount={maxGenomeCount}
+                      trackOffset={alignedGlyphs ? Math.max(0, glyphTrackAt - pos.y) : 0}
                       onToggleCollapse={() => onToggleCollapse(key)}
                       onFocus={() => onFocusNode(key)}
                       onToggleComparison={() =>
@@ -758,6 +812,8 @@ export function TreeCanvas({
                       showLabel={!isRadial || hasRoomForLabel(n.y, radial.angularStep, scale)}
                       matched={isMatch}
                       searchQuery={searchQuery}
+                      aligned={alignedGlyphs}
+                      trackOffset={Math.max(0, glyphTrackAt - pos.y)}
                       isEnclosing={isEnclosing}
                       dimmedBySelection={selectedId !== null && selectedId !== node.id}
                       selectedFamilyId={selectedFamilyId}
@@ -803,6 +859,7 @@ function TaxonNode({
   isEnclosing,
   inComparison,
   maxGenomeCount,
+  trackOffset,
   onToggleCollapse,
   onToggleComparison,
   onFocus,
@@ -820,6 +877,7 @@ function TaxonNode({
   onToggleCollapse: () => void;
   onToggleComparison: () => void;
   onFocus: () => void;
+  trackOffset: number;
 }) {
   const isHighRank = node.rank === "domain" || node.rank === "phylum";
   const badge = rankAbbreviation(node.rank);
@@ -840,6 +898,7 @@ function TaxonNode({
           node={node}
           maxGenomeCount={maxGenomeCount}
           flip={isRadial && isLeftHalf(angle)}
+          trackOffset={trackOffset}
           onToggleCollapse={onToggleCollapse}
         />
       ) : (
@@ -932,17 +991,24 @@ function CladeGlyph({
   node,
   maxGenomeCount,
   flip,
+  trackOffset,
   onToggleCollapse,
 }: {
   node: Extract<DisplayNode, { _kind: "taxon" }>;
   maxGenomeCount: number;
   flip: boolean;
+  /** Distance out to the shared aligned track. A collapsed clade is visually
+   * a tip, so it shares the genomes' baseline — otherwise expanding one
+   * clade would shift the whole comparison. 0 keeps the old hang-off-node
+   * position. */
+  trackOffset: number;
   onToggleCollapse: () => void;
 }) {
   const summary = cladeSummary(node);
   const width = glyphWidth(summary.genomeCount, maxGenomeCount);
   const height = 13;
-  const x = flip ? -width - 6 : 6;
+  const start = trackOffset > 0 ? trackOffset : 6;
+  const x = flip ? -width - start : start;
 
   let offset = 0;
   return (
@@ -1039,6 +1105,8 @@ function GenomeNode({
   isEnclosing,
   dimmedBySelection,
   selectedFamilyId,
+  aligned,
+  trackOffset,
   onSelectGenome,
   onSelectBgc,
 }: {
@@ -1053,11 +1121,27 @@ function GenomeNode({
   isEnclosing: boolean;
   dimmedBySelection: boolean;
   selectedFamilyId: string | null;
+  /** Draw the clusters as one contiguous bar on the shared aligned track
+   * rather than a spaced barcode hanging off this node. */
+  aligned: boolean;
+  /** Distance from this node out to the aligned track, in layout units. */
+  trackOffset: number;
   onSelectGenome: () => void;
   onSelectBgc: (id: string) => void;
 }) {
   const flip = isRadial && isLeftHalf(angle);
   const tier = bgcSizeTier(node.bgcs.length);
+  // Length still encodes count, but stops growing past the cap: beyond it the
+  // segments compress instead, so one very rich genome cannot sweep across
+  // its neighbours. Count is redundantly encoded by the node's radius
+  // (bgcSizeTier), so nothing is lost when the bar saturates.
+  const segWidth = Math.min(
+    GLYPH_SEGMENT_WIDTH,
+    GLYPH_MAX_WIDTH / Math.max(node.bgcs.length, 1),
+  );
+  const barEnd = aligned
+    ? trackOffset + node.bgcs.length * segWidth
+    : (showLabel ? BARCODE_START_X : 12) + node.bgcs.length * BARCODE_TICK_WIDTH;
   const dominant = dominantBgcClass(node);
   const dominantColor = dominant ? (BGC_CLASS_COLORS[dominant] ?? COLORS.inkMuted) : COLORS.inkMuted;
   return (
@@ -1102,9 +1186,32 @@ function GenomeNode({
           outside it, which left the barcode unmirrored relative to its own
           label and put the MAG tag — which had a rotate(180) but a positive
           x, so nothing cancelled — inside the circle. */}
+      {/* Leader line joining the tip to its row on the track, so a bar can
+          be traced back to the genome it belongs to. */}
+      {aligned && trackOffset > tier.radius + 2 && (
+        <line
+          x1={flip ? -(tier.radius + 2) : tier.radius + 2}
+          y1={0}
+          x2={flip ? -trackOffset : trackOffset}
+          y2={0}
+          stroke={COLORS.line}
+          strokeWidth={0.75}
+          strokeDasharray="2 3"
+        />
+      )}
       {node.bgcs.map((b, i) => {
         const colors = classColor(b.bgc_class, b.subtype);
-        const base = (showLabel ? BARCODE_START_X : 12) + i * BARCODE_TICK_WIDTH;
+        // Aligned mode: a contiguous bar on the shared track. Inline mode
+        // keeps the original spaced barcode hanging off the node.
+        //
+        // Contiguous matters beyond tidiness: a run of SPACED ticks reads as
+        // position along a contig, which is what a barcode means in a
+        // genomics tool. Tick i is only the i-th row the database returned —
+        // the order carries nothing. A solid bar says "this many, of these
+        // classes" and implies no coordinate.
+        const base = aligned
+          ? trackOffset + i * segWidth
+          : (showLabel ? BARCODE_START_X : 12) + i * BARCODE_TICK_WIDTH;
         // Mirror into the flipped frame: a rect at [v, v+w] must become
         // [-(v+w), -v] so rotate(180) lands it back outward.
         const bx = (offset: number, w: number) => (flip ? -(base + offset) - w : base + offset);
@@ -1126,9 +1233,9 @@ function GenomeNode({
                 counting bars to find which one. */}
             {isHit && (
               <rect
-                x={bx(-3, 13)}
+                x={bx(-3, segWidth + 6)}
                 y={-9}
-                width={13}
+                width={segWidth + 6}
                 height={18}
                 fill={SEARCH_HIT_FILL}
                 stroke={SEARCH_HIT_STROKE}
@@ -1138,9 +1245,9 @@ function GenomeNode({
             )}
             {inFamily && (
               <rect
-                x={bx(-2, 11)}
+                x={bx(-2, segWidth + 4)}
                 y={-7.5}
-                width={11}
+                width={segWidth + 4}
                 height={15}
                 fill="none"
                 stroke={COLORS.signal}
@@ -1149,14 +1256,21 @@ function GenomeNode({
               />
             )}
             {colors.length === 1 ? (
-              <rect x={bx(0, 7)} y={-5} width={7} height={10} fill={primary} rx={1} />
+              <rect
+                x={bx(0, segWidth)}
+                y={-5}
+                width={segWidth}
+                height={10}
+                fill={primary}
+                rx={aligned ? 0 : 1}
+              />
             ) : (
               <>
-                <rect x={bx(0, 3.5)} y={-5} width={3.5} height={10} fill={primary} />
+                <rect x={bx(0, segWidth / 2)} y={-5} width={segWidth / 2} height={10} fill={primary} />
                 <rect
-                  x={bx(3.5, 3.5)}
+                  x={bx(segWidth / 2, segWidth / 2)}
                   y={-5}
-                  width={3.5}
+                  width={segWidth / 2}
                   height={10}
                   fill={colors[1] ?? COLORS.inkFaint}
                 />
@@ -1168,9 +1282,7 @@ function GenomeNode({
       {node.is_mag && showLabel && (
         <text
           x={
-            flip
-              ? -((showLabel ? BARCODE_START_X : 12) + node.bgcs.length * BARCODE_TICK_WIDTH + 6)
-              : (showLabel ? BARCODE_START_X : 12) + node.bgcs.length * BARCODE_TICK_WIDTH + 6
+            flip ? -(barEnd + 6) : barEnd + 6
           }
           dy="0.32em"
           fontSize={9.5}

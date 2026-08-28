@@ -178,3 +178,65 @@ test("in radial view every label and BGC bar radiates outward", async ({ page })
   expect(result.right.inward, `${result.right.inward} clade glyphs point inward on the right half`)
     .toBe(0);
 });
+
+/** Spread of the tip glyphs' distance from the tree centre. Small spread ==
+ * they share a baseline; large spread == each hangs off its own node. */
+async function glyphRadiusSpread(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    const figure = document.querySelector("svg [data-figure-root='true']") as SVGGElement;
+    const svg = figure.ownerSVGElement!;
+    const origin = (el: SVGGraphicsElement) => {
+      const p = svg.createSVGPoint();
+      p.x = 0;
+      p.y = 0;
+      return p.matrixTransform(el.getScreenCTM()!);
+    };
+    const centre = origin(figure);
+    const radii: number[] = [];
+    for (const title of Array.from(document.querySelectorAll("g[data-node-key] title"))) {
+      const rect = (title.parentElement as unknown as SVGGElement).querySelector("rect");
+      if (!rect) continue;
+      const b = rect.getBoundingClientRect();
+      radii.push(Math.hypot(b.x + b.width / 2 - centre.x, b.y + b.height / 2 - centre.y));
+    }
+    if (radii.length < 5) return -1;
+    const mean = radii.reduce((a, b) => a + b, 0) / radii.length;
+    return Math.sqrt(radii.reduce((a, r) => a + (r - mean) ** 2, 0) / radii.length);
+  });
+}
+
+test("aligned glyphs share one baseline; turning it off does not", async ({ page }) => {
+  await ready(page);
+  await page.locator('button[title*="Collapse the tree to Family"]').click();
+  await page.waitForTimeout(1200);
+
+  const aligned = await glyphRadiusSpread(page);
+  expect(aligned, "not enough glyphs sampled").toBeGreaterThan(-1);
+
+  await page.getByRole("button", { name: "Aligned" }).click();
+  await page.waitForTimeout(1000);
+  const inline = await glyphRadiusSpread(page);
+
+  // Aligned puts every tip glyph on a shared track, so the spread collapses.
+  // Inline hangs each off its own node, which sit at many different depths.
+  expect(aligned).toBeLessThan(inline);
+  expect(aligned).toBeLessThan(20);
+});
+
+test("hierarchy regions recede as the view zooms in", async ({ page }) => {
+  await ready(page);
+  const first = page.locator("[data-hierarchy-regions] > *").first();
+  const atRest = Number(await first.getAttribute("fill-opacity"));
+
+  const box = await page.locator("svg [data-canvas-bg='true']").boundingBox();
+  if (!box) throw new Error("no canvas");
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  for (let i = 0; i < 6; i++) await page.mouse.wheel(0, -400);
+  await page.waitForTimeout(800);
+
+  // Tuned at the default framing, the regions scale with everything else and
+  // become slabs that wash out the tree once you are inside a single clade.
+  const zoomed = Number(await first.getAttribute("fill-opacity"));
+  expect(zoomed).toBeLessThan(atRest);
+  expect(zoomed).toBeGreaterThan(0);
+});
