@@ -10,6 +10,7 @@ publication-ready vector formats (SVG, PDF)."
   provenance caption, and converts to vector PDF.
 """
 from bgcscape.export.renderer import (
+    PdfRendererUnavailable,
     SvgRenderError,
     add_provenance_caption,
     embed_view_config,
@@ -33,6 +34,7 @@ __all__ = [
     "SourceRecord",
     "TreeViewState",
     "ViewConfig",
+    "PdfRendererUnavailable",
     "SvgRenderError",
     "add_provenance_caption",
     "embed_view_config",

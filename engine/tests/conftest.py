@@ -121,3 +121,33 @@ def bigscape_tool_source(session) -> Source:
     session.add(src)
     session.commit()
     return src
+
+
+def _pdf_renderer_available() -> bool:
+    """Whether this machine can actually render PDF.
+
+    The `export` extra's cairosvg needs the Cairo *system* library, which is
+    not present on every developer machine (notably Windows) even when the
+    Python package is installed. Tests that assert real PDF bytes can only
+    fail for an environmental reason without it, which made the whole suite
+    un-runnable off Docker. Skipping keeps the signal honest: they still run
+    everywhere Cairo exists — CI and the production image — which is where
+    the assertion actually matters.
+    """
+    try:
+        from bgcscape.export.renderer import PdfRendererUnavailable, render_pdf
+
+        render_pdf('<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>')
+    except PdfRendererUnavailable:
+        return False
+    except Exception:
+        # Any other failure is a real bug in the renderer, not a missing
+        # system library — let the test run and report it.
+        return True
+    return True
+
+
+requires_pdf_renderer = pytest.mark.skipif(
+    not _pdf_renderer_available(),
+    reason="Cairo system library not installed; PDF rendering unavailable here",
+)

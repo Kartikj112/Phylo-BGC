@@ -70,7 +70,17 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get Bgc Classes */
+        /**
+         * Get Bgc Classes
+         * @description Both BGC-class vocabularies — see `BGCClassVocabulary`.
+         *
+         *     This used to return a single flat list of stored classes, which
+         *     included `hybrid`. Every counting endpoint decomposes hybrids into
+         *     their components, so `hybrid` was advertised as a class that no count
+         *     would ever populate: a legend built from this endpoint carried a
+         *     permanently empty category. Returning both lists, and naming the
+         *     convention, is what makes the two answerable apart.
+         */
         get: operations["get_bgc_classes_api_v1_bgc_classes_get"];
         put?: never;
         post?: never;
@@ -319,7 +329,15 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Search */
+        /**
+         * Search
+         * @description Find taxa and genomes by name/accession.
+         *
+         *     Returns totals alongside the (truncated) hits: a bare list could not
+         *     distinguish the first 20 of 380 matches from all 20 that exist, and a
+         *     too-short query returned an empty list indistinguishable from a genuine
+         *     no-match. Both are now stated explicitly — see `SearchResponse`.
+         */
         get: operations["search_api_v1_search_get"];
         put?: never;
         post?: never;
@@ -347,6 +365,32 @@ export interface components {
          * @enum {string}
          */
         BGCClass: "nrps" | "pks" | "ripp" | "terpene" | "siderophore" | "saccharide" | "alkaloid" | "hybrid" | "other";
+        /**
+         * BGCClassVocabulary
+         * @description The two BGC-class vocabularies, and which endpoints use which.
+         *
+         *     These differ, and the difference is real rather than a bug to paper
+         *     over. `stored_classes` is what the `bgc.bgc_class` column actually
+         *     holds, including the literal `hybrid`. `component_classes` is what a
+         *     hybrid decomposes into (an `nrps+pks` cluster is NRPS machinery AND PKS
+         *     machinery), and is the vocabulary every counting and filtering surface
+         *     uses — the biologically meaningful reading, and the one the frontend's
+         *     filter rail, donut and clade comparison all share.
+         *
+         *     Consequence a consumer must know: counts over `component_classes` sum
+         *     to MORE than the number of clusters, because a hybrid is counted under
+         *     each component. `hybrid` never appears in those counts, so a legend
+         *     built from `stored_classes` has a category that is always empty. That
+         *     trap is why this endpoint states both lists instead of one.
+         */
+        BGCClassVocabulary: {
+            /** Stored Classes */
+            stored_classes: string[];
+            /** Component Classes */
+            component_classes: string[];
+            /** Counting Note */
+            counting_note: string;
+        };
         /** BGCDetail */
         BGCDetail: {
             /**
@@ -391,6 +435,14 @@ export interface components {
             id: string;
             /** Label */
             label: string;
+            kind: components["schemas"]["FamilyKind"];
+            /** Kind Note */
+            kind_note: string;
+            /**
+             * Is Generic Product
+             * @default false
+             */
+            is_generic_product: boolean;
             /** Clustering Method */
             clustering_method?: string | null;
             /** Clustering Cutoff */
@@ -446,6 +498,14 @@ export interface components {
             id: string;
             /** Label */
             label: string;
+            kind: components["schemas"]["FamilyKind"];
+            /** Kind Note */
+            kind_note: string;
+            /**
+             * Is Generic Product
+             * @default false
+             */
+            is_generic_product: boolean;
             /** Clustering Method */
             clustering_method?: string | null;
             /** Clustering Cutoff */
@@ -623,6 +683,34 @@ export interface components {
              */
             format: "svg" | "pdf";
         };
+        /**
+         * FamilyKind
+         * @description What kind of grouping a `BGCFamily` row represents.
+         *
+         *     SEQUENCE_FAMILY   A Gene Cluster Family in the BiG-SCAPE / BiG-SLiCE
+         *                       sense: BGCs grouped because their gene content and
+         *                       domain architecture are similar. Produced by a real
+         *                       clustering run over cluster sequences. "Not in a
+         *                       family" here genuinely means "no sufficiently similar
+         *                       cluster was found".
+         *
+         *     COMPOUND_GROUP    BGCs grouped because MIBiG records them as producing
+         *                       the same named compound. A curated experimental fact,
+         *                       but NOT a sequence comparison — no sequences are
+         *                       compared at all. "Not in a compound group" says
+         *                       nothing whatever about sequence similarity.
+         *
+         *     This column exists because conflating the two produces scientifically
+         *     wrong output. The prioritization scorer's `unclustered`,
+         *     `family_rarity` and `taxonomic_isolation` components are defined over
+         *     sequence families; fed compound groups they emit sequence-similarity
+         *     claims about a corpus on which no clustering has ever been run. That
+         *     regression shipped once (see ARCHITECTURE.md → "Two kinds of grouping"),
+         *     which is why the distinction is now a typed, CHECK-constrained column
+         *     rather than a convention resting on the free-text `clustering_method`.
+         * @enum {string}
+         */
+        FamilyKind: "sequence_family" | "compound_group";
         /** FamilyRef */
         FamilyRef: {
             /**
@@ -815,6 +903,11 @@ export interface components {
             components: components["schemas"]["ComponentScoreOut"][];
             /** Unavailable Components */
             unavailable_components: string[];
+            /**
+             * Caveats
+             * @default []
+             */
+            caveats: string[];
         };
         /**
          * PrioritizationResponse
@@ -837,6 +930,29 @@ export interface components {
             corpus_bgc_count: number;
             /** Mibig Reference Present */
             mibig_reference_present: boolean;
+        };
+        /**
+         * SearchResponse
+         * @description Search hits plus enough context to interpret them.
+         *
+         *     A bare list could not distinguish "20 matches" from "the first 20 of
+         *     380", nor "no matches" from "your query was too short to run" — so a
+         *     client had no way to tell a genuine zero from a search that never
+         *     executed. Both are now explicit.
+         */
+        SearchResponse: {
+            /** Query */
+            query: string;
+            /** Results */
+            results: components["schemas"]["SearchResult"][];
+            /** Total */
+            total: number;
+            /** Truncated */
+            truncated: boolean;
+            /** Limit */
+            limit: number;
+            /** Message */
+            message?: string | null;
         };
         /** SearchResult */
         SearchResult: {
@@ -1052,7 +1168,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": string[];
+                    "application/json": components["schemas"]["BGCClassVocabulary"];
                 };
             };
         };
@@ -1361,6 +1477,7 @@ export interface operations {
         parameters: {
             query: {
                 q: string;
+                limit?: number;
             };
             header?: never;
             path?: never;
@@ -1374,7 +1491,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SearchResult"][];
+                    "application/json": components["schemas"]["SearchResponse"];
                 };
             };
             /** @description Validation Error */

@@ -41,6 +41,7 @@ from collections import defaultdict
 
 from sqlalchemy.orm import Session, selectinload
 
+from bgcscape.api.tree_builder import _load_genome_summaries
 from bgcscape.api.schemas import BGCSummary, GenomeSummary, LazyTaxonNode, LazyTreeResponse
 from bgcscape.models import BGC, Genome, Taxon
 
@@ -58,29 +59,6 @@ class LazyTreeError(ValueError):
     pass
 
 
-def _genome_summary(genome: Genome) -> GenomeSummary:
-    return GenomeSummary(
-        id=genome.id,
-        accession=genome.accession,
-        assembly_level=genome.assembly_level,
-        is_mag=genome.is_mag,
-        genome_size_bp=genome.genome_size_bp,
-        gc_content_pct=genome.gc_content_pct,
-        completeness_pct=genome.completeness_pct,
-        bgcs=[
-            BGCSummary(
-                id=b.id,
-                bgc_class=b.bgc_class,
-                subtype=b.subtype,
-                mibig_accession=b.mibig_accession,
-                evidence_level=b.evidence_level,
-                family_ids=[m.family_id for m in b.family_memberships],
-            )
-            for b in genome.bgcs
-        ],
-    )
-
-
 def build_lazy_tree(
     session: Session,
     root_id: uuid.UUID | None = None,
@@ -89,30 +67,26 @@ def build_lazy_tree(
     if depth < 1 or depth > MAX_DEPTH:
         raise LazyTreeError(f"depth must be between 1 and {MAX_DEPTH}")
 
-    taxa = session.query(Taxon).all()
-    genomes = (
-        session.query(Genome)
-        .options(selectinload(Genome.bgcs).selectinload(BGC.family_memberships))
-        .all()
-    )
+    # Shares the flat column-query loader with the eager builder. Loading
+    # mapped Genome/BGC objects here decoded every BGC.raw_annotation blob
+    # (the whole original MIBiG record) on a request whose entire point is
+    # to return almost nothing — depth=1 returned 338 bytes and still cost
+    # 0.59s, barely faster than shipping the whole 1.1 MB tree.
+    taxa = session.query(Taxon.id, Taxon.parent_id, Taxon.name, Taxon.rank).all()
+    genomes_by_taxon = _load_genome_summaries(session)
 
-    children_by_parent: dict[uuid.UUID | None, list[Taxon]] = defaultdict(list)
+    children_by_parent: dict[uuid.UUID | None, list] = defaultdict(list)
     for taxon in taxa:
         children_by_parent[taxon.parent_id].append(taxon)
     for siblings in children_by_parent.values():
         siblings.sort(key=lambda t: t.name)
-
-    genomes_by_taxon: dict[uuid.UUID, list[Genome]] = defaultdict(list)
-    for genome in genomes:
-        if genome.taxon_id is not None:
-            genomes_by_taxon[genome.taxon_id].append(genome)
 
     # Full rollup first: a node's counts must include descendants the
     # client hasn't fetched, or the summary glyphs lie.
     rolled_genomes: dict[uuid.UUID, int] = {}
     rolled_classes: dict[uuid.UUID, dict[str, int]] = {}
 
-    def rollup(taxon: Taxon) -> tuple[int, dict[str, int]]:
+    def rollup(taxon) -> tuple[int, dict[str, int]]:
         if taxon.id in rolled_genomes:
             return rolled_genomes[taxon.id], rolled_classes[taxon.id]
         own = genomes_by_taxon.get(taxon.id, [])
@@ -136,7 +110,7 @@ def build_lazy_tree(
 
     truncated: list[str] = []
 
-    def build(taxon: Taxon, remaining: int) -> LazyTaxonNode:
+    def build(taxon, remaining: int) -> LazyTaxonNode:
         child_taxa = children_by_parent.get(taxon.id, [])
         own_genomes = genomes_by_taxon.get(taxon.id, [])
         total, counts = rollup(taxon)
@@ -165,7 +139,7 @@ def build_lazy_tree(
             child_taxon_count=len(child_taxa),
             direct_genome_count=len(own_genomes),
             children=children,
-            direct_genomes=[_genome_summary(g) for g in own_genomes] if include_genomes else [],
+            direct_genomes=list(own_genomes) if include_genomes else [],
         )
 
     if root_id is not None:
@@ -205,7 +179,7 @@ def build_lazy_tree(
     )
 
 
-def _component_classes(bgc: BGC) -> list[str]:
+def _component_classes(bgc: BGCSummary) -> list[str]:
     if bgc.bgc_class.value == "hybrid" and bgc.subtype:
         return [p.strip().lower() for p in bgc.subtype.split("+") if p.strip()]
     return [bgc.bgc_class.value]

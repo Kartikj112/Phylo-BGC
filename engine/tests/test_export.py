@@ -7,6 +7,8 @@ import uuid
 import xml.etree.ElementTree as ET
 
 import pytest
+
+from tests.conftest import requires_pdf_renderer
 from pydantic import ValidationError
 
 from bgcscape.export import (
@@ -203,12 +205,16 @@ def test_caption_fails_loudly_without_usable_dimensions():
 # --- real PDF output --------------------------------------------------------------
 
 
+
+
+@requires_pdf_renderer
 def test_render_pdf_produces_a_real_pdf():
     pdf = render_pdf(SAMPLE_SVG)
     assert pdf.startswith(b"%PDF")
     assert len(pdf) > 500
 
 
+@requires_pdf_renderer
 def test_export_figure_returns_both_svg_and_pdf():
     svg, pdf = export_figure(SAMPLE_SVG, _config())
 
@@ -219,6 +225,7 @@ def test_export_figure_returns_both_svg_and_pdf():
     assert extract_view_config(svg) is not None
 
 
+@requires_pdf_renderer
 def test_exported_pdf_is_vector_not_rasterized():
     """Journals reject raster figures at these sizes. A rasterized
     conversion would embed an /Image XObject; a vector one won't."""

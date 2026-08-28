@@ -1376,3 +1376,215 @@ would make a regression in either hard to attribute.
 piece of work (incremental fetch-on-expand, cache invalidation, focus
 interaction) and belongs in its own chunk rather than tacked onto the API
 change.
+
+---
+
+## Two kinds of grouping, and the regression that made the distinction typed
+
+`bgc_family` holds two scientifically different objects, and for one release
+it could not tell them apart.
+
+- A **sequence family** is a BiG-SCAPE / BiG-SLiCE Gene Cluster Family:
+  clusters grouped because their gene content and domain architecture are
+  similar. Produced by a real clustering run over cluster sequences.
+- A **compound group** is a set of clusters MIBiG records as producing the
+  same named compound. A curated experimental fact — and no sequence
+  comparison anywhere in it.
+
+`bgcscape group-by-compound` wrote the second kind into the same table as the
+first, distinguished only by the free-text `clustering_method`. The
+prioritization scorer did not look at that field. It therefore read compound
+groups as sequence families, and three of its five components —
+`unclustered`, `family_rarity`, `taxonomic_isolation` — began emitting
+sequence-similarity claims about a corpus on which no clustering had ever
+been run.
+
+The effect, measured on the real data:
+
+| corpus | refused to score (before) | refused (after) |
+|---|---|---|
+| MIBiG-only, no groups | 2,437 / 2,437 | 2,437 / 2,437 |
+| MIBiG-only **+ compound groups** | **0** | **2,437** |
+| GTDB + MIBiG (no groups) | 783 | 783 |
+| **shipped bundle** (GTDB + MIBiG + groups) | **0** | **783** |
+
+Running `group-by-compound` — a step in the shipped build — turned the
+missing-evidence guarantee off for the entire corpus. Every cluster received a
+confident number, and the explanation attached to the top-scoring ones read
+"Not assigned to any gene cluster family — no sufficiently similar cluster was
+found in this corpus", which was simply false: nothing had been compared.
+
+### The fix is a typed column, not a string check
+
+`BGCFamily.kind` is a CHECK-constrained enum (`FamilyKind`). The scorer filters
+every family-derived component through `sequence_memberships()`, and
+`families_present` now asks "has a *sequence* clustering been ingested?" rather
+than "does this table have any rows?".
+
+A string comparison against `clustering_method` would have fixed the symptom.
+It would not have stopped the next tool that writes a third kind of grouping
+from silently joining the pool. The column makes the question unavoidable at
+the point a row is created, and the constraint makes an unclassified row
+impossible to insert — including from outside the ORM.
+
+Compound groups are still first-class: they are served by `/api/v1/families`,
+labelled in the UI, and reported in the scorer's corpus-level caveats as
+deliberately excluded. Excluding them silently would have been its own kind of
+dishonesty.
+
+### Product categories are flagged, and the flag was itself wrong
+
+`GENERIC_PRODUCT_NAMES` marks compound groups keyed on a product *category*
+("carotenoid", "capsular polysaccharide") rather than a molecule. Grouping on
+one says "both make some carotenoid" — much weaker than "both make the same
+compound", and the four largest groups in the bundled corpus are exactly these.
+
+`is_generic_product()` existed to flag them and was **never called** — verified
+at runtime, not by grep: wrapping the function and running a full
+`group_by_compound` over 279 groups plus an API serve of all of them produced
+zero invocations. It was also wrong. `_label_for` slugifies to
+`CMPD_o-antigen`; the old inverse mapped hyphens back to spaces, producing
+"o antigen", which is not in the vocabulary. Wiring it up unchanged would have
+looked like a fix while still missing the one hyphenated name — an 11-member
+group in the real corpus. Membership is now tested label-to-label, and the
+round trip is asserted for every name in the set.
+
+## Provenance is only structural if it is populated
+
+Every `Source` in every shipped build had `license`, `url`, `citation` and
+`retrieved_at` set to NULL. The model had the columns and
+`docs/DATA_SOURCES.md` had the values; nothing carried one to the other.
+
+That is not cosmetic here. GTDB ships under **CC BY-SA 4.0**, a ShareAlike
+licence that obliges any derived view to carry attribution — and BGC-scape's
+derived view is an exported figure destined for a paper. The figure attributed
+nothing. `SOURCE_METADATA` in `cli/main.py` now populates these on every
+ingest, backfilling existing rows, so re-ingesting is what repairs an old
+database.
+
+Relatedly: `group-by-compound` typed its Source as `REFERENCE_DATABASE`,
+claiming MIBiG had published the grouping. It is `TOOL_RUN` — BGC-scape derived
+it. That claim travelled into the provenance block of every exported SVG, which
+is the archival record.
+
+## Re-ingestion must not undo placement
+
+`ingest mibig` then `link-mibig` then `ingest mibig` is the documented "new
+MIBiG release" workflow. It used to destroy the corpus.
+
+MIBiG entries arrive with a locus accession, not an assembly, so ingestion
+creates a stub `Genome` at `AssemblyLevel.LOCUS`. `link-mibig` then moves each
+cluster onto the GTDB genome of the same organism and deletes the emptied stub.
+Re-ingesting recreated the stub and pointed the cluster back at it. Measured on
+the real corpus: **1,629 clusters moved off real GTDB assemblies back onto
+locus stubs** (0 left on a real assembly), 1,504 stub genomes resurrected, 665
+orphan species nodes regrown, 4 duplicate species created — while the report
+line said `created=0, updated=2437`, i.e. perfectly idempotent. Row counts, not
+the report, are what caught it.
+
+The invariant now enforced in `load_mibig_entry`: **if a cluster already sits
+on a genome that is not its own MIBiG locus stub, something placed it
+deliberately and ingestion leaves it alone** — including the species node the
+stub hung from. A cluster that was never linked still gets its stub, so a
+genuine new release ingests normally.
+
+The general lesson, and the reason this is recorded rather than just fixed: an
+ingest report counts the records it was asked to process. It says nothing about
+rows it creates as a side effect. Idempotency claims in this project are
+verified by row count.
+
+## Alembic autogenerate cannot be trusted with CHECK constraints
+
+Documented twice before as "read the migration first". It is now mechanical.
+
+Alembic reports every named CHECK constraint as *removed* and emits a drop for
+it while recreating none — **with no model changes at all**, on both SQLite and
+Postgres. Applying one such migration took the schema from 12 CHECK constraints
+to 1 and made an invalid `source_type` insertable by raw SQL, undoing the Phase
+1b fix entirely.
+
+`include_object` in `migrations/env.py` now excludes CHECK constraints from
+autogenerate comparison. These constraints are owned declaratively by the enum
+columns, so autogenerate has no business diffing them; a genuine vocabulary
+change is hand-written, which was already the rule. With the hook in place,
+autogenerating against an at-head database emits `pass` on Postgres and only
+the real diff on SQLite. `test_autogenerate_excludes_check_constraints` pins
+the behaviour, and `test_enum_check_constraints_are_enforced_by_the_database`
+asserts the protection itself with a raw-SQL insert.
+
+## Where the API's time actually went
+
+Profiled rather than guessed, on the 2,437-BGC bundle.
+
+`build_taxonomy_tree` spent **41% of its CPU in `json.decoder.raw_decode`** —
+0.34s of 0.82s. The cause: it loaded `Genome` and `BGC` as mapped ORM objects,
+and `BGC.raw_annotation` is a JSONVariant holding the entire original MIBiG
+record. SQLAlchemy dutifully deserialised ~4,200 blobs per request to build a
+tree that never reads them. The heatmap, the Sankey flows and the type-count
+donut all did the same thing.
+
+Selecting scalar columns instead of mapped objects removes both the JSON decode
+and the ORM instrumentation overhead. Payloads are byte-identical.
+
+| endpoint | before | after | payload before | after |
+|---|---|---|---|---|
+| `/api/v1/taxonomy-tree` | 0.662 s | 0.149 s | 1,125,672 B | 230,686 B |
+| `/api/v1/tree?depth=1` | 0.587 s | 0.087 s | 338 B | 338 B |
+| `/api/v1/tree?depth=2` | 0.606 s | 0.127 s | 258,821 B | 47,978 B |
+| `/api/v1/heatmap?rank=genus` | 0.432 s | 0.061 s | 191,659 B | 23,881 B |
+| `/api/v1/flows/taxonomy-class` | 0.457 s | 0.065 s | 7,126 B | 1,070 B |
+
+Two findings worth keeping:
+
+**The lazy endpoint was not faster than the eager one.** `/tree?depth=1`
+returned 338 bytes and still cost 0.587s, against 0.662s for the entire 1.1 MB
+tree. Payload was never its bottleneck — the full-taxonomy rollup on every
+request was, and it was paying the same ORM cost. Porting the frontend to
+incremental loading would have bought almost no latency until that was fixed.
+It is fixed now, and the lazy path is genuinely 6.7x faster, which is what
+makes that port worth doing when the corpus outgrows the eager payload.
+
+**Response compression was simply absent.** The tree payload is deeply
+repetitive JSON; gzip takes 1.10 MB to 0.24 MB. One middleware line.
+
+Heatmap row order also gained an explicit tiebreaker. It sorted on
+`-genome_count` alone, so equal-count clades came out in whatever order the
+database returned their genomes — stable within one build, not across dialects
+or after an unrelated ingest. A figure's row order should not depend on that.
+
+## Interaction cost is reconciliation, not DOM writes
+
+The tree renders 3,528 nodes on the bundled corpus. The pan/zoom transform was
+held in React state and applied through JSX, so **every mouse-move during a pan
+re-rendered the whole canvas** to change one attribute on one `<g>`.
+
+The transform is now written straight to the DOM in the d3 zoom handler. Scale
+stays in React state, because label visibility is semantic-zoom dependent, but
+it is quantised: panning never changes `k` and therefore renders nothing, and a
+continuous wheel gesture renders a handful of times instead of once per event.
+A `useLayoutEffect` re-asserts the live transform after every render so a filter
+change can never silently discard the user's pan.
+
+Measured over a 40-step drag: **3 long tasks before, 0 after**; gesture wall
+time 6.9s to 5.4s (Playwright's own CDP round-trips dominate that figure).
+Worth recording: **DOM mutation count was identical (~40) in both versions** and
+is therefore useless as a proxy here — React already wrote only the changed
+attribute. The cost was the reconciliation pass over 3,528 nodes, which is what
+`longtask` sees and `MutationObserver` does not.
+
+## Browser-level tests, finally
+
+`web/e2e/` runs Playwright against a real Chromium. It exists because this
+project's characteristic bug lives exactly where unit tests cannot reach: the
+CORS preflight `TestClient` never issues, the export button's
+`URL.createObjectURL` plus synthetic click, middle-drag pan.
+
+Eleven tests now cover initial load, middle-drag pan, wheel zoom, every "Show
+down to" level, the radial/horizontal toggle, live search match counts
+(including the zero-vs-broken distinction), filter fallback, the SVG download
+and its embedded provenance, the PDF path's error message, and a real
+cross-origin preflight on the export POST.
+
+`npm run e2e`, with both servers already running. They are not wired into CI
+yet — that needs a workflow that starts both servers and a database, which is
+its own piece of work.

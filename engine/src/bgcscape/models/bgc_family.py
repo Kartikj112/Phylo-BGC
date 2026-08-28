@@ -1,17 +1,55 @@
-"""Gene Cluster Families (BiG-SCAPE-style groupings of similar BGCs)."""
+"""Groupings of BGCs — sequence families (BiG-SCAPE GCFs) and compound groups.
+
+Two scientifically different kinds of grouping share this table, and
+`BGCFamily.kind` is what keeps them apart. See `FamilyKind` below: the
+distinction is not cosmetic, and code that consumes families must decide
+explicitly which kind it means.
+"""
 from __future__ import annotations
 
+import enum
 import uuid
 
 from sqlalchemy import Float, ForeignKey, String, UniqueConstraint, Uuid
+from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from bgcscape.models.base import Base, ProvenanceMixin, TimestampMixin
 
 
+class FamilyKind(str, enum.Enum):
+    """What kind of grouping a `BGCFamily` row represents.
+
+    SEQUENCE_FAMILY   A Gene Cluster Family in the BiG-SCAPE / BiG-SLiCE
+                      sense: BGCs grouped because their gene content and
+                      domain architecture are similar. Produced by a real
+                      clustering run over cluster sequences. "Not in a
+                      family" here genuinely means "no sufficiently similar
+                      cluster was found".
+
+    COMPOUND_GROUP    BGCs grouped because MIBiG records them as producing
+                      the same named compound. A curated experimental fact,
+                      but NOT a sequence comparison — no sequences are
+                      compared at all. "Not in a compound group" says
+                      nothing whatever about sequence similarity.
+
+    This column exists because conflating the two produces scientifically
+    wrong output. The prioritization scorer's `unclustered`,
+    `family_rarity` and `taxonomic_isolation` components are defined over
+    sequence families; fed compound groups they emit sequence-similarity
+    claims about a corpus on which no clustering has ever been run. That
+    regression shipped once (see ARCHITECTURE.md → "Two kinds of grouping"),
+    which is why the distinction is now a typed, CHECK-constrained column
+    rather than a convention resting on the free-text `clustering_method`.
+    """
+
+    SEQUENCE_FAMILY = "sequence_family"
+    COMPOUND_GROUP = "compound_group"
+
+
 class BGCFamily(Base, TimestampMixin, ProvenanceMixin):
-    """A Gene Cluster Family: a group of BGCs judged similar enough to share
-    biosynthetic logic, typically produced by a BiG-SCAPE run.
+    """A group of BGCs. `kind` says which sort of grouping — see `FamilyKind`;
+    the two are not interchangeable and must not be pooled.
     `evidence_level` on the family itself should normally be `COMPUTED`.
     """
 
@@ -19,6 +57,20 @@ class BGCFamily(Base, TimestampMixin, ProvenanceMixin):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     label: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    kind: Mapped[FamilyKind] = mapped_column(
+        SAEnum(
+            FamilyKind,
+            native_enum=False,
+            length=32,
+            validate_strings=True,
+            create_constraint=True,
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+            name="ck_bgc_family_kind_valid",
+        ),
+        nullable=False,
+        index=True,
+        default=FamilyKind.SEQUENCE_FAMILY,
+    )
     clustering_method: Mapped[str | None] = mapped_column(String(64), nullable=True)  # "BiG-SCAPE 2.0"
     clustering_cutoff: Mapped[float | None] = mapped_column(Float, nullable=True)
     representative_bgc_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("bgc.id"), nullable=True)

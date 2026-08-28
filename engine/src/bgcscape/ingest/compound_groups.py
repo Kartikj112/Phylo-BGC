@@ -55,6 +55,7 @@ from bgcscape.models import (
     BGCFamilyMembership,
     Compound,
     EvidenceLevel,
+    FamilyKind,
     Source,
 )
 
@@ -86,6 +87,8 @@ class CompoundGroupReport:
     memberships: int = 0
     clusters_grouped: int = 0
     singletons_skipped: int = 0
+    generic_groups: int = 0
+    generic_clusters: int = 0
     examples: list[str] = field(default_factory=list)
 
     def __str__(self) -> str:  # pragma: no cover - human-facing summary
@@ -150,6 +153,9 @@ def group_by_compound(
         if family is None:
             family = BGCFamily(
                 label=label,
+                # The typed distinction from a BiG-SCAPE sequence family.
+                # Consumers branch on this, not on the free-text method.
+                kind=FamilyKind.COMPOUND_GROUP,
                 clustering_method=CLUSTERING_METHOD,
                 clustering_cutoff=None,
                 source_id=source.id,
@@ -162,6 +168,11 @@ def group_by_compound(
             existing[label] = family
             report.groups_created += 1
         else:
+            # A group written before `kind` existed (or by an older build)
+            # must be corrected on re-run, or the scorer's exclusion of
+            # compound groups silently stops applying to it.
+            if family.kind != FamilyKind.COMPOUND_GROUP:
+                family.kind = FamilyKind.COMPOUND_GROUP
             report.groups_updated += 1
 
         known = {
@@ -184,8 +195,12 @@ def group_by_compound(
             )
             report.memberships += 1
 
+        if is_generic_product(label):
+            report.generic_groups += 1
+            report.generic_clusters += len(bgc_ids)
         if len(report.examples) < 10:
-            report.examples.append(f"{label} ({len(bgc_ids)} clusters)")
+            flag = " [product category]" if is_generic_product(label) else ""
+            report.examples.append(f"{label} ({len(bgc_ids)} clusters){flag}")
 
     report.clusters_grouped = len(grouped_clusters)
     session.commit()
@@ -199,8 +214,22 @@ def _label_for(normalized_name: str) -> str:
     return f"CMPD_{slug}"[:128]
 
 
+#: The generic names as they appear *after* labelling. Comparing labels to
+#: labels avoids un-slugifying, which was lossy: `_label_for` maps both
+#: "o-antigen" and "o antigen" to `CMPD_o-antigen`, so the old
+#: hyphens-back-to-spaces inverse produced "o antigen" and silently failed
+#: to recognise the one hyphenated name in the vocabulary.
+GENERIC_PRODUCT_LABELS = frozenset(
+    _label_for(normalize_compound_name(name)) for name in GENERIC_PRODUCT_NAMES
+)
+
+
 def is_generic_product(label: str) -> bool:
     """Whether a group's compound is a product category rather than a single
-    molecule — see GENERIC_PRODUCT_NAMES."""
-    name = label[len("CMPD_") :].replace("-", " ") if label.startswith("CMPD_") else label
-    return name in GENERIC_PRODUCT_NAMES
+    molecule — see GENERIC_PRODUCT_NAMES.
+
+    Grouping on "carotenoid" says "both make some carotenoid", not "both
+    make the same molecule". Such a group is still a real distribution, but
+    it means something weaker, and the UI says so.
+    """
+    return label in GENERIC_PRODUCT_LABELS

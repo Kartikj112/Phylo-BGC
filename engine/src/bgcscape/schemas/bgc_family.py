@@ -5,11 +5,13 @@ import uuid
 from pydantic import BaseModel
 
 from bgcscape.models.base import EvidenceLevel
+from bgcscape.models.bgc_family import FamilyKind
 from bgcscape.schemas.base import ORMReadModel, PersistedReadMixin
 
 
 class BGCFamilyBase(BaseModel):
     label: str
+    kind: FamilyKind = FamilyKind.SEQUENCE_FAMILY
     clustering_method: str | None = None
     clustering_cutoff: float | None = None
     representative_bgc_id: uuid.UUID | None = None

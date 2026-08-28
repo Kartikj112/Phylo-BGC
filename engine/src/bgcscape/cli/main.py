@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import typer
@@ -49,17 +50,83 @@ def init_db() -> None:
     typer.echo(f"Initialized schema at {engine.url}")
 
 
-def _get_or_create_source(session, *, name: str, source_type: SourceType, version: str | None) -> Source:
+#: Licensing/attribution metadata for the sources BGC-scape ingests, kept in
+#: lockstep with docs/DATA_SOURCES.md. This is not decoration: GTDB ships
+#: under CC BY-SA 4.0, a ShareAlike licence that obliges any derived view —
+#: including an exported figure — to carry attribution. Leaving these null
+#: (as every shipped build did until now) means the publication artifact
+#: makes no attribution at all. Keyed by Source.name.
+SOURCE_METADATA: dict[str, dict[str, str]] = {
+    "GTDB": {
+        "url": "https://gtdb.ecogenomic.org/",
+        "license": "CC BY-SA 4.0",
+        "citation": (
+            "Parks DH et al. GTDB: an ongoing census of bacterial and archaeal diversity "
+            "through a phylogenetically consistent, rank normalized and complete "
+            "genome-based taxonomy. Nucleic Acids Research."
+        ),
+    },
+    "MIBiG": {
+        "url": "https://mibig.secondarymetabolites.org/",
+        "license": "Open access (no restriction on academic or commercial use)",
+        "citation": (
+            "Terlouw BR et al. MIBiG: the Minimum Information about a Biosynthetic Gene "
+            "cluster repository. Nucleic Acids Research."
+        ),
+    },
+    "antiSMASH": {
+        "url": "https://antismash.secondarymetabolites.org/",
+        "license": "AGPL-3.0 (tool); predictions stored as derived output",
+        "citation": "Blin K et al. antiSMASH: rapid genome-wide identification of biosynthetic gene clusters.",
+    },
+    "BiG-SCAPE": {
+        "url": "https://bigscape-corason.secondarymetabolites.org/",
+        "license": "AGPL-3.0 (tool); family assignments stored as derived output",
+        "citation": "Navarro-Munoz JC et al. A computational framework for systematic exploration of biosynthetic diversity.",
+    },
+    "MIBiG shared compound": {
+        "url": "https://mibig.secondarymetabolites.org/",
+        "license": "Derived from MIBiG compound annotations (open access)",
+        "citation": (
+            "Derived by BGC-scape: clusters grouped by identical MIBiG compound name. "
+            "Not a sequence clustering."
+        ),
+    },
+}
+
+
+def _get_or_create_source(
+    session,
+    *,
+    name: str,
+    source_type: SourceType,
+    version: str | None,
+    retrieved_at: datetime | None = None,
+) -> Source:
     """Shared by both ingest subcommands: find-or-create the Source row that
     every ingested record from this run will point back to, keyed on
     (name, version) so re-running against the same release reuses one row.
+
+    Also stamps licence/citation/url from `SOURCE_METADATA` and records when
+    the data was retrieved, so provenance survives into exported figures.
+    Existing rows are backfilled, which is what upgrades a database built
+    before this metadata was populated.
     """
+    metadata = SOURCE_METADATA.get(name, {})
     query = session.query(Source).filter_by(name=name, version=version)
     source = query.one_or_none()
-    if source is not None:
-        return source
-    source = Source(name=name, source_type=source_type, version=version)
-    session.add(source)
+    if source is None:
+        source = Source(name=name, source_type=source_type, version=version)
+        session.add(source)
+    # Backfill rather than only-on-create: a database written by an older
+    # build has these null, and re-ingesting is how it gets repaired.
+    if source.source_type != source_type:
+        source.source_type = source_type
+    for attr in ("url", "license", "citation"):
+        if metadata.get(attr) and not getattr(source, attr):
+            setattr(source, attr, metadata[attr])
+    if source.retrieved_at is None:
+        source.retrieved_at = retrieved_at or datetime.now(timezone.utc)
     session.commit()
     return source
 
@@ -226,8 +293,13 @@ def group_by_compound_cmd(
     with session_scope() as session:
         source = _get_or_create_source(
             session,
+            # TOOL_RUN, not REFERENCE_DATABASE: this grouping is DERIVED by
+            # BGC-scape from MIBiG's compound annotations. MIBiG is the
+            # reference database; this is what we computed from it. The
+            # distinction is the whole point of the provenance model, and it
+            # travels into every exported figure.
             name=CLUSTERING_METHOD,
-            source_type=SourceType.REFERENCE_DATABASE,
+            source_type=SourceType.TOOL_RUN,
             version=None,
         )
         report = group_by_compound(session, source, min_members=min_members)

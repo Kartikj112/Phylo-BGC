@@ -43,7 +43,7 @@ from dataclasses import dataclass, field
 
 from sqlalchemy.orm import Session, selectinload
 
-from bgcscape.models import BGC, BGCFamilyMembership, Genome, Taxon
+from bgcscape.models import BGC, BGCFamily, BGCFamilyMembership, FamilyKind, Genome, Taxon
 
 WEIGHTS_ARE_UNCALIBRATED = (
     "Component weights are a documented starting point, not a validated model. They encode a "
@@ -95,7 +95,15 @@ class PrioritizationResult:
     bgc_id: uuid.UUID
     score: float | None
     components: list[ComponentScore]
+    #: Everything a reader needs to interpret THIS result standalone:
+    #: the corpus-level caveats plus the ones specific to this cluster.
     caveats: list[str] = field(default_factory=list)
+    #: Only the caveats that are specific to this cluster — its component
+    #: coverage, its by-construction bias. Kept separate because hoisting
+    #: one cluster's coverage caveat to the top of a whole ranking states
+    #: something false about every other row (it did exactly that until
+    #: this split existed).
+    specific_caveats: list[str] = field(default_factory=list)
 
     @property
     def unavailable_components(self) -> list[str]:
@@ -125,6 +133,24 @@ class ScoringContext:
     class_counts_by_parent: dict[uuid.UUID, dict[str, int]]
     parent_taxon_by_genome: dict[uuid.UUID, uuid.UUID | None]
     genome_count_by_parent: dict[uuid.UUID, int]
+    #: Ids of the families that are *sequence* families (BiG-SCAPE GCFs).
+    #: Every family-derived component is defined over these and only these
+    #: — see `FamilyKind`. Compound groups live in the same table but are a
+    #: different scientific object and must not feed a similarity claim.
+    sequence_family_ids: set[uuid.UUID] = field(default_factory=set)
+    #: How many compound groups exist in the corpus. Only used to explain,
+    #: in the caveats, that they were deliberately excluded from scoring.
+    compound_group_count: int = 0
+
+
+def sequence_memberships(bgc: BGC, ctx: ScoringContext) -> list[BGCFamilyMembership]:
+    """The BGC's memberships in *sequence* families only.
+
+    Every component that reasons about similarity goes through here. A
+    membership in a compound group is an experimental fact about shared
+    chemistry, not a sequence comparison, and must never be read as one.
+    """
+    return [m for m in bgc.family_memberships if m.family_id in ctx.sequence_family_ids]
 
 
 def build_scoring_context(session: Session) -> ScoringContext:
@@ -135,6 +161,16 @@ def build_scoring_context(session: Session) -> ScoringContext:
     )
     taxa = {t.id: t for t in session.query(Taxon).all()}
     genomes = {g.id: g for g in session.query(Genome).all()}
+
+    kind_by_family: dict[uuid.UUID, FamilyKind] = {
+        fid: kind for fid, kind in session.query(BGCFamily.id, BGCFamily.kind).all()
+    }
+    sequence_family_ids = {
+        fid for fid, kind in kind_by_family.items() if kind == FamilyKind.SEQUENCE_FAMILY
+    }
+    compound_group_count = sum(
+        1 for kind in kind_by_family.values() if kind == FamilyKind.COMPOUND_GROUP
+    )
 
     def enclosing_group(genome_id: uuid.UUID) -> uuid.UUID | None:
         """The genus (or nearest ancestor at/above genus) a genome sits in.
@@ -175,6 +211,10 @@ def build_scoring_context(session: Session) -> ScoringContext:
 
         genome_taxon = genomes[bgc.genome_id].taxon_id if bgc.genome_id in genomes else None
         for membership in bgc.family_memberships:
+            # Sequence families only: pooling compound groups in here is
+            # exactly the bug this filter exists to prevent.
+            if membership.family_id not in sequence_family_ids:
+                continue
             family_sizes[membership.family_id] += 1
             if genome_taxon is not None:
                 family_taxa[membership.family_id].add(genome_taxon)
@@ -187,10 +227,15 @@ def build_scoring_context(session: Session) -> ScoringContext:
         family_taxa={k: v for k, v in family_taxa.items()},
         families_with_mibig=families_with_mibig,
         mibig_present=mibig_present,
-        families_present=bool(family_sizes),
+        # "Has a sequence clustering been run over this corpus?" — the
+        # question `unclustered` depends on. Compound groups cannot answer
+        # it, so they deliberately do not make it true.
+        families_present=bool(sequence_family_ids),
         class_counts_by_parent={k: dict(v) for k, v in class_counts_by_parent.items()},
         parent_taxon_by_genome=parent_taxon_by_genome,
         genome_count_by_parent={k: len(v) for k, v in genomes_seen_by_parent.items()},
+        sequence_family_ids=sequence_family_ids,
+        compound_group_count=compound_group_count,
     )
 
 
@@ -201,24 +246,28 @@ def _component_unclustered(bgc: BGC, ctx: ScoringContext) -> ComponentScore:
             None,
             "No family clustering has been ingested, so 'unclustered' carries no information here.",
         )
-    if not bgc.family_memberships:
+    if not sequence_memberships(bgc, ctx):
         return ComponentScore(
             "unclustered",
             1.0,
-            "Not assigned to any gene cluster family — no sufficiently similar cluster was found in "
-            "this corpus.",
+            "Not assigned to any sequence-based gene cluster family — no sufficiently similar "
+            "cluster was found in this corpus.",
         )
-    return ComponentScore("unclustered", 0.0, "Belongs to a gene cluster family with other members.")
+    return ComponentScore(
+        "unclustered", 0.0, "Belongs to a sequence-based gene cluster family with other members."
+    )
 
 
 def _component_family_rarity(bgc: BGC, ctx: ScoringContext) -> ComponentScore:
-    if not bgc.family_memberships:
+    memberships = sequence_memberships(bgc, ctx)
+    if not memberships:
         return ComponentScore(
             "family_rarity",
             None,
-            "Not in a family, so family size is undefined (see the 'unclustered' component instead).",
+            "Not in a sequence family, so family size is undefined (see the 'unclustered' "
+            "component instead).",
         )
-    sizes = [ctx.family_sizes.get(m.family_id, 1) for m in bgc.family_memberships]
+    sizes = [ctx.family_sizes.get(m.family_id, 1) for m in memberships]
     smallest = min(sizes)
     # 1/n: a singleton scores 1.0, a pair 0.5, and the curve flattens
     # quickly — which matches the intuition that the gap between 1 and 2
@@ -227,14 +276,18 @@ def _component_family_rarity(bgc: BGC, ctx: ScoringContext) -> ComponentScore:
     return ComponentScore(
         "family_rarity",
         value,
-        f"Smallest containing family has {smallest} member{'s' if smallest != 1 else ''} in this corpus.",
+        f"Smallest containing sequence family has {smallest} "
+        f"member{'s' if smallest != 1 else ''} in this corpus.",
     )
 
 
 def _component_taxonomic_isolation(bgc: BGC, ctx: ScoringContext) -> ComponentScore:
-    if not bgc.family_memberships:
-        return ComponentScore("taxonomic_isolation", None, "Not in a family, so taxonomic spread is undefined.")
-    spreads = [len(ctx.family_taxa.get(m.family_id, set())) for m in bgc.family_memberships]
+    memberships = sequence_memberships(bgc, ctx)
+    if not memberships:
+        return ComponentScore(
+            "taxonomic_isolation", None, "Not in a sequence family, so taxonomic spread is undefined."
+        )
+    spreads = [len(ctx.family_taxa.get(m.family_id, set())) for m in memberships]
     spread = max(spreads) if spreads else 0
     if spread == 0:
         return ComponentScore(
@@ -244,7 +297,7 @@ def _component_taxonomic_isolation(bgc: BGC, ctx: ScoringContext) -> ComponentSc
     return ComponentScore(
         "taxonomic_isolation",
         value,
-        f"Family spans {spread} classified taxon{'a' if spread != 1 else ''} in this corpus. "
+        f"Sequence family spans {spread} classified taxon{'a' if spread != 1 else ''} in this corpus. "
         "A family confined to one taxon is less well characterized across the tree; note this cuts "
         "both ways — a widely distributed family may be a transfer signal worth attention too.",
     )
@@ -265,7 +318,8 @@ def _component_mibig_distance(bgc: BGC, ctx: ScoringContext) -> ComponentScore:
         return ComponentScore(
             "mibig_distance", 0.0, "This cluster is itself a MIBiG reference entry — already characterized."
         )
-    in_mibig_family = any(m.family_id in ctx.families_with_mibig for m in bgc.family_memberships)
+    memberships = sequence_memberships(bgc, ctx)
+    in_mibig_family = any(m.family_id in ctx.families_with_mibig for m in memberships)
     if in_mibig_family:
         return ComponentScore(
             "mibig_distance",
@@ -273,7 +327,7 @@ def _component_mibig_distance(bgc: BGC, ctx: ScoringContext) -> ComponentScore:
             "Clusters with a MIBiG reference entry in the same family — likely related to a "
             "characterized pathway.",
         )
-    if not bgc.family_memberships:
+    if not memberships:
         return ComponentScore(
             "mibig_distance",
             None,
@@ -283,7 +337,8 @@ def _component_mibig_distance(bgc: BGC, ctx: ScoringContext) -> ComponentScore:
     return ComponentScore(
         "mibig_distance",
         1.0,
-        "No MIBiG reference entry in any containing family, given the MIBiG entries ingested here.",
+        "No MIBiG reference entry in any containing sequence family, given the MIBiG entries "
+        "ingested here.",
     )
 
 
@@ -327,6 +382,42 @@ _COMPONENT_FUNCS = (
 MIN_COMPONENTS_FOR_SCORE = 2
 
 
+def corpus_caveats(ctx: ScoringContext) -> list[str]:
+    """Caveats true of the whole scoring run, independent of any one cluster.
+
+    Kept separate from per-cluster caveats so a caller can label a ranking
+    as a whole without asserting one row's component coverage over all the
+    others.
+    """
+    caveats = [NOT_A_NOVELTY_CLAIM, SCORE_IS_ORDINAL, WEIGHTS_ARE_UNCALIBRATED]
+
+    if not ctx.families_present:
+        caveats.append(
+            "No sequence-based gene cluster families (e.g. BiG-SCAPE) have been ingested, so the "
+            "three components that depend on sequence clustering are uncomputable for every "
+            "cluster. Rankings here rest on the remaining signals only."
+        )
+    if ctx.compound_group_count:
+        caveats.append(
+            f"This corpus contains {ctx.compound_group_count} compound group(s) — clusters grouped "
+            "because MIBiG records them as making the same named compound. Those are a curated "
+            "chemical fact, not a sequence comparison, and are deliberately EXCLUDED from every "
+            "component here. Being absent from a compound group is not evidence that a cluster is "
+            "sequence-novel."
+        )
+    if not ctx.mibig_present:
+        caveats.append(
+            "No MIBiG reference data in this corpus — the most informative signal for prioritization "
+            "is missing entirely, and rankings here reflect only genomic context."
+        )
+    if ctx.total_bgcs < 50:
+        caveats.append(
+            f"Corpus contains {ctx.total_bgcs} BGCs. Every component is relative to what has been "
+            "ingested; 'rare' in a small corpus mostly reflects what hasn't been ingested yet."
+        )
+    return caveats
+
+
 def score_bgc(bgc: BGC, ctx: ScoringContext, weights: dict[str, float] | None = None) -> PrioritizationResult:
     """Score one BGC. Returns components even when no overall score can be
     computed — the breakdown is useful on its own, and suppressing it
@@ -335,29 +426,39 @@ def score_bgc(bgc: BGC, ctx: ScoringContext, weights: dict[str, float] | None = 
     components = [func(bgc, ctx) for func in _COMPONENT_FUNCS]
 
     available = [c for c in components if c.available]
-    caveats = [NOT_A_NOVELTY_CLAIM, SCORE_IS_ORDINAL, WEIGHTS_ARE_UNCALIBRATED]
+    shared = corpus_caveats(ctx)
+    specific: list[str] = []
+
+    def _result(score: float | None) -> PrioritizationResult:
+        return PrioritizationResult(
+            bgc_id=bgc.id,
+            score=score,
+            components=components,
+            caveats=[*shared, *specific],
+            specific_caveats=list(specific),
+        )
 
     if len(available) < MIN_COMPONENTS_FOR_SCORE:
-        caveats.append(
+        specific.append(
             f"Only {len(available)} of {len(components)} components could be computed — too few to "
             "combine into a ranking. Read the components individually."
         )
-        return PrioritizationResult(bgc_id=bgc.id, score=None, components=components, caveats=caveats)
+        return _result(None)
 
     # Weighted mean over available components only. Treating an
     # unavailable component as zero would penalize clusters for gaps in
     # the reference data; treating it as one would reward them for it.
     total_weight = sum(active_weights.get(c.name, 0.0) for c in available)
     if total_weight == 0:
-        caveats.append("All available components have zero weight, so no score can be computed.")
-        return PrioritizationResult(bgc_id=bgc.id, score=None, components=components, caveats=caveats)
+        specific.append("All available components have zero weight, so no score can be computed.")
+        return _result(None)
 
     weighted = sum((c.value or 0.0) * active_weights.get(c.name, 0.0) for c in available)
     score = weighted / total_weight
 
     missing = [c.name for c in components if not c.available]
     if missing:
-        caveats.append(
+        specific.append(
             f"Computed from {len(available)} of {len(components)} components; unavailable: "
             f"{', '.join(missing)}. Scores resting on different component sets are not directly "
             "comparable to each other."
@@ -379,24 +480,31 @@ def score_bgc(bgc: BGC, ctx: ScoringContext, weights: dict[str, float] | None = 
     # themselves. So it's named here and left to the caller.
     unclustered = next((c for c in components if c.name == "unclustered"), None)
     if unclustered is not None and unclustered.value == 1.0 and len(missing) >= 2:
-        caveats.append(
+        specific.append(
             "This cluster ranks high partly BY CONSTRUCTION: being unclustered scores maximally on "
             "one component while making three others uncomputable, so its score is an average of few, "
             "high signals rather than strong evidence. Compare it against other unclustered clusters, "
             "not against clusters scored on the full component set."
         )
-    if not ctx.mibig_present:
-        caveats.append(
-            "No MIBiG reference data in this corpus — the most informative signal for prioritization "
-            "is missing entirely, and rankings here reflect only genomic context."
-        )
-    if ctx.total_bgcs < 50:
-        caveats.append(
-            f"Corpus contains {ctx.total_bgcs} BGCs. Every component is relative to what has been "
-            "ingested; 'rare' in a small corpus mostly reflects what hasn't been ingested yet."
-        )
+    return _result(score)
 
-    return PrioritizationResult(bgc_id=bgc.id, score=score, components=components, caveats=caveats)
+
+def rank_bgcs_with_context(
+    session: Session,
+    weights: dict[str, float] | None = None,
+    limit: int | None = None,
+) -> tuple[list[PrioritizationResult], ScoringContext]:
+    """`rank_bgcs`, but also returning the context the run was scored against.
+
+    Callers that render a ranking as a whole (the API, the CLI table) need
+    the context to label it with `corpus_caveats(ctx)` rather than borrowing
+    the top row's caveats, which describe only that row.
+    """
+    ctx = build_scoring_context(session)
+    bgcs = session.query(BGC).options(selectinload(BGC.family_memberships), selectinload(BGC.genome)).all()
+    results = [score_bgc(bgc, ctx, weights) for bgc in bgcs]
+    results.sort(key=lambda r: (r.score is None, -(r.score or 0.0)))
+    return (results[:limit] if limit else results), ctx
 
 
 def rank_bgcs(
@@ -407,8 +515,5 @@ def rank_bgcs(
     """Score every BGC, best-scoring first. Unscoreable BGCs sort last
     rather than being dropped — a cluster that couldn't be assessed is a
     fact the caller should see, not one to hide."""
-    ctx = build_scoring_context(session)
-    bgcs = session.query(BGC).options(selectinload(BGC.family_memberships), selectinload(BGC.genome)).all()
-    results = [score_bgc(bgc, ctx, weights) for bgc in bgcs]
-    results.sort(key=lambda r: (r.score is None, -(r.score or 0.0)))
-    return results[:limit] if limit else results
+    results, _ = rank_bgcs_with_context(session, weights, limit)
+    return results

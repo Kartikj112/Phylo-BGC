@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from bgcscape.models.base import EvidenceLevel
 from bgcscape.models.bgc import BGCClass
+from bgcscape.models.bgc_family import FamilyKind
 from bgcscape.models.genome import AssemblyLevel
 from bgcscape.models.taxonomy import TaxonRank
 from bgcscape.schemas.source import SourceRead
@@ -123,6 +124,53 @@ class SearchResult(BaseModel):
     accession: str | None = None
 
 
+class BGCClassVocabulary(BaseModel):
+    """The two BGC-class vocabularies, and which endpoints use which.
+
+    These differ, and the difference is real rather than a bug to paper
+    over. `stored_classes` is what the `bgc.bgc_class` column actually
+    holds, including the literal `hybrid`. `component_classes` is what a
+    hybrid decomposes into (an `nrps+pks` cluster is NRPS machinery AND PKS
+    machinery), and is the vocabulary every counting and filtering surface
+    uses — the biologically meaningful reading, and the one the frontend's
+    filter rail, donut and clade comparison all share.
+
+    Consequence a consumer must know: counts over `component_classes` sum
+    to MORE than the number of clusters, because a hybrid is counted under
+    each component. `hybrid` never appears in those counts, so a legend
+    built from `stored_classes` has a category that is always empty. That
+    trap is why this endpoint states both lists instead of one.
+    """
+
+    stored_classes: list[str]
+    """Raw `bgc.bgc_class` values present in the corpus. Includes `hybrid`."""
+    component_classes: list[str]
+    """Vocabulary used by /bgc-type-counts, /tree, /flows and the UI filters.
+    Hybrids are decomposed into these; `hybrid` itself never appears."""
+    counting_note: str
+
+
+class SearchResponse(BaseModel):
+    """Search hits plus enough context to interpret them.
+
+    A bare list could not distinguish "20 matches" from "the first 20 of
+    380", nor "no matches" from "your query was too short to run" — so a
+    client had no way to tell a genuine zero from a search that never
+    executed. Both are now explicit.
+    """
+
+    query: str
+    results: list[SearchResult]
+    total: int
+    """Total matches in the database, before truncation to `limit`."""
+    truncated: bool
+    """True when `total` exceeds what was returned."""
+    limit: int
+    message: str | None = None
+    """Set when the query could not be run at all (e.g. too short), so a
+    zero-result response is never mistaken for a genuine no-match."""
+
+
 class BGCFamilySummary(BaseModel):
     """A Gene Cluster Family, with enough rolled-up context for the
     frontend to show why it's interesting without a second request.
@@ -135,6 +183,19 @@ class BGCFamilySummary(BaseModel):
 
     id: uuid.UUID
     label: str
+    kind: FamilyKind
+    """Sequence family (BiG-SCAPE GCF) or compound group. These are
+    different scientific objects — see `FamilyKind`. A client must not
+    present a compound group as evidence of sequence similarity."""
+    kind_note: str
+    """Plain-language rendering of `kind`, for direct display."""
+    is_generic_product: bool = False
+    """Compound groups only: the group's compound is a product *category*
+    ("carotenoid", "capsular polysaccharide"), not a single molecule. Such
+    a group means "both make some carotenoid", which is a much weaker
+    statement than "both make the same compound" — and the four largest
+    groups in the shipped corpus are exactly these. Flagged so the UI can
+    say so rather than presenting them identically."""
     clustering_method: str | None = None
     clustering_cutoff: float | None = None
     member_count: int
@@ -250,6 +311,11 @@ class PrioritizationOut(BaseModel):
     """None when too few components were computable to combine."""
     components: list[ComponentScoreOut]
     unavailable_components: list[str]
+    caveats: list[str] = []
+    """Caveats specific to THIS cluster (its component coverage, its
+    by-construction bias). Corpus-wide caveats live on the response's own
+    `caveats` field; keeping them apart stops one row's coverage being
+    asserted over every other row in the ranking."""
 
 
 class PrioritizationResponse(BaseModel):

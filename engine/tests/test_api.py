@@ -9,6 +9,8 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+
+from tests.conftest import requires_pdf_renderer
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -140,8 +142,14 @@ def test_taxonomy_tree_reaches_species_with_direct_genomes(api_client):
 def test_bgc_classes_endpoint(api_client):
     response = api_client.get("/api/v1/bgc-classes")
     assert response.status_code == 200
+    body = response.json()
     # MIBiG contributes nrps + hybrid; antiSMASH adds terpene.
-    assert set(response.json()) == {"nrps", "hybrid", "terpene"}
+    assert set(body["stored_classes"]) == {"nrps", "hybrid", "terpene"}
+    # The hybrid decomposes into its components, and "hybrid" itself never
+    # appears in the vocabulary the counting endpoints use.
+    assert "hybrid" not in body["component_classes"]
+    assert {"nrps", "terpene"} <= set(body["component_classes"])
+    assert body["counting_note"]
 
 
 def test_genome_detail_not_found(api_client):
@@ -220,21 +228,36 @@ def test_antismash_bgc_detail_has_no_compounds(api_client):
 def test_search_by_organism_name(api_client):
     response = api_client.get("/api/v1/search", params={"q": "testomycini"})
     assert response.status_code == 200
-    results = response.json()
-    assert any(r["kind"] == "taxon" and "testomycini" in r["label"] for r in results)
+    body = response.json()
+    assert any(r["kind"] == "taxon" and "testomycini" in r["label"] for r in body["results"])
+    assert body["total"] >= 1
+    assert body["truncated"] is False
+    assert body["message"] is None
 
 
 def test_search_by_genome_accession(api_client):
     response = api_client.get("/api/v1/search", params={"q": "GCF_TEST900001"})
     assert response.status_code == 200
-    results = response.json()
-    assert any(r["kind"] == "genome" for r in results)
+    assert any(r["kind"] == "genome" for r in response.json()["results"])
 
 
-def test_search_short_query_returns_empty(api_client):
+def test_search_short_query_says_it_did_not_run(api_client):
+    """A too-short query must be distinguishable from a genuine no-match.
+
+    Returning a bare [] for both meant a client could not tell "nothing
+    matches your search" from "your search never executed", which is the
+    failure mode that makes a search box look broken.
+    """
     response = api_client.get("/api/v1/search", params={"q": "a"})
     assert response.status_code == 200
-    assert response.json() == []
+    body = response.json()
+    assert body["results"] == []
+    assert body["total"] == 0
+    assert body["message"] is not None and "at least" in body["message"]
+
+    # A genuine no-match: ran fine, found nothing, says nothing went wrong.
+    miss = api_client.get("/api/v1/search", params={"q": "zzzznomatch"}).json()
+    assert miss["results"] == [] and miss["total"] == 0 and miss["message"] is None
 
 
 # --- BGC family endpoints (Phase 3) ----------------------------------------------
@@ -398,6 +421,7 @@ _EXPORT_SVG = (
 )
 
 
+@requires_pdf_renderer
 def test_export_endpoint_returns_a_pdf(api_client):
     payload = {
         "svg": _EXPORT_SVG,
@@ -645,3 +669,63 @@ def test_bgc_type_counts_match_the_class_filter_counts(api_client):
     # Sorted largest-first.
     values = [c["count"] for c in counts]
     assert values == sorted(values, reverse=True)
+
+
+# === Regressions found by end-to-end stress testing ============================
+
+
+def test_prioritization_limit_is_bounded(api_client):
+    """`limit` was passed straight to a list slice.
+
+    limit=0 returned the WHOLE corpus (2.5 MB where the default is 21 KB)
+    because `results[:0]` was guarded by a falsy check, and limit=-1
+    returned everything-but-the-last-row via a negative slice.
+    """
+    assert api_client.get("/api/v1/prioritization", params={"limit": 0}).status_code == 422
+    assert api_client.get("/api/v1/prioritization", params={"limit": -1}).status_code == 422
+    assert api_client.get("/api/v1/prioritization", params={"limit": -2437}).status_code == 422
+
+    ok = api_client.get("/api/v1/prioritization", params={"limit": 1})
+    assert ok.status_code == 200
+    assert len(ok.json()["results"]) <= 1
+
+
+def test_prioritization_caveats_are_corpus_level_not_the_top_rows(api_client):
+    """The response's `caveats` used to be `ranked[0].caveats` verbatim, so
+    one cluster's component coverage was asserted over every other row."""
+    body = api_client.get("/api/v1/prioritization", params={"limit": 50}).json()
+    joined = " ".join(body["caveats"])
+    assert "components; unavailable" not in joined
+    assert "BY CONSTRUCTION" not in joined
+    # Per-row detail is still available, on the rows it describes.
+    assert all("caveats" in r for r in body["results"])
+
+
+def test_search_escapes_like_wildcards(api_client):
+    """`%` and `_` reached the LIKE pattern raw, so `Strep%coccus` matched
+    "Streptococcus" — a result no user typing that string expects."""
+    body = api_client.get("/api/v1/search", params={"q": "Strep%coccus"}).json()
+    assert body["results"] == []
+    body = api_client.get("/api/v1/search", params={"q": "test%mycini"}).json()
+    assert body["results"] == []
+
+
+def test_search_reports_totals_and_truncation(api_client):
+    body = api_client.get("/api/v1/search", params={"q": "test", "limit": 1}).json()
+    assert body["limit"] == 1
+    assert len(body["results"]) <= 1
+    assert body["total"] >= len(body["results"])
+    if body["total"] > len(body["results"]):
+        assert body["truncated"] is True
+
+
+def test_families_declare_their_kind(api_client):
+    """A compound group and a sequence family are different scientific
+    objects; a client must be able to tell them apart without parsing the
+    free-text clustering_method."""
+    families = api_client.get("/api/v1/families").json()
+    assert families
+    for f in families:
+        assert f["kind"] in ("sequence_family", "compound_group")
+        assert f["kind_note"]
+        assert isinstance(f["is_generic_product"], bool)

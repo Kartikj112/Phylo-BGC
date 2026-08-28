@@ -2,7 +2,8 @@
 
 **Read this file first when resuming work in a new chunk.**
 
-_Last updated: Chunk 10 (synthetic demo corpus) — 2026-08-25_
+_Last updated: correctness + performance pass following a full end-to-end
+stress test of the shipped build._
 
 ## Status at a glance
 
@@ -14,124 +15,139 @@ _Last updated: Chunk 10 (synthetic demo corpus) — 2026-08-25_
 | 2 | Visualization API + production Next.js frontend | ✅ Done |
 | 3 | BGC-family highlighting + comparative clade analysis | ✅ Done |
 | 4 | Publication-grade export | ✅ Done |
-| 5 | **User uploads + BGC prioritization scoring** | ✅ **Done (this chunk)** |
+| 5 | User uploads + BGC prioritization scoring | ✅ Done |
 
-**All five roadmap phases are implemented.** 151 engine tests (passing on
-BOTH SQLite and real Postgres) + 45 frontend tests = **196 total**.
+**Tests:** 212 engine tests (SQLite) / 211 (real Postgres 16), 4–5 skipped
+where the Cairo system library is absent · 45 frontend unit tests ·
+**11 Playwright browser tests** (new).
 
-**New: `bgcscape seed-demo`** generates ~80 genomes / ~400 BGCs / ~70
-families of clearly-labelled synthetic data, so the interface can be
-judged at realistic density. Running it immediately exposed a real
-scoring flaw invisible at fixture scale — see below.
+Real data is ingested and shipped: `engine/gtdb_mibig_bundled.db` holds all
+2,437 active MIBiG 4.0 clusters mapped onto GTDB R11-RS232 (1,739 genomes,
+1,899 taxa, 279 compound groups).
 
-The remaining work is no longer "build the next phase" — it's validation
-against reality. See "What's actually unverified" below, which is now the
-most important section of this file.
+## What this pass changed
 
-## What's new this chunk
+A full stress test against the shipped database found five broken and ten
+misleading behaviours. All are fixed; each has a regression test that fails
+without its fix. Full write-ups in ARCHITECTURE.md.
 
-```
-engine/src/bgcscape/scoring/      NEW
-└── prioritization.py    component-wise scoring; missing evidence never scored as evidence
+**Scientific correctness**
 
-engine/src/bgcscape/
-├── api/app.py           + GET /api/v1/prioritization
-└── cli/main.py          + `bgcscape prioritize`, `bgcscape ingest upload`
+- **The missing-evidence guarantee was off in the shipped build.** Compound
+  groups (`group-by-compound`) were being read as BiG-SCAPE sequence
+  families, so the prioritization scorer emitted similarity claims about a
+  corpus on which no clustering had run. On the bundle it declined to score
+  **0** of 2,437 clusters; it now declines **783**, matching the corpus
+  without compound groups exactly. `BGCFamily.kind` makes the distinction a
+  typed, CHECK-constrained column.
+- **Re-ingesting MIBiG destroyed the GTDB placement** — 1,629 clusters moved
+  off real assemblies back onto locus stubs, reported as `created=0`.
+- **`is_generic_product` was dead code, and wrong.** Now called, exposed
+  through the API, shown in the UI, and correct for hyphenated names.
+- **Provenance carried no licence.** GTDB is CC BY-SA 4.0 and requires
+  attribution; every exported figure attributed nothing. Now populated.
+- **Compound groups were typed `reference_database`.** They are `TOOL_RUN` —
+  BGC-scape derives them.
+- **Prioritization caveats described one row and were shown for all of them.**
+  Corpus-level and per-cluster caveats are now separate.
+- **The Sankey's `hybrid_double_counted` under-reported** by one per 3-way
+  hybrid, so the flows did not reconcile.
 
-engine/tests/test_scoring.py      NEW — 17 tests
-```
+**Robustness**
 
-## The design decision that mattered
+- `alembic revision --autogenerate` no longer emits CHECK-constraint drops.
+  It previously took the schema from 12 constraints to 1 with no model
+  changes, on both dialects.
+- `/api/v1/prioritization?limit` is bounded; `limit=0` used to return the
+  whole corpus and `limit=-1` everything-but-the-last-row.
+- Missing Cairo returns 503 with an install hint, not a bare 500.
+- `/api/v1/search` escapes LIKE wildcards and reports totals, truncation and
+  a "query too short" message.
 
-The report requires a **prioritization score, never a novelty claim**.
-Three properties enforce that structurally rather than by comment:
+**Performance** (2,437-BGC bundle, measured before and after)
 
-1. **Components are never collapsed into a bare number.** Every result
-   carries its per-component breakdown with plain-language explanations.
-2. **Weights are uniform by default and overridable.** An unequal default
-   would encode a scientific judgement that belongs to the researcher, not
-   this module. Every result says so in its caveats.
-3. **Missing evidence is never scored as evidence.** If MIBiG hasn't been
-   ingested, "no close MIBiG relative" is a fact about the database, not
-   the cluster — scoring it as maximal distance would rank every cluster
-   in an empty corpus as maximally interesting. Uncomputable components
-   return `None`, are excluded from the mean (not zeroed, not maxed), and
-   are named. Below two available components, **no score is produced at
-   all** — an honest refusal beats a confident number from one proxy.
+| endpoint | before | after |
+|---|---|---|
+| `/api/v1/taxonomy-tree` | 0.662 s / 1.10 MB | **0.149 s / 0.23 MB** |
+| `/api/v1/tree?depth=1` | 0.587 s | **0.087 s** |
+| `/api/v1/heatmap?rank=genus` | 0.432 s / 192 KB | **0.061 s / 24 KB** |
+| `/api/v1/flows/taxonomy-class` | 0.457 s | **0.065 s** |
 
-The central test in `test_scoring.py` is
-`test_absent_mibig_does_not_inflate_scores`; everything else supports it.
+Cause: every one of these loaded mapped ORM objects, so SQLAlchemy decoded
+~4,200 `BGC.raw_annotation` JSON blobs per request for data none of them
+read — 41% of tree-build CPU. Plus gzip, which was simply absent.
 
-## Verified end-to-end this chunk
+Frontend: the pan/zoom transform is no longer React state, so a pan does not
+reconcile 3,528 nodes per mouse-move. **3 long tasks → 0** over a 40-step drag.
 
-Against **real Postgres**: full pipeline → user upload via
-`bgcscape ingest upload` (recorded as `SourceType.USER_UPLOAD`, not
-`TOOL_RUN`) → `bgcscape prioritize --show-components`. Confirmed
-unavailable components render as `unavailable`, not as zeroes, and that a
-MIBiG reference entry correctly scores 0.00 on distance.
+## What is verified, and how
 
-## What's actually unverified — read this before trusting anything
+- Engine suite on **SQLite and real Postgres 16**.
+- Migrations empty → head → base → head on **both dialects**, 13 CHECK
+  constraints intact.
+- Ingestion idempotency for **all five sources** by row count, three runs each.
+- Prioritization on **MIBiG-only, GTDB-only, and both**, with and without
+  compound groups.
+- **Browser tests (Playwright/Chromium)**: initial load, middle-drag pan,
+  wheel zoom, every "Show down to" level, radial/horizontal toggle, search
+  match counts, filter fallback, the SVG download and its embedded
+  provenance, the PDF error path, and a real cross-origin preflight on the
+  export POST. These cover the interactions previous passes could only mark
+  as unverified.
+- Round trip: `bgcscape inspect-figure` on an exported SVG **with
+  `BGCSCAPE_DATABASE_URL` unset**.
 
-The build is complete; the **validation is not**. In rough order of how
-much it should worry you:
+## What is still unverified — read this before trusting it
 
-1. **The UI at realistic density has not been assessed.** It's now been
-   seen at 5 genomes (verdict: "looks like a simple tree, expected
-   something prettier") — but that's the skeleton without the density the
-   design depends on. Seed the demo corpus and look again before deciding
-   the aesthetic needs changing.
-
-   *Known scoring bias found this way:* over 80 genomes, the entire top of
-   the prioritization ranking was unclustered BGCs — they score 1.0 on
-   `unclustered` while making three other components uncomputable, so the
-   mean is over few, high signals. Not corrected (that would mean
-   inventing evidence or making a weighting judgement for you); it's named
-   in an explicit caveat on any affected result. Deciding the remedy is a
-   real scientific call — see ARCHITECTURE.md.
-2. **The scoring weights are uncalibrated, by design.** They're uniform
-   because picking otherwise would be inventing a scientific claim. Tuning
-   them requires real data at volume; weights fitted against fixture
-   genomes would encode the fixtures, not the biology.
-3. **No real data has ever been ingested.** Only schema-accurate synthetic
-   fixtures. The parsers were written against verified real formats (read
-   from the tools' own source), but "verified format" ≠ "works on a real
-   50,000-genome GTDB release."
-4. **The export button's browser path is untested.**
-   `URL.createObjectURL` + synthetic click is exercised only through unit
-   tests of the pure functions around it.
-5. **GitHub Actions CI has never run on a real runner** — though what it
-   runs is now verified correct in substance.
+1. **PDF rendering is untested on this machine.** The Cairo system library is
+   not installable here, so the four PDF tests skip. The Docker image installs
+   `libcairo2`, and the browser test asserts the *error* path is actionable,
+   but "a real PDF comes out" has not been observed in this pass. Run the
+   suite in the container to close it.
+2. **The scoring weights remain uncalibrated, by design.** Uniform because
+   choosing otherwise encodes a scientific judgement that belongs to the
+   researcher. Calibrating them needs real data at volume and is a scientific
+   task, not a coding one.
+3. **The unclustered-scores-high-by-construction bias is named, not fixed.**
+   An unclustered cluster scores 1.0 on one component while making three
+   uncomputable, so its mean is over few, high signals. Correcting it means
+   either inventing evidence or making a weighting judgement; it is surfaced
+   in a per-cluster caveat instead.
+4. **No sequence families in the bundle.** Everything family-shaped in the
+   shipped corpus is a compound group. The three sequence-similarity
+   components are uncomputable corpus-wide, which is why 783 clusters decline
+   to score. A BiG-SCAPE run is the only thing that changes this.
+5. **E2E tests are not in CI.** They need a workflow that starts both servers
+   and a database.
+6. **The frontend still uses the eager `/taxonomy-tree`.** Now that the lazy
+   endpoint is genuinely fast (6.7x), porting is worthwhile — but it is a real
+   piece of work (fetch-on-expand, cache invalidation, focus interaction) and
+   export needs a complete figure either way.
 
 ## Deferred by choice
 
 CORASON integration · sequence-level divergence and domain-architecture
-scoring components (need MAFFT/HMMER, treated as external analysis
-dependencies — adding them means adding components, not restructuring the
-scorer) · full per-field multi-source provenance · `similarity_score` on
-family memberships (BiG-SCAPE's clustering TSV doesn't carry pairwise
-distances; they're in a separate network file).
+scoring components (need MAFFT/HMMER) · full per-field multi-source
+provenance · `similarity_score` on family memberships (BiG-SCAPE's clustering
+TSV doesn't carry pairwise distances).
 
 ## Environment notes
 
-- Postgres: sandbox-local cluster, port 5433 (`/tmp/pgdata`), does not
-  persist between chunks. Fresh sandbox:
-  `apt-get update && apt-get install -y postgresql`, `initdb`, then
-  `su postgres -c "/usr/lib/postgresql/16/bin/pg_ctl -D /tmp/pgdata -l /tmp/pg.log -o '-p 5433 -k /tmp' start"`
+- Postgres for tests: `BGCSCAPE_TEST_DATABASE_URL` (note the `_TEST_` — the
+  fixture drops and recreates the schema). A container is enough:
+  `docker run -d -e POSTGRES_PASSWORD=bgcscape -e POSTGRES_USER=bgcscape -e POSTGRES_DB=bgcscape -p 55432:5432 postgres:16`
 - The `export` extra needs Cairo system libraries (`libcairo2`).
-- Run the engine suite against Postgres with `BGCSCAPE_TEST_DATABASE_URL`
-  (note the `_TEST_` — deliberately distinct from the app's variable,
-  because the fixture drops and recreates the schema).
+- Browser tests: `npx playwright install chromium`, start uvicorn and
+  `next start`, then `npm run e2e` from `web/`.
+- **A database built before this pass must be migrated** — see DEPLOY.md,
+  "Upgrading a database built before this change". Without it,
+  `/api/v1/families` and `/api/v1/prioritization` return 500.
 
 ## How to resume
 
-There is no obvious "next phase" — the roadmap is done. The highest-value
-next steps, in order:
-
-1. **Look at the UI and tell me what's wrong with it.** Genuinely the
-   biggest gap, and I can't close it from here.
-2. **Ingest real MIBiG/GTDB data at volume** somewhere with real network
-   access, and report what breaks. The parsers are the most likely thing
-   to surface surprises.
-3. **Calibrate the scoring weights** once (2) exists — a real scientific
-   task, not a coding one, and one I'd want your judgement on.
-4. Deploy: docker-compose is written but never run; CI never executed.
+1. **Run the engine suite in Docker** to close the PDF gap (item 1 above).
+2. **Wire the e2e tests into CI.**
+3. **Ingest antiSMASH + BiG-SCAPE output** to get real sequence families —
+   the single change that most improves what the scorer can say.
+4. **Port the frontend to the lazy tree endpoint** when the corpus outgrows
+   the eager payload.

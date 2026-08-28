@@ -34,7 +34,19 @@ CONFIG_ELEMENT = "bgcscape-view-config"
 
 
 class SvgRenderError(ValueError):
-    pass
+    """The SVG could not be rendered — a problem with the input."""
+
+
+class PdfRendererUnavailable(SvgRenderError):
+    """PDF rendering is not available in this deployment.
+
+    Distinct from `SvgRenderError` because the cause is a missing server
+    capability, not bad input: the caller's request was fine and retrying
+    with different SVG will not help. Callers should surface this as a
+    server-side 503 with the install hint, never as a bare 500 — which is
+    what a deployment without the Cairo system libraries used to produce,
+    reaching the user as the uninterpretable string "Export failed: 500".
+    """
 
 
 def embed_view_config(svg: str, config: ViewConfig) -> str:
@@ -175,8 +187,19 @@ def render_pdf(svg: str) -> bytes:
     try:
         import cairosvg
     except ImportError as exc:  # pragma: no cover - environment-dependent
-        raise SvgRenderError(
-            "PDF export needs cairosvg and its Cairo system libraries: pip install 'bgcscape[export]'"
+        raise PdfRendererUnavailable(
+            "PDF export needs cairosvg: pip install 'bgcscape[export]'. "
+            "SVG export is unaffected and remains available."
+        ) from exc
+    except OSError as exc:  # pragma: no cover - environment-dependent
+        # cairocffi raises OSError (not ImportError) from dlopen when the
+        # Python package is installed but the Cairo *system* library is
+        # not — the common case on Windows and on any non-Docker deploy.
+        # Catching only ImportError let this escape as an unhandled 500.
+        raise PdfRendererUnavailable(
+            "PDF export needs the Cairo system library, which is not installed on this server "
+            f"(cairosvg could not load it: {exc}). On Debian/Ubuntu: apt-get install libcairo2. "
+            "SVG export is unaffected and remains available."
         ) from exc
 
     return cairosvg.svg2pdf(bytestring=svg.encode("utf-8"))

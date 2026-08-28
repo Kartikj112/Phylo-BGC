@@ -26,8 +26,9 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session
 
+from bgcscape.api.tree_builder import component_classes, load_classified_bgc_rows
 from bgcscape.models import BGC, Genome, Taxon, TaxonRank
 
 
@@ -44,18 +45,41 @@ def build_taxonomy_class_flow(session: Session, max_nodes_per_stage: int = 12) -
     "other" bucket rather than dropped — silently omitting flow would make
     the widths wrong, which is precisely the failure a Sankey must avoid.
     """
-    taxa = {t.id: t for t in session.query(Taxon).all()}
-    genomes = (
-        session.query(Genome).options(selectinload(Genome.bgcs)).filter(Genome.taxon_id.isnot(None)).all()
-    )
+    # Scalar columns only — the ORM load here decoded every BGC's
+    # `raw_annotation` blob to build a diagram of integer flow widths.
+    taxa = {
+        tid: (parent_id, name, rank)
+        for tid, parent_id, name, rank in session.query(
+            Taxon.id, Taxon.parent_id, Taxon.name, Taxon.rank
+        )
+    }
 
-    def ancestor_at(taxon_id, rank: TaxonRank) -> Taxon | None:
-        current = taxa.get(taxon_id)
-        while current is not None:
-            if current.rank == rank:
-                return current
-            current = taxa.get(current.parent_id) if current.parent_id else None
-        return None
+    _ancestor_cache: dict[tuple, tuple | None] = {}
+
+    def ancestor_at(taxon_id, rank: TaxonRank):
+        """Nearest ancestor at `rank`, memoised per (taxon, rank).
+
+        Genomes in one clade share nearly all of their ancestor walk, so
+        without the cache this climbed the same chain once per genome.
+        """
+        key = (taxon_id, rank)
+        if key in _ancestor_cache:
+            return _ancestor_cache[key]
+        chain = []
+        current = taxon_id
+        found = None
+        seen: set = set()
+        while current is not None and current in taxa and current not in seen:
+            seen.add(current)
+            chain.append(current)
+            parent_id, name, node_rank = taxa[current]
+            if node_rank == rank:
+                found = (current, name)
+                break
+            current = parent_id
+        for node in chain:
+            _ancestor_cache[(node, rank)] = found
+        return found
 
     phylum_genus: dict[tuple[str, str], int] = defaultdict(int)
     genus_class: dict[tuple[str, str], int] = defaultdict(int)
@@ -64,21 +88,28 @@ def build_taxonomy_class_flow(session: Session, max_nodes_per_stage: int = 12) -
     hybrid_double_counted = 0
     unclassified = 0
 
-    for genome in genomes:
-        phylum = ancestor_at(genome.taxon_id, TaxonRank.PHYLUM)
-        genus = ancestor_at(genome.taxon_id, TaxonRank.GENUS)
+    for _genome_id, taxon_id, bgc_class, subtype in load_classified_bgc_rows(session):
+        phylum = ancestor_at(taxon_id, TaxonRank.PHYLUM)
+        genus = ancestor_at(taxon_id, TaxonRank.GENUS)
         if phylum is None or genus is None:
-            unclassified += len(genome.bgcs)
+            unclassified += 1
             continue
-        for bgc in genome.bgcs:
-            phylum_genus[(phylum.name, genus.name)] += 1
-            phylum_totals[phylum.name] += 1
-            genus_totals[genus.name] += 1
-            classes = _component_classes(bgc)
-            if len(classes) > 1:
-                hybrid_double_counted += 1
-            for cls in classes:
-                genus_class[(genus.name, cls)] += 1
+        phylum_genus[(phylum[1], genus[1])] += 1
+        phylum_totals[phylum[1]] += 1
+        genus_totals[genus[1]] += 1
+        classes = component_classes(bgc_class, subtype)
+        if len(classes) > 1:
+            # The EXCESS link units this cluster contributes, not the
+            # number of clusters. A three-way hybrid emits three links
+            # where a simple cluster emits one, so it inflates the final
+            # column by two, not one. Counting clusters here made the
+            # reported figure under-report by exactly the number of
+            # 3-way hybrids (16 on the real corpus), leaving a reader who
+            # tried to reconcile 2,271 against 1,913 with an unexplained
+            # gap — which is the opposite of what this field is for.
+            hybrid_double_counted += len(classes) - 1
+        for cls in classes:
+            genus_class[(genus[1], cls)] += 1
 
     def keep(totals: dict[str, int]) -> set[str]:
         ranked = sorted(totals.items(), key=lambda kv: -kv[1])

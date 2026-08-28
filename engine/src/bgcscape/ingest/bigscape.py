@@ -41,7 +41,7 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from bgcscape.ingest._util import IngestReport, get_or_create_or_update
-from bgcscape.models import BGC, BGCFamily, BGCFamilyMembership, EvidenceLevel, Source
+from bgcscape.models import BGC, BGCFamily, BGCFamilyMembership, EvidenceLevel, FamilyKind, Source
 from bgcscape.schemas import BGCFamilyCreate, BGCFamilyMembershipCreate
 
 _CUTOFF_FROM_FILENAME = re.compile(r"_c(\d+\.?\d*)\.tsv$")
@@ -103,6 +103,9 @@ def load_bigscape_membership(
 
     family_create = BGCFamilyCreate(
         label=parsed.family_label,
+        # BiG-SCAPE compares sequences, so these are the real thing — the
+        # only kind the prioritization scorer's similarity components read.
+        kind=FamilyKind.SEQUENCE_FAMILY,
         clustering_method=clustering_method,
         clustering_cutoff=cutoff,
         source_id=source.id,

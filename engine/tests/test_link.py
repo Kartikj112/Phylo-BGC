@@ -187,3 +187,81 @@ def test_read_mapping_parses_the_tsv(tmp_path: Path) -> None:
         ("BGC0000001", "GCF_000204155.1", "ncbi_taxid"),
         ("BGC0000002", "GCF_000525635.1", "gtdb_species"),
     ]
+
+
+# === Re-ingestion must not undo placement ======================================
+
+
+def test_reingesting_mibig_does_not_undo_the_gtdb_placement(session) -> None:
+    """THE regression test for the re-ingest corruption.
+
+    `ingest mibig` -> `link-mibig` -> `ingest mibig` is the documented
+    "new MIBiG release" workflow. The second ingest used to recreate the
+    deleted locus stub and point the cluster back at it, silently undoing
+    every placement: on the real corpus that moved 1,629 clusters off real
+    GTDB assemblies back onto locus stubs and regrew 665 orphan species
+    nodes — while reporting `created=0, updated=2437`, i.e. perfectly
+    idempotent. Row counts, not the report line, are what caught it.
+    """
+    from bgcscape.ingest.mibig import ParsedMibigEntry, load_mibig_entry
+
+    src, gtdb_genome, locus, bgc = _fixture(session)
+    link_mibig_to_gtdb(session, [("BGC0000001", "GCF_000204155.1", "ncbi_taxid")])
+    session.commit()
+
+    assert bgc.genome_id == gtdb_genome.id
+    assert session.query(Genome).filter_by(accession="JF752342.1").one_or_none() is None
+    genomes_before = session.query(Genome).count()
+    taxa_before = session.query(Taxon).count()
+
+    # Re-ingest the same entry, exactly as a release refresh would.
+    entry = ParsedMibigEntry(
+        mibig_accession="BGC0000001",
+        status="active",
+        locus_accession="JF752342.1",
+        organism_name="Verrucosispora maris",
+        ncbi_taxid=1003110,
+        bgc_class=BGCClass.PKS,
+        subtype=None,
+        start_coord=None,
+        end_coord=None,
+        compounds=[],
+        raw={"accession": "BGC0000001"},
+    )
+    load_mibig_entry(session, entry, src)
+    session.commit()
+
+    session.refresh(bgc)
+    assert bgc.genome_id == gtdb_genome.id, "re-ingest must not repoint a placed cluster"
+    assert (
+        session.query(Genome).filter_by(accession="JF752342.1").one_or_none() is None
+    ), "the deleted locus stub must not be resurrected"
+    assert session.query(Genome).count() == genomes_before
+    assert session.query(Taxon).count() == taxa_before
+
+
+def test_reingesting_an_unplaced_entry_still_creates_its_locus_stub(session) -> None:
+    """The guard must be surgical: an entry that was never linked still
+    needs its stub, or a genuine new release would ingest nothing."""
+    from bgcscape.ingest.mibig import ParsedMibigEntry, load_mibig_entry
+
+    src = _source(session)
+    entry = ParsedMibigEntry(
+        mibig_accession="BGC0000999",
+        status="active",
+        locus_accession="ZZ999999.1",
+        organism_name="Streptomyces novus",
+        ncbi_taxid=999999,
+        bgc_class=BGCClass.PKS,
+        subtype=None,
+        start_coord=None,
+        end_coord=None,
+        compounds=[],
+        raw={"accession": "BGC0000999"},
+    )
+    load_mibig_entry(session, entry, src)
+    session.commit()
+
+    stub = session.query(Genome).filter_by(accession="ZZ999999.1").one_or_none()
+    assert stub is not None
+    assert stub.assembly_level == AssemblyLevel.LOCUS

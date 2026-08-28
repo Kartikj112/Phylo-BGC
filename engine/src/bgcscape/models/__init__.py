@@ -8,7 +8,7 @@ rather than reaching into individual submodules first.
 """
 from bgcscape.models.base import Base, EvidenceLevel, ProvenanceMixin, TimestampMixin
 from bgcscape.models.bgc import BGC, BGCClass
-from bgcscape.models.bgc_family import BGCFamily, BGCFamilyMembership
+from bgcscape.models.bgc_family import BGCFamily, BGCFamilyMembership, FamilyKind
 from bgcscape.models.compound import BGCCompoundLink, Compound
 from bgcscape.models.genome import AssemblyLevel, Genome
 from bgcscape.models.phylogeny import PhylogeneticNode, PhylogeneticTree
@@ -32,6 +32,7 @@ __all__ = [
     "BGCClass",
     "BGCFamily",
     "BGCFamilyMembership",
+    "FamilyKind",
     "Compound",
     "BGCCompoundLink",
 ]

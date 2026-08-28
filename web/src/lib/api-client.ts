@@ -14,7 +14,8 @@ import type {
   PresenceHeatmap,
   TaxonomyClassFlow,
   GenomeDetail,
-  SearchResult,
+  SearchResponse,
+  BGCClassVocabulary,
   TaxonTreeNode,
 } from "./api-types";
 
@@ -51,8 +52,14 @@ export function fetchTaxonomyTree(): Promise<TaxonTreeNode> {
   return getJson<TaxonTreeNode>("/api/v1/taxonomy-tree");
 }
 
-export function fetchBgcClasses(): Promise<string[]> {
-  return getJson<string[]>("/api/v1/bgc-classes");
+/** Both BGC-class vocabularies, plus the note explaining how they differ.
+ *
+ * Returns an object, not a flat list: `stored_classes` includes `hybrid`
+ * while `component_classes` (what every count and filter uses) decomposes
+ * hybrids and never contains it. A legend built from the wrong one carries
+ * a permanently empty category. */
+export function fetchBgcClasses(): Promise<BGCClassVocabulary> {
+  return getJson<BGCClassVocabulary>("/api/v1/bgc-classes");
 }
 
 export function fetchGenome(genomeId: string): Promise<GenomeDetail> {
@@ -63,8 +70,17 @@ export function fetchBgc(bgcId: string): Promise<BGCDetail> {
   return getJson<BGCDetail>(`/api/v1/bgcs/${bgcId}`);
 }
 
-export function search(query: string): Promise<SearchResult[]> {
-  return getJson<SearchResult[]>(`/api/v1/search?q=${encodeURIComponent(query)}`);
+/** Server-side search over taxa and genome accessions.
+ *
+ * Returns totals and a `message`, not a bare array: the caller must be able
+ * to tell "the first 20 of 380 matches" from "all 20 that exist", and "no
+ * matches" from "the query was too short to run". The tree view does its
+ * own client-side matching over the loaded tree instead — this is for
+ * callers that don't hold the whole tree. */
+export function search(query: string, limit?: number): Promise<SearchResponse> {
+  const params = new URLSearchParams({ q: query });
+  if (limit != null) params.set("limit", String(limit));
+  return getJson<SearchResponse>(`/api/v1/search?${params}`);
 }
 
 export function fetchFamilies(): Promise<BGCFamilySummary[]> {

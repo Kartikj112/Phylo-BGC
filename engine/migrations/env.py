@@ -12,7 +12,7 @@ from logging.config import fileConfig
 from pathlib import Path
 
 from alembic import context
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import CheckConstraint, engine_from_config, pool
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -28,6 +28,34 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
+def include_object(obj, name, type_, reflected, compare_to) -> bool:
+    """Exclude CHECK constraints from autogenerate comparison.
+
+    Alembic cannot reliably round-trip the CHECK constraints that
+    `SAEnum(..., create_constraint=True)` emits: they are produced at DDL
+    time and reflection does not match them back to anything in the model
+    metadata. The result is that autogenerate reports EVERY named CHECK
+    constraint as "removed" and emits a drop for it in `upgrade()` while
+    recreating none — even when the models have not changed at all.
+
+    Applying such a migration silently destroys every enum guard in the
+    database. That is not hypothetical: it was verified by running
+    `alembic revision --autogenerate` against an at-head database with no
+    model changes, on BOTH SQLite and Postgres, and watching the CHECK
+    count fall from 12 to 1 and an invalid `source_type` become insertable
+    by raw SQL.
+
+    These constraints are owned declaratively by the enum columns in
+    `bgcscape.models`, so autogenerate has no business diffing them. When an
+    enum vocabulary genuinely changes, the migration is hand-written — which
+    is what ARCHITECTURE.md already prescribes. This hook makes that policy
+    mechanical rather than a rule someone has to remember.
+    """
+    if type_ == "check_constraint" or isinstance(obj, CheckConstraint):
+        return False
+    return True
+
+
 def get_url() -> str:
     return get_settings().database_url
 
@@ -40,6 +68,7 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         render_as_batch=url.startswith("sqlite"),
+        include_object=include_object,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -68,6 +97,7 @@ def run_migrations_online() -> None:
             connection=connection,
             target_metadata=target_metadata,
             render_as_batch=connection.dialect.name == "sqlite",
+            include_object=include_object,
         )
         with context.begin_transaction():
             context.run_migrations()

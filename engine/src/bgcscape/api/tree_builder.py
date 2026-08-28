@@ -22,56 +22,96 @@ from __future__ import annotations
 import uuid
 from collections import defaultdict
 
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session
 
 from bgcscape.api.schemas import BGCSummary, GenomeSummary, TaxonTreeNode
-from bgcscape.models import BGC, Genome, Taxon
+from bgcscape.models import BGC, BGCFamilyMembership, Genome, Taxon
 
 
-def _genome_summary(genome: Genome) -> GenomeSummary:
-    return GenomeSummary(
-        id=genome.id,
-        accession=genome.accession,
-        assembly_level=genome.assembly_level,
-        is_mag=genome.is_mag,
-        genome_size_bp=genome.genome_size_bp,
-        gc_content_pct=genome.gc_content_pct,
-        completeness_pct=genome.completeness_pct,
-        bgcs=[
+def _load_genome_summaries(session: Session) -> dict[uuid.UUID, list[GenomeSummary]]:
+    """Build every GenomeSummary in three flat column queries.
+
+    Deliberately NOT the ORM. Loading `Genome` and `BGC` as mapped objects
+    hydrates every column, and `BGC.raw_annotation` is a JSONVariant holding
+    the entire original MIBiG record — so SQLAlchemy ran `json.loads` on
+    ~4,200 sizeable blobs per request to build a tree that never looks at
+    them. That single unused column was 41% of the build's CPU time
+    (profiled: 0.34s of 0.82s in `json.decoder.raw_decode`).
+
+    Selecting scalar columns skips both the JSON decode and the ORM
+    identity-map/instrumentation overhead, and the shape of the result is
+    identical.
+    """
+    memberships_by_bgc: dict[uuid.UUID, list[uuid.UUID]] = defaultdict(list)
+    for bgc_id, family_id in session.query(
+        BGCFamilyMembership.bgc_id, BGCFamilyMembership.family_id
+    ):
+        memberships_by_bgc[bgc_id].append(family_id)
+
+    bgcs_by_genome: dict[uuid.UUID, list[BGCSummary]] = defaultdict(list)
+    for bgc_id, genome_id, bgc_class, subtype, mibig_accession, evidence_level in session.query(
+        BGC.id, BGC.genome_id, BGC.bgc_class, BGC.subtype, BGC.mibig_accession, BGC.evidence_level
+    ):
+        bgcs_by_genome[genome_id].append(
             BGCSummary(
-                id=bgc.id,
-                bgc_class=bgc.bgc_class,
-                subtype=bgc.subtype,
-                mibig_accession=bgc.mibig_accession,
-                evidence_level=bgc.evidence_level,
-                family_ids=[m.family_id for m in bgc.family_memberships],
+                id=bgc_id,
+                bgc_class=bgc_class,
+                subtype=subtype,
+                mibig_accession=mibig_accession,
+                evidence_level=evidence_level,
+                family_ids=memberships_by_bgc.get(bgc_id, []),
             )
-            for bgc in genome.bgcs
-        ],
-    )
+        )
+
+    by_taxon: dict[uuid.UUID, list[GenomeSummary]] = defaultdict(list)
+    for (
+        genome_id,
+        taxon_id,
+        accession,
+        assembly_level,
+        is_mag,
+        genome_size_bp,
+        gc_content_pct,
+        completeness_pct,
+    ) in session.query(
+        Genome.id,
+        Genome.taxon_id,
+        Genome.accession,
+        Genome.assembly_level,
+        Genome.is_mag,
+        Genome.genome_size_bp,
+        Genome.gc_content_pct,
+        Genome.completeness_pct,
+    ):
+        if taxon_id is None:
+            continue
+        by_taxon[taxon_id].append(
+            GenomeSummary(
+                id=genome_id,
+                accession=accession,
+                assembly_level=assembly_level,
+                is_mag=is_mag,
+                genome_size_bp=genome_size_bp,
+                gc_content_pct=gc_content_pct,
+                completeness_pct=completeness_pct,
+                bgcs=bgcs_by_genome.get(genome_id, []),
+            )
+        )
+    return by_taxon
 
 
 def build_taxonomy_tree(session: Session) -> TaxonTreeNode:
-    taxa = session.query(Taxon).all()
-    genomes = (
-        session.query(Genome)
-        .options(selectinload(Genome.bgcs).selectinload(BGC.family_memberships))
-        .all()
-    )
+    taxa = session.query(Taxon.id, Taxon.parent_id, Taxon.name, Taxon.rank).all()
+    genomes_by_taxon = _load_genome_summaries(session)
 
-    children_by_parent: dict[uuid.UUID | None, list[Taxon]] = defaultdict(list)
+    children_by_parent: dict[uuid.UUID | None, list[tuple]] = defaultdict(list)
     for taxon in taxa:
         children_by_parent[taxon.parent_id].append(taxon)
     for siblings in children_by_parent.values():
         siblings.sort(key=lambda t: t.name)
 
-    genomes_by_taxon: dict[uuid.UUID, list[Genome]] = defaultdict(list)
-    for genome in genomes:
-        if genome.taxon_id is not None:
-            genomes_by_taxon[genome.taxon_id].append(genome)
-
-    def build_node(taxon: Taxon) -> TaxonTreeNode:
-        direct_genomes = [_genome_summary(g) for g in genomes_by_taxon.get(taxon.id, [])]
+    def build_node(taxon) -> TaxonTreeNode:
+        direct_genomes = genomes_by_taxon.get(taxon.id, [])
         children = [build_node(child) for child in children_by_parent.get(taxon.id, [])]
 
         bgc_class_counts: dict[str, int] = defaultdict(int)
@@ -108,3 +148,34 @@ def build_taxonomy_tree(session: Session) -> TaxonTreeNode:
         direct_genomes=[],
         children=top_level_nodes,
     )
+
+
+def load_classified_bgc_rows(session: Session) -> list[tuple[uuid.UUID, uuid.UUID, str, str | None]]:
+    """`(genome_id, taxon_id, bgc_class, subtype)` for every BGC on a genome
+    that has a taxon.
+
+    The shared primitive behind the heatmap and the Sankey flows. Both used
+    to `selectinload(Genome.bgcs)`, which hydrates full BGC objects — and so
+    paid the same `raw_annotation` JSON-decode cost as the tree builder for
+    data neither of them reads. One join returning four scalar columns does
+    the whole job.
+    """
+    return (
+        session.query(Genome.id, Genome.taxon_id, BGC.bgc_class, BGC.subtype)
+        .join(BGC, BGC.genome_id == Genome.id)
+        .filter(Genome.taxon_id.isnot(None))
+        .all()
+    )
+
+
+def component_classes(bgc_class, subtype: str | None) -> list[str]:
+    """A hybrid's component classes; otherwise the class itself.
+
+    An `nrps+pks` cluster is NRPS machinery AND PKS machinery, and every
+    counting surface in the app agrees on that reading. Centralised so the
+    heatmap, the flows and the frontend cannot drift apart — they did once.
+    """
+    value = bgc_class.value if hasattr(bgc_class, "value") else str(bgc_class)
+    if value == "hybrid" and subtype:
+        return [p.strip().lower() for p in subtype.split("+") if p.strip()]
+    return [value]

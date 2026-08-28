@@ -130,26 +130,56 @@ Fly stays warm better than Render's free tier and has no per-request cold start.
 
 ## Rebuilding the bundled GTDB + MIBiG dataset
 
-`engine/gtdb_mibig_bundled.db` is checked in. To regenerate it (e.g. after a new
-MIBiG or GTDB release), from `engine/`:
+`engine/gtdb_mibig_bundled.db` is checked in. Rebuild it with the script —
+**not** by hand:
 
 ```bash
+cd engine
+
 # 1. Pick the GTDB genomes MIBiG entries resolve to, and write the mapping.
 #    Scans all ~879,000 GTDB rows; takes a few minutes.
-python scripts/build_gtdb_subset.py \
-    --gtdb    ../../../bac120_metadata.tsv.gz \
-    --mibig   ../../../data/mibig_json_4.0/mibig_json_4.0 \
-    --out     data/gtdb_mibig_subset.tsv \
-    --map-out data/mibig_gtdb_map.tsv
+python scripts/build_gtdb_subset.py     --gtdb    ../../../bac120_metadata.tsv.gz     --mibig   ../../../data/mibig_json_4.0/mibig_json_4.0     --out     data/gtdb_mibig_subset.tsv     --map-out data/mibig_gtdb_map.tsv
 
-# 2. Build the database.
-export BGCSCAPE_DATABASE_URL=sqlite+pysqlite:///./gtdb_mibig_bundled.db
-bgcscape init-db
-bgcscape ingest gtdb  data/gtdb_mibig_subset.tsv
-bgcscape ingest mibig ../../../data/mibig_json_4.0/mibig_json_4.0 --version 4.0
-bgcscape link-mibig   data/mibig_gtdb_map.tsv   # attach clusters to GTDB genomes
-bgcscape graft-taxonomy                          # genus-level fallback for the rest
+# 2. Build the database (schema via Alembic, then every ingest step).
+python scripts/build_bundled_db.py     --mibig ../../../data/mibig_json_4.0/mibig_json_4.0     --out   gtdb_mibig_bundled.db
 ```
+
+The build is a script rather than a list of commands here for a reason: when
+it was prose, the prose drifted. The documented sequence omitted
+`group-by-compound` while the shipped database plainly contained 279 compound
+groups, and this file simultaneously claimed the bundle had "no gene cluster
+families" while `/api/v1/families` served them. Nobody could have reproduced
+the artifact from the instructions, and nothing detected the divergence.
+`scripts/build_bundled_db.py` is now the single definition of the pipeline;
+it prints row counts, family kinds, the Alembic stamp and any missing
+licence at the end so a drift is visible immediately.
+
+The script builds the schema **through `alembic upgrade head`**, so the
+artifact is stamped and inside migration control. Earlier bundles were
+created with `init-db` (`create_all`) and never stamped, which meant
+`alembic upgrade head` against a deployed database failed with "table source
+already exists" — there was no upgrade path at all.
+
+Commit the new `.db` and redeploy.
+
+### Upgrading a database built before this change
+
+A bundle from an older build has no `alembic_version` table and no
+`bgc_family.kind` column. The API will return 500 on `/api/v1/families` and
+`/api/v1/prioritization` until it is migrated:
+
+```bash
+export BGCSCAPE_DATABASE_URL=sqlite+pysqlite:///./gtdb_mibig_bundled.db
+alembic stamp fd9be220c0d2      # the revision that schema actually matches
+alembic upgrade head            # adds `kind` and backfills it
+bgcscape group-by-compound      # re-stamps the Source row as TOOL_RUN
+```
+
+The `upgrade` step classifies every existing family: rows whose
+`clustering_method` is `MIBiG shared compound` become `compound_group`,
+everything else `sequence_family`. That backfill is the point of the
+migration — without it every compound group would default to
+`sequence_family` and would keep contaminating prioritization scores.
 
 ### How entries are placed on the tree
 
@@ -231,11 +261,25 @@ group and a GCF at the same time, which is why `family_ids` is a list.
 
 ## Going bigger: full GTDB + antiSMASH + BiG-SCAPE
 
-The bundled dataset has **no gene cluster families** — those require a BiG-SCAPE
-run over antiSMASH output, which is a real compute pipeline (large downloads,
-hours–days), not a build step. Until then the family panel is empty, and a
-`?bgc=` deep link highlights the cluster's *biosynthetic class* across the tree
--- the honest signal MIBiG + GTDB alone can support. When you have those files:
+The bundled dataset has **279 compound groups and no sequence families.**
+The distinction matters and is enforced by `BGCFamily.kind`:
+
+- a **compound group** (`kind = compound_group`) links clusters that MIBiG
+  records as making the same named compound. A curated chemical fact; no
+  sequences are compared.
+- a **sequence family** (`kind = sequence_family`) is a BiG-SCAPE/BiG-SLiCE
+  GCF, and needs a real clustering run over antiSMASH output — a compute
+  pipeline of hours to days, not a build step.
+
+The family panel is therefore populated, but with compound groups, and the
+UI labels them as such. The prioritization scorer's three similarity
+components (`unclustered`, `family_rarity`, `taxonomic_isolation`) are
+defined over sequence families **only** and treat this corpus as having no
+clustering at all — which is why it declines to score 783 of 2,437 clusters
+here rather than emitting a confident number from a proxy that measures
+something else. See ARCHITECTURE.md, "Two kinds of grouping".
+
+When you have antiSMASH + BiG-SCAPE output:
 
 1. Provision Postgres (Neon and Supabase have card-free free tiers).
 2. Set `BGCSCAPE_DATABASE_URL=postgresql+psycopg://user:pass@host:5432/db` on the API host.

@@ -56,8 +56,14 @@ cp .env.local.example .env.local
 npm run dev                              # http://localhost:3000
 
 # Tests
-cd ../engine && pytest -v          # 149 tests
-cd ../web && npm test               # 45 tests
+cd ../engine && pytest -v          # 212 tests (4 skip without Cairo)
+cd ../web && npm test               # 114 tests
+
+# Browser-level end-to-end tests (real Chromium). These cover the paths unit
+# tests cannot reach — the export button's download, a real CORS preflight,
+# middle-drag pan, semantic zoom. Both servers must already be running.
+cd ../web && npx playwright install chromium   # once
+npm run e2e                                    # 12 tests
 
 # Run the engine suite against real Postgres instead of SQLite:
 #   BGCSCAPE_TEST_DATABASE_URL=postgresql+psycopg://user:pass@localhost:5432/bgcscape_test pytest -v

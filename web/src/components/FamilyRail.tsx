@@ -8,8 +8,11 @@ import type { FamilyIndexEntry } from "@/lib/tree-logic";
 
 import { BGC_CLASS_COLORS, COLORS } from "@/lib/colors";
 
-/** Matches CLUSTERING_METHOD in engine/src/bgcscape/ingest/compound_groups.py. */
-const COMPOUND_METHOD = "MIBiG shared compound";
+/** The two kinds of grouping, as typed by the API's `BGCFamily.kind`.
+ * Previously inferred by string-matching `clustering_method`, which was
+ * fragile — the engine now ships the distinction as a CHECK-constrained
+ * enum precisely because conflating the two produced wrong science. */
+const COMPOUND_GROUP = "compound_group";
 
 interface FamilyRailProps {
   selectedFamilyId: string | null;
@@ -78,8 +81,8 @@ export function FamilyRail({
   // so the rail names whichever it actually has rather than calling both
   // "families". Mixed corpora get the neutral term.
   const kind = useMemo(() => {
-    const methods = new Set(families.map((f) => f.clustering_method ?? "unknown"));
-    if (methods.size === 1 && methods.has(COMPOUND_METHOD)) {
+    const methods = new Set(families.map((f) => f.kind));
+    if (methods.size === 1 && methods.has(COMPOUND_GROUP)) {
       return {
         title: "Compound groups",
         blurb:
@@ -87,7 +90,7 @@ export function FamilyRail({
         unit: "group",
       };
     }
-    if (methods.size > 0 && ![...methods].some((m) => m === COMPOUND_METHOD)) {
+    if (methods.size > 0 && ![...methods].some((m) => m === COMPOUND_GROUP)) {
       return {
         title: "Gene cluster families",
         blurb: "Sequence-similarity groupings from a BiG-SCAPE run.",
@@ -222,6 +225,20 @@ export function FamilyRail({
                   ))}
                 </span>
                 <span className="flex-1 truncate font-mono text-xs text-ink">{family.label}</span>
+                {/* A group keyed on a product CATEGORY ("carotenoid") means
+                 * "both make some carotenoid", not "both make the same
+                 * molecule" — a materially weaker claim, and the largest
+                 * groups in the bundled corpus are exactly these. The engine
+                 * flags them; showing the flag is what makes the difference
+                 * visible instead of implied. */}
+                {family.is_generic_product && (
+                  <span
+                    className="rounded-sm bg-paper px-1 py-px font-mono text-[9px] uppercase tracking-wide text-ink-faint ring-1 ring-line"
+                    title="Product category, not a single compound: members make some molecule of this class, not necessarily the same one."
+                  >
+                    category
+                  </span>
+                )}
                 <span className="font-mono text-xs tabular-nums text-ink-faint">
                   {family.member_count}
                 </span>

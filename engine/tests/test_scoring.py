@@ -18,6 +18,7 @@ from bgcscape.models import (
     BGCFamily,
     BGCFamilyMembership,
     EvidenceLevel,
+    FamilyKind,
     Genome,
     Source,
     SourceType,
@@ -27,6 +28,7 @@ from bgcscape.models import (
 from bgcscape.scoring import (
     DEFAULT_WEIGHTS,
     build_scoring_context,
+    corpus_caveats,
     rank_bgcs,
     score_bgc,
 )
@@ -72,12 +74,14 @@ class DatasetBuilder:
         self.session.flush()
         return taxon
 
-    def family(self, label: str) -> BGCFamily:
+    def family(self, label: str, kind: FamilyKind = FamilyKind.SEQUENCE_FAMILY) -> BGCFamily:
         if label not in self.families:
+            is_compound = kind == FamilyKind.COMPOUND_GROUP
             fam = BGCFamily(
                 label=label,
-                clustering_method="BiG-SCAPE 2.0.0",
-                clustering_cutoff=0.3,
+                kind=kind,
+                clustering_method="MIBiG shared compound" if is_compound else "BiG-SCAPE 2.0.0",
+                clustering_cutoff=None if is_compound else 0.3,
                 source_id=self.tool.id,
                 evidence_level=EvidenceLevel.COMPUTED,
             )
@@ -94,6 +98,7 @@ class DatasetBuilder:
         accession: str,
         bgc_class: BGCClass = BGCClass.NRPS,
         family_label: str | None = None,
+        compound_group_label: str | None = None,
         mibig_accession: str | None = None,
     ) -> BGC:
         taxon = self.species(genus_name, species_name)
@@ -122,6 +127,10 @@ class DatasetBuilder:
 
         if family_label:
             self.session.add(BGCFamilyMembership(bgc_id=bgc.id, family_id=self.family(family_label).id))
+            self.session.flush()
+        if compound_group_label:
+            group = self.family(compound_group_label, kind=FamilyKind.COMPOUND_GROUP)
+            self.session.add(BGCFamilyMembership(bgc_id=bgc.id, family_id=group.id))
             self.session.flush()
         return bgc
 
@@ -483,3 +492,164 @@ def test_fully_scored_cluster_does_not_get_the_bias_caveat(builder, session):
 
     result = score_bgc(clustered, build_scoring_context(session))
     assert not any("BY CONSTRUCTION" in c for c in result.caveats)
+
+
+# === COMPOUND GROUPS ARE NOT SEQUENCE FAMILIES ==================================
+#
+# The regression these guard against shipped once: `group-by-compound`
+# writes rows into the same `bgc_family` table that BiG-SCAPE does, and the
+# scorer read both. On the real MIBiG-only corpus that flipped the
+# missing-evidence guarantee from "2,437 of 2,437 clusters refuse to score"
+# to "0 of 2,437 refuse" — every cluster got a confident number derived from
+# a similarity claim about a corpus on which no clustering had ever run.
+
+
+def test_compound_groups_do_not_make_unclustered_computable(builder, session):
+    """THE regression test for the compound-group leak.
+
+    A corpus with compound groups but no sequence clustering must still
+    report `unclustered` as uncomputable. Being absent from a compound
+    group says nothing whatever about sequence similarity.
+    """
+    builder.add_bgc(
+        genus_name="Streptomyces",
+        species_name="Streptomyces alpha",
+        accession="GCF_CG_1",
+        compound_group_label="CMPD_vancomycin",
+    )
+    builder.add_bgc(
+        genus_name="Amycolatopsis",
+        species_name="Amycolatopsis beta",
+        accession="GCF_CG_2",
+        compound_group_label="CMPD_vancomycin",
+    )
+    # A third cluster in NO compound group — the one that would previously
+    # have scored 1.0 on "no sufficiently similar cluster was found".
+    lonely = builder.add_bgc(
+        genus_name="Kutzneria",
+        species_name="Kutzneria gamma",
+        accession="GCF_CG_3",
+    )
+    session.commit()
+
+    ctx = build_scoring_context(session)
+    assert ctx.families_present is False, "compound groups must not count as clustering"
+    assert ctx.compound_group_count == 1
+
+    for bgc in (lonely, *session.query(BGC).all()):
+        result = score_bgc(bgc, ctx)
+        assert _component(result, "unclustered").value is None
+        assert _component(result, "family_rarity").value is None
+        assert _component(result, "taxonomic_isolation").value is None
+
+
+def test_compound_group_membership_never_feeds_family_components(builder, session):
+    """A cluster inside a compound group must not gain family_rarity or
+    taxonomic_isolation from it — those describe sequence families."""
+    grouped = builder.add_bgc(
+        genus_name="Streptomyces",
+        species_name="Streptomyces alpha",
+        accession="GCF_CG_10",
+        compound_group_label="CMPD_carotenoid",
+    )
+    builder.add_bgc(
+        genus_name="Micromonospora",
+        species_name="Micromonospora delta",
+        accession="GCF_CG_11",
+        compound_group_label="CMPD_carotenoid",
+    )
+    session.commit()
+
+    result = score_bgc(grouped, build_scoring_context(session))
+    assert _component(result, "family_rarity").value is None
+    assert _component(result, "taxonomic_isolation").value is None
+    assert _component(result, "unclustered").value is None
+
+
+def test_a_real_sequence_family_still_works_alongside_compound_groups(builder, session):
+    """The exclusion must be surgical: a genuine BiG-SCAPE family in the
+    same corpus is still scored normally."""
+    clustered = builder.add_bgc(
+        genus_name="Streptomyces",
+        species_name="Streptomyces alpha",
+        accession="GCF_CG_20",
+        family_label="FAM_00001",
+        compound_group_label="CMPD_vancomycin",
+    )
+    builder.add_bgc(
+        genus_name="Amycolatopsis",
+        species_name="Amycolatopsis beta",
+        accession="GCF_CG_21",
+        family_label="FAM_00001",
+        compound_group_label="CMPD_vancomycin",
+    )
+    session.commit()
+
+    ctx = build_scoring_context(session)
+    assert ctx.families_present is True
+    result = score_bgc(clustered, ctx)
+    assert _component(result, "unclustered").value == 0.0
+    # Family size counts the SEQUENCE family's 2 members, not the compound
+    # group's — if the group leaked in, the smallest family would differ.
+    assert _component(result, "family_rarity").value == pytest.approx(0.5)
+
+
+def test_corpus_caveats_name_the_excluded_compound_groups(builder, session):
+    """Excluding them silently would be its own kind of dishonesty."""
+    builder.add_bgc(
+        genus_name="Streptomyces",
+        species_name="Streptomyces alpha",
+        accession="GCF_CG_30",
+        compound_group_label="CMPD_vancomycin",
+    )
+    builder.add_bgc(
+        genus_name="Amycolatopsis",
+        species_name="Amycolatopsis beta",
+        accession="GCF_CG_31",
+        compound_group_label="CMPD_vancomycin",
+    )
+    session.commit()
+
+    joined = " ".join(corpus_caveats(build_scoring_context(session)))
+    assert "compound group" in joined.lower()
+    assert "excluded" in joined.lower()
+
+
+def test_corpus_caveats_do_not_assert_one_rows_component_coverage(builder, session):
+    """Corpus-level caveats must hold for the whole run.
+
+    The API used to hoist the top-ranked cluster's caveats to the top of the
+    response, so a ranking whose rows rested on 2, 3, 4 and 5 components was
+    labelled with whatever the first row happened to have.
+    """
+    builder.add_bgc(
+        genus_name="Streptomyces",
+        species_name="Streptomyces alpha",
+        accession="GCF_CV_1",
+        family_label="FAM_1",
+        mibig_accession="BGC0000001",
+    )
+    builder.add_bgc(
+        genus_name="Streptomyces",
+        species_name="Streptomyces beta",
+        accession="GCF_CV_2",
+        family_label="FAM_1",
+    )
+    builder.add_bgc(genus_name="Kutzneria", species_name="Kutzneria gamma", accession="GCF_CV_3")
+    session.commit()
+
+    shared = corpus_caveats(build_scoring_context(session))
+    joined = " ".join(shared)
+    assert "components; unavailable" not in joined
+    assert "too few to combine" not in joined
+    assert "BY CONSTRUCTION" not in joined
+
+    # ...while the row that actually has a coverage problem still says so,
+    # on itself, where the statement is true.
+    results = rank_bgcs(session)
+    refused = [r for r in results if r.score is None]
+    assert refused, "corpus should contain one unscoreable cluster"
+    assert any("too few to combine" in c for c in refused[0].specific_caveats)
+    # A fully-scored row carries no coverage caveat of its own.
+    scored = [r for r in results if r.score is not None and not r.unavailable_components]
+    assert scored and scored[0].specific_caveats == []

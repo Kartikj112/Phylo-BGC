@@ -1,7 +1,7 @@
 "use client";
 
 import * as d3 from "d3";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { DisplayNode, TaxonDisplayNode } from "@/lib/api-types";
 import { BGC_CLASS_COLORS, BGC_CLASS_LABELS, COLORS, classColor } from "@/lib/colors";
 import {
@@ -62,6 +62,12 @@ const H_MARGIN_LEFT = 210;
 const H_MARGIN_RIGHT = 300;
 const PRESENCE_GUTTER = 150;
 
+/** Log-scale step below which a zoom change cannot alter label visibility.
+ * ~1.5% — far finer than the spacing at which `hasRoomForLabel` flips, so
+ * semantic zoom is unchanged while a continuous wheel gesture renders a
+ * handful of times instead of once per event. */
+const SCALE_RENDER_QUANTUM = 0.015;
+
 export function TreeCanvas({
   root,
   collapsed,
@@ -102,7 +108,18 @@ export function TreeCanvas({
   const zoomLayerRef = useRef<SVGGElement | null>(null);
   const localSvgRef = useRef<SVGSVGElement | null>(null);
   const zoomBehaviorRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
-  const [zoom, setZoom] = useState({ k: 1, x: 0, y: 0 });
+  // The live pan/zoom transform is written straight to the DOM (see the
+  // zoom handler below), NOT held in React state. Keeping x/y in state meant
+  // every mouse-move during a pan re-rendered the whole canvas — 3,528 nodes
+  // reconciled to change one attribute on one <g>. The ref holds the current
+  // transform for anything that needs to read it imperatively.
+  const transformRef = useRef({ k: 1, x: 0, y: 0 });
+
+  // Scale DOES need to be reactive: label visibility is semantic-zoom
+  // dependent (hasRoomForLabel). It is quantised so that panning — which
+  // never changes k — triggers no render at all, and a continuous wheel
+  // zoom triggers one render per perceptible step rather than one per event.
+  const [scale, setScale] = useState(1);
   const [vb, setVb] = useState({ w: 1000, h: 700 });
 
   // Keep the viewBox locked to the container's pixel size so 1 viewBox unit
@@ -188,7 +205,18 @@ export function TreeCanvas({
       })
       .on("zoom", (event) => {
         const t = event.transform;
-        setZoom({ k: t.k, x: t.x, y: t.y });
+        transformRef.current = { k: t.k, x: t.x, y: t.y };
+        // Imperative: one attribute write, no reconciliation.
+        zoomLayerRef.current?.setAttribute(
+          "transform",
+          `translate(${t.x},${t.y}) scale(${t.k})`,
+        );
+        // Re-render only when the scale moves enough to change which labels
+        // fit. QUANTUM is well below the threshold at which a label appears
+        // or disappears, so semantic zoom behaves as before.
+        setScale((prev) =>
+          Math.abs(Math.log(t.k / prev)) > SCALE_RENDER_QUANTUM ? t.k : prev,
+        );
       });
     zoomBehaviorRef.current = behavior;
     const selection = d3.select(svgEl);
@@ -210,6 +238,19 @@ export function TreeCanvas({
     const id = requestAnimationFrame(fitView);
     return () => cancelAnimationFrame(id);
   }, [fitView, root, vb.w, vb.h, selectedFamilyId, fitSignal]);
+
+  // Re-assert the live transform after every render.
+  //
+  // The zoom layer's `transform` is written imperatively, so React's JSX
+  // value for it is a constant. React would therefore not normally clobber
+  // it — but relying on that is relying on a diffing detail. Re-applying it
+  // in a layout effect makes the invariant explicit and costs one attribute
+  // write per render, so a filter change or a family selection can never
+  // silently throw away the user's pan and zoom.
+  useLayoutEffect(() => {
+    const { k, x, y } = transformRef.current;
+    zoomLayerRef.current?.setAttribute("transform", `translate(${x},${y}) scale(${k})`);
+  });
 
   const setSvgRef = (el: SVGSVGElement | null) => {
     localSvgRef.current = el;
@@ -264,7 +305,7 @@ export function TreeCanvas({
           !hasRoomForLabel(
             n.y,
             radial.angularStep,
-            zoom.k,
+            scale,
             n.data._kind === "taxon" && isAnchorRank(n.data.rank),
           ),
       ).length
@@ -300,7 +341,9 @@ export function TreeCanvas({
           fill="transparent"
           pointerEvents="all"
         />
-        <g ref={zoomLayerRef} transform={`translate(${zoom.x},${zoom.y}) scale(${zoom.k})`}>
+        {/* transform is set imperatively by the d3 zoom handler; this only
+            seeds the initial value before the first zoom event. */}
+        <g ref={zoomLayerRef} transform={`translate(0,0) scale(1)`}>
           <g
             data-figure-root="true"
             transform={isRadial ? `translate(${radial.size / 2},${radial.size / 2})` : "translate(0,0)"}
@@ -413,7 +456,7 @@ export function TreeCanvas({
                       angle={n.x}
                       showLabel={
                         !isRadial ||
-                        hasRoomForLabel(n.y, radial.angularStep, zoom.k, isAnchorRank(node.rank))
+                        hasRoomForLabel(n.y, radial.angularStep, scale, isAnchorRank(node.rank))
                       }
                       hiddenCount={hidden}
                       matched={isMatch}
@@ -433,7 +476,7 @@ export function TreeCanvas({
                       node={node}
                       isRadial={isRadial}
                       angle={n.x}
-                      showLabel={!isRadial || hasRoomForLabel(n.y, radial.angularStep, zoom.k)}
+                      showLabel={!isRadial || hasRoomForLabel(n.y, radial.angularStep, scale)}
                       matched={isMatch}
                       isEnclosing={isEnclosing}
                       dimmedBySelection={selectedId !== null && selectedId !== node.id}

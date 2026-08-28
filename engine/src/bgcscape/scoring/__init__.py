@@ -16,8 +16,11 @@ from bgcscape.scoring.prioritization import (
     PrioritizationResult,
     ScoringContext,
     build_scoring_context,
+    corpus_caveats,
     rank_bgcs,
+    rank_bgcs_with_context,
     score_bgc,
+    sequence_memberships,
 )
 
 __all__ = [
@@ -30,6 +33,9 @@ __all__ = [
     "PrioritizationResult",
     "ScoringContext",
     "build_scoring_context",
+    "corpus_caveats",
     "rank_bgcs",
+    "rank_bgcs_with_context",
     "score_bgc",
+    "sequence_memberships",
 ]

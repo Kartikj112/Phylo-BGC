@@ -31,3 +31,8 @@ next-env.d.ts
 # (web/src/lib/api-schema.generated.ts) ARE committed; this raw dump
 # isn't, see `bgcscape dump-openapi-schema` in cli/main.py.
 engine/openapi.json
+
+# Playwright browser-test output (traces, screenshots, HTML report). The
+# specs in web/e2e/ are checked in; their run artifacts are not.
+web/test-results/
+web/playwright-report/

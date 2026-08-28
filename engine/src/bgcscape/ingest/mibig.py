@@ -361,8 +361,23 @@ def load_mibig_entry(session: Session, parsed: ParsedMibigEntry, source: Source)
       Compound (source_id, mibig_compound_ref)     — scoped to this source
       Link     (bgc_id, compound_id)                — natural join key
     """
+    # Resolve placement before anything else — see the long note below. A
+    # cluster that link-mibig has already moved onto a GTDB genome needs
+    # neither its MIBiG locus stub nor the bare species node that stub hung
+    # from, and recreating either on re-ingest is what corrupted the corpus.
+    existing_bgc = (
+        session.query(BGC)
+        .filter_by(source_id=source.id, mibig_accession=parsed.mibig_accession)
+        .one_or_none()
+    )
+    placed_genome: Genome | None = None
+    if existing_bgc is not None and existing_bgc.genome_id is not None:
+        current = session.get(Genome, existing_bgc.genome_id)
+        if current is not None and current.accession != parsed.locus_accession:
+            placed_genome = current
+
     taxon: Taxon | None = None
-    if parsed.ncbi_taxid is not None and parsed.organism_name:
+    if placed_genome is None and parsed.ncbi_taxid is not None and parsed.organism_name:
         taxon_create = TaxonCreate(
             name=parsed.organism_name,
             rank=TaxonRank.SPECIES,
@@ -387,21 +402,38 @@ def load_mibig_entry(session: Session, parsed: ParsedMibigEntry, source: Source)
     if parsed.start_coord is not None and parsed.end_coord is not None:
         locus_length = parsed.end_coord - parsed.start_coord
 
-    genome_create = GenomeCreate(
-        accession=parsed.locus_accession,
-        taxon_id=taxon.id if taxon else None,
-        assembly_level=AssemblyLevel.LOCUS,
-        is_mag=False,
-        genome_size_bp=locus_length,
-        source_id=source.id,
-        evidence_level=EvidenceLevel.OBSERVED_CURATED,
-    )
-    genome, _ = get_or_create_or_update(
-        session,
-        Genome,
-        lookup={"accession": genome_create.accession},
-        values=genome_create.model_dump(exclude={"accession"}),
-    )
+    # --- Placement is not ours to overwrite -------------------------------
+    # `bgcscape link-mibig` moves a cluster off its MIBiG locus stub and onto
+    # the GTDB genome of the same organism, then deletes the now-empty stub
+    # and the species node it hung from. Re-ingesting MIBiG (the documented
+    # "new release" workflow) used to recreate both and point the cluster
+    # back at the stub, silently undoing every placement: on the real corpus
+    # that moved 1,629 clusters off real assemblies back onto locus stubs and
+    # regrew 665 orphan species nodes, collapsing the tree to MIBiG's flat
+    # fan — all while reporting `created=0, updated=2437`.
+    #
+    # The invariant, applied above for the taxon and here for the genome: if
+    # this cluster already sits on a genome that is NOT its own MIBiG locus
+    # stub, something placed it deliberately and ingestion must leave it
+    # alone. Only clusters still on their stub (or brand new) get one.
+    if placed_genome is not None:
+        genome = placed_genome
+    else:
+        genome_create = GenomeCreate(
+            accession=parsed.locus_accession,
+            taxon_id=taxon.id if taxon else None,
+            assembly_level=AssemblyLevel.LOCUS,
+            is_mag=False,
+            genome_size_bp=locus_length,
+            source_id=source.id,
+            evidence_level=EvidenceLevel.OBSERVED_CURATED,
+        )
+        genome, _ = get_or_create_or_update(
+            session,
+            Genome,
+            lookup={"accession": genome_create.accession},
+            values=genome_create.model_dump(exclude={"accession"}),
+        )
     session.flush()
 
     bgc_create = BGCCreate(
