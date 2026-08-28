@@ -6,7 +6,10 @@ import { fetchBgcTypeCounts } from "@/lib/api-client";
 import type { BGCTypeCount } from "@/lib/api-types";
 import { BGC_CLASS_COLORS, BGC_CLASS_LABELS, COLORS } from "@/lib/colors";
 
-const SIZE = 118;
+// Compact: this sits in the corner over the tree, so its footprint is a
+// direct cost to the visualization it annotates. Small enough to stay out
+// of the way, large enough that the class proportions still read.
+const SIZE = 92;
 const THICKNESS = 17;
 
 /** Corpus-wide BGC class distribution. Values come from the API, which
@@ -48,9 +51,9 @@ export function BgcTypeDonut() {
   const remainder = data.slice(5).reduce((sum, d) => sum + d.count, 0);
 
   return (
-    <div className="pointer-events-auto rounded border border-line bg-card p-3 shadow-sm">
-      <div className="mb-2 text-xs uppercase tracking-wider text-ink-muted">BGCs by type</div>
-      <div className="flex items-center gap-3">
+    <div className="pointer-events-auto rounded border border-line bg-card/95 p-2.5 shadow-sm backdrop-blur-[1px]">
+      <div className="mb-1.5 text-[10px] uppercase tracking-wider text-ink-muted">BGCs by type</div>
+      <div className="flex items-center gap-2.5">
         <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`} className="flex-shrink-0">
           <g transform={`translate(${SIZE / 2},${SIZE / 2})`}>
             {arcs.map(({ d, datum }) => (
@@ -72,7 +75,7 @@ export function BgcTypeDonut() {
 
         <div className="flex flex-col gap-0.5">
           {legend.map((d) => (
-            <div key={d.bgc_class} className="flex items-center gap-1.5 text-xs">
+            <div key={d.bgc_class} className="flex items-center gap-1.5 text-[11px]">
               <span
                 className="inline-block h-2 w-2 flex-shrink-0 rounded-full"
                 style={{ backgroundColor: BGC_CLASS_COLORS[d.bgc_class] ?? COLORS.inkFaint }}
@@ -82,7 +85,7 @@ export function BgcTypeDonut() {
             </div>
           ))}
           {remainder > 0 && (
-            <div className="flex items-center gap-1.5 text-xs text-ink-faint">
+            <div className="flex items-center gap-1.5 text-[11px] text-ink-faint">
               <span className="inline-block h-2 w-2 rounded-full bg-[#8A8D86]" />
               <span>+{data.length - 5} more</span>
               <span className="ml-auto pl-2 font-mono tabular-nums">{remainder}</span>

@@ -14,12 +14,14 @@ interface HeaderProps {
 export function Header({ query, onQueryChange, genomeCount, totalGenomes, matchCount, children }: HeaderProps) {
   return (
     <div className="flex flex-shrink-0 items-center gap-4 border-b border-line bg-card px-4 py-3">
-      <div className="flex items-center gap-2">
+      <div className="flex flex-shrink-0 items-center gap-2">
         <Dna size={18} className="text-signal" />
-        <span className="text-sm font-semibold tracking-wide text-ink">BGC-scape</span>
+        <span className="whitespace-nowrap text-sm font-semibold tracking-wide text-ink">
+          BGC-scape
+        </span>
       </div>
 
-      <div className="relative max-w-xs flex-1">
+      <div className="relative w-40 flex-shrink lg:w-56 xl:w-64">
         <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-ink-faint" />
         <input
           value={query}
@@ -42,9 +44,9 @@ export function Header({ query, onQueryChange, genomeCount, totalGenomes, matchC
 
       {children}
 
-      <span className="ml-auto flex items-center gap-3 text-xs text-ink-faint">
-        <span className="hidden xl:inline">double-click a clade to focus · shift-click to compare</span>
-        <span className="font-mono">
+      <span className="ml-auto flex flex-shrink-0 items-center gap-3 text-xs text-ink-faint">
+        <span className="hidden 2xl:inline">double-click a clade to focus · shift-click to compare</span>
+        <span className="hidden whitespace-nowrap font-mono md:inline">
           {/* "N of M" rather than a bare count: a filtered tree that
               doesn't say so is indistinguishable from missing data. */}
           {totalGenomes && totalGenomes !== genomeCount

@@ -196,20 +196,70 @@ export interface TreeLayout {
   nodes: d3.HierarchyPointNode<DisplayNode>[];
   links: d3.HierarchyPointLink<DisplayNode>[];
   height: number;
+  /** Span of the depth axis actually used, so the caller can frame it. */
+  width: number;
 }
 
 const MIN_ROW_HEIGHT = 34;
 const MIN_TREE_HEIGHT = 200;
 const HEIGHT_MARGIN = 40;
 
-export function computeTreeLayout(root: TaxonDisplayNode, collapsed: ReadonlySet<string>, width: number): TreeLayout {
+/** Horizontal span per level of depth, when spreading to fill the viewport.
+ * Enough for a rank badge plus a readable label before the next column. */
+const DEPTH_STEP_MIN = 150;
+const DEPTH_STEP_MAX = 320;
+
+/** Row height shrinks as leaves multiply, so a large clade stays navigable
+ * instead of becoming a kilometre-tall ribbon. Labels are hidden by the
+ * canvas's own semantic-zoom rules well before rows get this tight. */
+function rowHeightFor(leafCount: number): number {
+  if (leafCount > 600) return 11;
+  if (leafCount > 300) return 16;
+  if (leafCount > 120) return 24;
+  return MIN_ROW_HEIGHT;
+}
+
+export function computeTreeLayout(
+  root: TaxonDisplayNode,
+  collapsed: ReadonlySet<string>,
+  width: number,
+  /** Viewport height. When given, the depth axis is stretched so the tree's
+   * aspect ratio matches the screen's — see below. */
+  viewportHeight?: number,
+): TreeLayout {
   const hierarchy = d3.hierarchy<DisplayNode>(root, makeChildrenAccessor(collapsed));
   const leafCount = Math.max(hierarchy.leaves().length, 1);
-  const innerHeight = Math.max(leafCount * MIN_ROW_HEIGHT, MIN_TREE_HEIGHT);
+  const innerHeight = Math.max(leafCount * rowHeightFor(leafCount), MIN_TREE_HEIGHT);
+
+  // The depth axis is sized to the space actually available, not to a
+  // constant.
+  //
+  // This used to be a fixed 760px regardless of viewport or tree shape,
+  // while the cross axis grew with leaf count — so a real corpus produced
+  // something ~26,000px tall by 760px wide, which fit-to-view then shrank
+  // into an unreadable vertical smear. The hierarchy is the thing a reader
+  // follows left-to-right, so it gets the screen's long dimension.
+  const maxDepth = Math.max(1, d3.max(hierarchy.descendants(), (d) => d.depth) ?? 1);
+  const step = Math.min(DEPTH_STEP_MAX, Math.max(DEPTH_STEP_MIN, width / (maxDepth + 1)));
+
+  // Match the viewport's aspect ratio.
+  //
+  // The cross axis is driven by leaf count and routinely far exceeds the
+  // window height, so fit-to-view is height-constrained: it scales the whole
+  // tree down until the rows fit, and whatever width the layout claimed
+  // shrinks with it. That is why this rendered as a narrow vertical smear in
+  // a wide window no matter how large `width` was.
+  //
+  // Stretching the depth axis to `innerHeight * (viewportW / viewportH)`
+  // makes the two constraints bind at the same scale, so the tree fills the
+  // screen in both directions and the hierarchy reads left-to-right across
+  // it. Branches get longer; nothing about the topology changes.
+  const aspect = viewportHeight && viewportHeight > 0 ? width / viewportHeight : 0;
+  const innerWidth = Math.max(width, step * maxDepth, aspect > 0 ? innerHeight * aspect : 0);
 
   const layout = d3
     .tree<DisplayNode>()
-    .size([innerHeight, width])
+    .size([innerHeight, innerWidth])
     .separation((a, b) => (a.parent === b.parent ? 1 : 1.4));
   const positioned = layout(hierarchy);
 
@@ -217,7 +267,45 @@ export function computeTreeLayout(root: TaxonDisplayNode, collapsed: ReadonlySet
     nodes: positioned.descendants(),
     links: positioned.links(),
     height: innerHeight + HEIGHT_MARGIN,
+    width: innerWidth,
   };
+}
+
+/** How many nodes a collapse level would put on screen. */
+export function visibleNodeCount(root: TaxonDisplayNode, collapsed: ReadonlySet<string>): number {
+  return d3.hierarchy<DisplayNode>(root, makeChildrenAccessor(collapsed)).descendants().length;
+}
+
+/** Nodes to aim for on first paint — enough to show the shape of the corpus,
+ * few enough to read at a glance. */
+export const INITIAL_NODE_TARGET = 160;
+
+/**
+ * The collapse level to open on.
+ *
+ * Opening fully expanded meant a real corpus rendered 3,528 nodes before the
+ * user had asked for anything — the broad distribution pattern, which is the
+ * question this tool exists to answer, was buried under every leaf at once.
+ *
+ * Picked from the data rather than hardcoded: the DEEPEST rank that still
+ * fits `INITIAL_NODE_TARGET`, so a small corpus opens detailed and a large
+ * one opens coarse, and neither needs a different default. Falls back to the
+ * shallowest available rank if even that overflows.
+ */
+export function initialCollapseLevel(root: TaxonDisplayNode): CollapseLevel {
+  const present = ranksPresent(root);
+  const candidates = RANK_DEPTH_ORDER.filter((r) => present.has(r));
+  if (candidates.length === 0) return "phylum";
+
+  let best: CollapseLevel = candidates[0] ?? "phylum";
+  for (const level of candidates) {
+    if (visibleNodeCount(root, collapseToLevel(root, level)) <= INITIAL_NODE_TARGET) {
+      best = level;
+    } else {
+      break; // deeper levels only add nodes
+    }
+  }
+  return best;
 }
 
 /**
@@ -543,7 +631,14 @@ export function collapseToLevel(root: TaxonDisplayNode, level: CollapseLevel): S
   function walk(node: DisplayNode, parentCollapsed: boolean): void {
     if (node._kind === "genome") return;
     const depth = rankDepth(node.rank);
-    const shouldCollapse = depth >= targetDepth && depth !== -1;
+    // The "Unplaced organisms" bucket has no rank, so a depth comparison can
+    // never collapse it — which meant every level, including "Domain", left
+    // its full fan of species on screen (285 of them on the bundled corpus)
+    // and the control did not do what it said. It is a container, not a
+    // rank, so it collapses at every level and opens on demand like any
+    // other node.
+    const isUnplacedBucket = nodeKey(node) === UNPLACED_KEY;
+    const shouldCollapse = isUnplacedBucket || (depth >= targetDepth && depth !== -1);
 
     if (shouldCollapse && !parentCollapsed) collapsed.add(nodeKey(node));
 

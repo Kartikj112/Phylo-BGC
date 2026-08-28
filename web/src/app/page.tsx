@@ -24,6 +24,7 @@ import {
   bgcFamilyIndex,
   collapseToFamily,
   collapseToLevel,
+  initialCollapseLevel,
   collectMatchKeys,
   countBgcClasses,
   EMPTY_FILTERS,
@@ -53,7 +54,11 @@ export default function HomePage() {
   const [selectedFamilyId, setSelectedFamilyId] = useState<string | null>(null);
   const [comparisonTaxonIds, setComparisonTaxonIds] = useState<string[]>([]);
   const svgRef = useRef<SVGSVGElement | null>(null);
-  const [orientation, setOrientation] = useState<TreeOrientation>("horizontal");
+  // Radial by default: it shows the shape of the whole corpus in one
+  // screen-filling form, which is the "where does this sit across the tree"
+  // question the tool exists to answer. Horizontal is better for reading
+  // exact lineages and stays one click away.
+  const [orientation, setOrientation] = useState<TreeOrientation>("radial");
   const [view, setView] = useState<"tree" | "flow" | "heatmap">("tree");
   const [activeLevel, setActiveLevel] = useState<CollapseLevel | null>(null);
   // Defaults to on: a real GTDB ingest is mostly genomes antiSMASH has
@@ -68,6 +73,14 @@ export default function HomePage() {
   const [autoFramed, setAutoFramed] = useState(false);
   // Bumped to ask the canvas to recentre after a layout-reshaping change.
   const [fitSignal, setFitSignal] = useState(0);
+  // Purely visual per-node nudges from dragging. Keyed by nodeKey(); never
+  // touches the hierarchy, so topology and every derived statistic are
+  // unaffected. `Auto arrange` clears this.
+  const [nodeOffsets, setNodeOffsets] = useState<Map<string, { dx: number; dy: number }>>(new Map());
+  const initialCollapseApplied = useRef(false);
+  // Hierarchy regions are on by default but dismissible: they are a reading
+  // aid, and a reader preparing a figure may want the tree bare.
+  const [showRegions, setShowRegions] = useState(true);
 
   function toggleComparisonTaxon(taxonId: string): void {
     setComparisonTaxonIds((prev) =>
@@ -140,6 +153,41 @@ export default function HomePage() {
     () => (selection?.kind === "bgc" ? (bgcFamIndex.get(selection.id) ?? []) : []),
     [selection, bgcFamIndex],
   );
+
+  // Open on a readable summary, not on every leaf at once.
+  //
+  // The tree used to render fully expanded — 3,528 nodes on the bundled
+  // corpus — so the broad distribution pattern was buried under the detail
+  // before the user had asked for any of it. The level is derived from the
+  // data (see initialCollapseLevel), so a small corpus still opens detailed.
+  // Runs once; any later interaction owns the collapse state from then on.
+  useEffect(() => {
+    if (!root || initialCollapseApplied.current) return;
+    initialCollapseApplied.current = true;
+    const level = initialCollapseLevel(root);
+    setActiveLevel(level);
+    setCollapsed(collapseToLevel(root, level));
+    setFitSignal((n) => n + 1);
+  }, [root]);
+
+  /** Record a purely visual drag. Accumulates so a drag reads as continuous
+   * motion; the hierarchy is never consulted or changed. */
+  function nudgeNode(key: string, dx: number, dy: number): void {
+    setNodeOffsets((prev) => {
+      const next = new Map(prev);
+      const cur = next.get(key) ?? { dx: 0, dy: 0 };
+      next.set(key, { dx: cur.dx + dx, dy: cur.dy + dy });
+      return next;
+    });
+  }
+
+  /** Clear manual drags and re-frame. The layout itself is already an even
+   * distribution, so "tidy" means discarding the nudges that moved nodes
+   * away from it — not a different algorithm. */
+  function autoArrange(): void {
+    setNodeOffsets(new Map());
+    setFitSignal((n) => n + 1);
+  }
 
   // Deep links, for the planned antiSMASH "view across the tree" button and
   // for sharing a view. Read once, from the URL directly (no useSearchParams
@@ -279,7 +327,7 @@ export default function HomePage() {
       <Header query={query} onQueryChange={setQuery} genomeCount={genomeCount}
         totalGenomes={pruned?.totalGenomes ?? 0}
         matchCount={matchCount}>
-        <div className="flex overflow-hidden rounded border border-line">
+        <div className="flex flex-shrink-0 overflow-hidden rounded border border-line">
           {([["tree", "Tree"], ["flow", "Flows"], ["heatmap", "Matrix"]] as const).map(([id, label]) => (
             <button
               key={id}
@@ -294,7 +342,7 @@ export default function HomePage() {
         </div>
 
         {view === "tree" && (
-        <div className="flex overflow-hidden rounded border border-line">
+        <div className="flex flex-shrink-0 overflow-hidden rounded border border-line">
           {(["horizontal", "radial"] as const).map((mode) => (
             <button
               key={mode}
@@ -311,6 +359,37 @@ export default function HomePage() {
             </button>
           ))}
         </div>
+        )}
+
+        {view === "tree" && (
+          <button
+            onClick={() => setShowRegions((v) => !v)}
+            title={
+              showRegions
+                ? "Hide the taxonomic grouping shading"
+                : "Show subtle shading behind each clade to make the taxonomic nesting visible"
+            }
+            className={`flex-shrink-0 whitespace-nowrap rounded border border-line px-2 py-1 text-xs ${
+              showRegions ? "bg-signal-wash text-signal" : "text-ink-muted hover:text-ink"
+            }`}
+          >
+            Clades
+          </button>
+        )}
+
+        {view === "tree" && (
+          <button
+            onClick={autoArrange}
+            disabled={nodeOffsets.size === 0}
+            title={
+              nodeOffsets.size === 0
+                ? "Layout is already tidy — drag nodes to rearrange, then use this to restore it"
+                : `Discard ${nodeOffsets.size} manual node move(s) and re-centre`
+            }
+            className="flex-shrink-0 whitespace-nowrap rounded border border-line px-2 py-1 text-xs text-ink-muted enabled:hover:text-ink disabled:opacity-40"
+          >
+            Auto arrange
+          </button>
         )}
 
         <ExportButton
@@ -409,8 +488,13 @@ export default function HomePage() {
         </div>
 
         <div className={`relative flex-1 p-6 ${view === "tree" ? "overflow-hidden" : "overflow-auto"}`}>
+          {/* Bottom-right, out of the tree's way. It is context for the tree,
+              not a peer of it, so it sits in the corner the eye reaches last
+              and never crosses the centre where the radial layout puts its
+              densest structure. Hidden below lg, where the tree needs the
+              whole viewport more than the breakdown does. */}
           {view === "tree" && root && (
-            <div className="pointer-events-none absolute bottom-4 left-1/2 z-10 -translate-x-1/2">
+            <div className="pointer-events-none absolute bottom-4 right-4 z-10 hidden lg:block">
               <BgcTypeDonut />
             </div>
           )}
@@ -448,6 +532,9 @@ export default function HomePage() {
               familyLabel={selectedFamily?.label ?? null}
               fitSignal={fitSignal}
               onFocusNode={focusNode}
+              nodeOffsets={nodeOffsets}
+              onNodeDrag={nudgeNode}
+              showRegions={showRegions}
             />
           )}
         </div>

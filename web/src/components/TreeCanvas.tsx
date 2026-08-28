@@ -3,7 +3,7 @@
 import * as d3 from "d3";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { DisplayNode, TaxonDisplayNode } from "@/lib/api-types";
-import { BGC_CLASS_COLORS, BGC_CLASS_LABELS, COLORS, classColor } from "@/lib/colors";
+import { BGC_CLASS_COLORS, BGC_CLASS_LABELS, CLADE_REGION_OPACITY, COLORS, cladeHue, classColor } from "@/lib/colors";
 import {
   bgcInFamily,
   bgcSizeTier,
@@ -55,9 +55,45 @@ interface TreeCanvasProps {
   familyLabel?: string | null;
   /** Bump to ask the canvas to recentre (family select, frame toggle …). */
   fitSignal?: number;
+  /** Purely visual per-node nudges from dragging, keyed by nodeKey(). Never
+   * consulted by anything that computes a statistic — see onNodeDrag. */
+  nodeOffsets?: ReadonlyMap<string, { dx: number; dy: number }>;
+  onNodeDrag?: (key: string, dx: number, dy: number) => void;
+  /** Draw the subtle taxonomic-nesting regions behind the tree. */
+  showRegions?: boolean;
+}
+
+/** A node's drawn position, after any manual drag.
+ *
+ * Returned in the layout's own coordinates so links and glyphs agree: for
+ * the horizontal tree that is (x = cross axis, y = depth axis); for the
+ * radial tree it is (x = angle in radians, y = radius). A drag arrives in
+ * screen-space pixels, so the radial case converts to cartesian, applies the
+ * nudge, and converts back — otherwise a dragged node's glyph and its
+ * incoming branch would come apart.
+ *
+ * Topology is untouched: this only moves where a node is drawn. */
+function drawnPos(
+  n: d3.HierarchyPointNode<DisplayNode>,
+  isRadial: boolean,
+  offsets: ReadonlyMap<string, { dx: number; dy: number }> | undefined,
+): { x: number; y: number } {
+  const off = offsets?.get(nodeKey(n.data));
+  if (!off) return { x: n.x, y: n.y };
+  if (!isRadial) return { x: n.x + off.dy, y: n.y + off.dx };
+
+  const a = n.x - Math.PI / 2;
+  const cx = n.y * Math.cos(a) + off.dx;
+  const cy = n.y * Math.sin(a) + off.dy;
+  const radius = Math.hypot(cx, cy);
+  return { x: Math.atan2(cy, cx) + Math.PI / 2, y: radius };
 }
 
 const TREE_WIDTH = 760;
+/** Breathing room around a hierarchy region so it reads as enclosing the
+ * clade rather than clipping it. */
+const REGION_PAD = 10;
+const REGION_ANGLE_PAD = 0.006;
 const H_MARGIN_LEFT = 210;
 const H_MARGIN_RIGHT = 300;
 const PRESENCE_GUTTER = 150;
@@ -87,6 +123,9 @@ export function TreeCanvas({
   familyEnclosingKeys,
   familyLabel,
   fitSignal,
+  nodeOffsets,
+  onNodeDrag,
+  showRegions = true,
 }: TreeCanvasProps) {
   // Searching forces open the path to every match — a hit inside a
   // collapsed clade would otherwise never render, which made search look
@@ -95,15 +134,6 @@ export function TreeCanvas({
     () => effectiveCollapsed(root, collapsed, searchQuery),
     [root, collapsed, searchQuery],
   );
-  const horizontal = useMemo(
-    () => computeTreeLayout(root, openCollapsed, TREE_WIDTH),
-    [root, openCollapsed],
-  );
-  const radial = useMemo(() => computeRadialTreeLayout(root, openCollapsed), [root, openCollapsed]);
-  const isRadial = orientation === "radial";
-  const nodes = isRadial ? radial.nodes : horizontal.nodes;
-  const links = isRadial ? radial.links : horizontal.links;
-
   const containerRef = useRef<HTMLDivElement | null>(null);
   const zoomLayerRef = useRef<SVGGElement | null>(null);
   const localSvgRef = useRef<SVGSVGElement | null>(null);
@@ -121,6 +151,25 @@ export function TreeCanvas({
   // zoom triggers one render per perceptible step rather than one per event.
   const [scale, setScale] = useState(1);
   const [vb, setVb] = useState({ w: 1000, h: 700 });
+
+  // Width comes from the viewport, not a constant, so the hierarchy spreads
+  // across the screen it is actually given. TREE_WIDTH is the floor for a
+  // narrow window rather than the target.
+  const horizontal = useMemo(
+    () =>
+      computeTreeLayout(
+        root,
+        openCollapsed,
+        Math.max(TREE_WIDTH, vb.w - H_MARGIN_LEFT - H_MARGIN_RIGHT),
+        vb.h,
+      ),
+    [root, openCollapsed, vb.w, vb.h],
+  );
+  const radial = useMemo(() => computeRadialTreeLayout(root, openCollapsed), [root, openCollapsed]);
+  const isRadial = orientation === "radial";
+  const nodes = isRadial ? radial.nodes : horizontal.nodes;
+  const links = isRadial ? radial.links : horizontal.links;
+
 
   // Keep the viewBox locked to the container's pixel size so 1 viewBox unit
   // == 1 CSS pixel — the tree is the stage, it fills the space it is given
@@ -260,6 +309,58 @@ export function TreeCanvas({
     }
   };
 
+  /** A link whose endpoints carry any manual drag, so a branch stays glued
+   * to the node it belongs to. Shallow copies only — the hierarchy objects
+   * themselves are never mutated. */
+  const withDrawnEnds = useCallback(
+    (link: d3.HierarchyPointLink<DisplayNode>) => {
+      if (!nodeOffsets || nodeOffsets.size === 0) return link;
+      const s = drawnPos(link.source, isRadial, nodeOffsets);
+      const t = drawnPos(link.target, isRadial, nodeOffsets);
+      return {
+        source: { ...link.source, x: s.x, y: s.y },
+        target: { ...link.target, x: t.x, y: t.y },
+      } as d3.HierarchyPointLink<DisplayNode>;
+    },
+    [nodeOffsets, isRadial],
+  );
+
+  // Node dragging.
+  //
+  // Visual only: the handler reports a pixel delta and the parent stores it
+  // in a side map keyed by nodeKey(). Nothing here touches `root`, so the
+  // hierarchy, every count derived from it, and the exported figure's data
+  // are unaffected — a drag can rearrange the picture but cannot restate the
+  // biology. `Auto arrange` clears the map.
+  //
+  // Bound imperatively because the glyphs are React-rendered: d3.drag needs
+  // real DOM nodes, and re-binding after each render keeps it attached as
+  // the visible set changes. `clickDistance` keeps a click a click, so
+  // select / focus / collapse still work.
+  useEffect(() => {
+    if (!onNodeDrag || !zoomLayerRef.current) return;
+    const scaleAt = () => transformRef.current.k || 1;
+    const behavior = d3
+      .drag<SVGGElement, unknown>()
+      .clickDistance(4)
+      .on("start", (event) => event.sourceEvent?.stopPropagation())
+      .on("drag", function (event) {
+        const key = (this as SVGGElement).getAttribute("data-node-key");
+        if (!key) return;
+        // dx/dy arrive in screen pixels; divide by the zoom scale so a drag
+        // moves the node the same distance under the cursor at any zoom.
+        onNodeDrag(key, event.dx / scaleAt(), event.dy / scaleAt());
+      });
+    const selection = d3
+      .select(zoomLayerRef.current)
+      .selectAll<SVGGElement, unknown>("g[data-node-key]");
+    selection.call(behavior);
+    selection.style("cursor", "grab");
+    return () => {
+      selection.on(".drag", null);
+    };
+  });
+
   const linkGenerator = useMemo(
     () =>
       d3
@@ -318,6 +419,80 @@ export function TreeCanvas({
     () => (isRadial ? [] : horizontal.nodes.filter((n) => n.data._kind === "genome")),
     [isRadial, horizontal.nodes],
   );
+  /**
+   * Subtle background regions showing the taxonomic nesting.
+   *
+   * One region per internal clade, spanning its descendants: an annular
+   * wedge in the radial view, a rounded band in the horizontal one. Opacity
+   * rises with rank depth (see CLADE_REGION_OPACITY) so a reader can see
+   * "these orders sit inside this class" without tracing every branch.
+   *
+   * Two constraints shaped this. It must never compete with the data — the
+   * fills top out around 0.11 alpha and are drawn before links and nodes, so
+   * they sit strictly behind every branch, glyph and label. And colour must
+   * not imply magnitude: hue is a stable per-clade identity, never a scale,
+   * because a background that looked like a heatmap would suggest a quantity
+   * that does not exist.
+   *
+   * Regions narrower than a few pixels are dropped — below that they read as
+   * speckle rather than structure.
+   */
+  const regions = useMemo(() => {
+    const out: {
+      key: string;
+      fill: string;
+      opacity: number;
+      a0: number; a1: number; r0: number; r1: number;
+      x0: number; x1: number; y0: number; y1: number;
+    }[] = [];
+    for (const n of nodes) {
+      if (n.data._kind === "genome" || n.depth === 0) continue;
+      const rank = n.data.rank;
+      const opacity = rank ? CLADE_REGION_OPACITY[rank] : undefined;
+      if (!opacity) continue;
+      const leaves = n.leaves();
+      if (leaves.length < 2) continue; // a lone leaf is not a region
+
+      const xs = leaves.map((l) => drawnPos(l, isRadial, nodeOffsets).x);
+      const ys = leaves.map((l) => drawnPos(l, isRadial, nodeOffsets).y);
+      const self = drawnPos(n, isRadial, nodeOffsets);
+      const a0 = Math.min(...xs);
+      const a1 = Math.max(...xs);
+      const rOuter = Math.max(...ys);
+
+      if (isRadial) {
+        if ((a1 - a0) * rOuter < 6) continue;
+      } else if (Math.max(...xs) - Math.min(...xs) < 6) continue;
+
+      out.push({
+        key: nodeKey(n.data),
+        fill: cladeHue(n.data.name),
+        opacity,
+        a0: a0 - REGION_ANGLE_PAD,
+        a1: a1 + REGION_ANGLE_PAD,
+        r0: Math.max(0, self.y - REGION_PAD),
+        r1: rOuter + REGION_PAD,
+        x0: a0 - REGION_PAD,
+        x1: a1 + REGION_PAD,
+        y0: self.y - REGION_PAD,
+        y1: rOuter + REGION_PAD,
+      });
+    }
+    // Broad clades first so finer ones layer on top, which is what makes the
+    // nesting visible as accumulating density.
+    return out.sort((p, q) => p.opacity - q.opacity);
+  }, [nodes, isRadial, nodeOffsets]);
+
+  const regionArc = useMemo(
+    () => d3.arc<{ a0: number; a1: number; r0: number; r1: number }>()
+      .startAngle((d) => d.a0)
+      .endAngle((d) => d.a1)
+      .innerRadius((d) => d.r0)
+      .outerRadius((d) => d.r1)
+      .cornerRadius(3),
+    [],
+  );
+
   const trackX = useMemo(
     () => (genomeLeaves.length ? Math.max(...genomeLeaves.map((n) => n.y)) + PRESENCE_GUTTER : 0),
     [genomeLeaves],
@@ -348,6 +523,34 @@ export function TreeCanvas({
             data-figure-root="true"
             transform={isRadial ? `translate(${radial.size / 2},${radial.size / 2})` : "translate(0,0)"}
           >
+            {/* Taxonomic hierarchy regions — drawn first so every branch,
+                glyph and label sits on top of them. */}
+            {showRegions && regions.length > 0 && (
+              <g data-hierarchy-regions="true" pointerEvents="none">
+                {regions.map((r) =>
+                  isRadial ? (
+                    <path
+                      key={r.key}
+                      d={regionArc({ a0: r.a0, a1: r.a1, r0: r.r0, r1: r.r1 }) ?? undefined}
+                      fill={r.fill}
+                      fillOpacity={r.opacity}
+                    />
+                  ) : (
+                    <rect
+                      key={r.key}
+                      x={r.y0}
+                      y={r.x0}
+                      width={Math.max(0, r.y1 - r.y0)}
+                      height={Math.max(0, r.x1 - r.x0)}
+                      rx={6}
+                      fill={r.fill}
+                      fillOpacity={r.opacity}
+                    />
+                  ),
+                )}
+              </g>
+            )}
+
             {/* Presence track */}
             {!isRadial && familyActive && familyMembership && genomeLeaves.length > 0 && (
               <g>
@@ -407,7 +610,11 @@ export function TreeCanvas({
               return (
                 <path
                   key={i}
-                  d={(isRadial ? radialLinkGenerator(link) : linkGenerator(link)) ?? undefined}
+                  d={
+                    (isRadial
+                      ? radialLinkGenerator(withDrawnEnds(link))
+                      : linkGenerator(withDrawnEnds(link))) ?? undefined
+                  }
                   fill="none"
                   stroke={stroke}
                   strokeWidth={onFamilyPath ? Math.max(width, 2.5) : width}
@@ -420,6 +627,7 @@ export function TreeCanvas({
             {nodes.map((n) => {
               const node = n.data;
               const key = nodeKey(node);
+              const pos = drawnPos(n, isRadial, nodeOffsets);
               const isGenome = node._kind === "genome";
               const isMatch = matchesQuery(node, searchQuery);
               const hidden = hiddenChildrenCount(node, openCollapsed);
@@ -442,10 +650,11 @@ export function TreeCanvas({
               return (
                 <g
                   key={key}
+                  data-node-key={key}
                   transform={
                     isRadial
-                      ? `rotate(${(n.x * 180) / Math.PI - 90}) translate(${n.y},0)`
-                      : `translate(${n.y},${n.x})`
+                      ? `rotate(${(pos.x * 180) / Math.PI - 90}) translate(${pos.y},0)`
+                      : `translate(${pos.y},${pos.x})`
                   }
                   opacity={opacity}
                 >

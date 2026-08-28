@@ -69,3 +69,50 @@ export function classColor(bgcClass: string, subtype: string | null | undefined)
   }
   return [BGC_CLASS_COLORS[bgcClass] ?? COLORS.inkFaint];
 }
+
+
+/**
+ * Muted hues for the taxonomic-hierarchy background regions.
+ *
+ * Desaturated on purpose. These sit *behind* branches whose colour already
+ * encodes BGC class, so a saturated backdrop would compete with the data
+ * and start reading like a heatmap — which would be actively misleading,
+ * since region colour carries no quantity at all. Colour here means only
+ * "these clades are different"; depth is carried by opacity.
+ */
+export const CLADE_REGION_HUES: string[] = [
+  "#4A6FA5",
+  "#5B8C5A",
+  "#8B5A3C",
+  "#7B5EA7",
+  "#5B9C94",
+  "#A67C3D",
+  "#8B4560",
+  "#4F7A8B",
+  "#7A6A4F",
+  "#6B7F9E",
+];
+
+/**
+ * Region opacity by taxonomic rank: broader clades recede, finer ones firm
+ * up, so nesting is legible without any region competing with a branch, a
+ * node or a label. The ceiling is deliberately low — every value here was
+ * chosen to stay under the tree, not beside it.
+ */
+export const CLADE_REGION_OPACITY: Record<string, number> = {
+  domain: 0.04,
+  phylum: 0.07,
+  class: 0.095,
+  order: 0.12,
+  family: 0.145,
+  genus: 0.17,
+  species: 0.19,
+};
+
+/** Stable hue for a clade, by name — so a clade keeps its colour across
+ * re-renders, collapse changes and both orientations. */
+export function cladeHue(name: string): string {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  return CLADE_REGION_HUES[h % CLADE_REGION_HUES.length]!;
+}
