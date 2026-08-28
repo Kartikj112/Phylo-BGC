@@ -1,13 +1,22 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { fetchHeatmap } from "@/lib/api-client";
+import { fetchHeatmap, type TreeScope } from "@/lib/api-client";
 import type { PresenceHeatmap } from "@/lib/api-types";
-import { BGC_CLASS_COLORS, BGC_CLASS_LABELS } from "@/lib/colors";
+import { BGC_CLASS_COLORS, BGC_CLASS_LABELS, COLORS } from "@/lib/colors";
 
 const RANKS = ["phylum", "class", "order", "family", "genus"] as const;
 
-export function HeatmapView() {
+/** `#rrggbb` at a given alpha. */
+function withAlpha(hex: string, alpha: number): string {
+  const v = hex.replace("#", "");
+  const r = parseInt(v.slice(0, 2), 16);
+  const g = parseInt(v.slice(2, 4), 16);
+  const b = parseInt(v.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${Math.min(1, Math.max(0, alpha)).toFixed(3)})`;
+}
+
+export function HeatmapView({ scope = "all" }: { scope?: TreeScope }) {
   const [rank, setRank] = useState<string>("genus");
   const [data, setData] = useState<PresenceHeatmap | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -15,13 +24,13 @@ export function HeatmapView() {
   useEffect(() => {
     let cancelled = false;
     setData(null);
-    fetchHeatmap(rank)
+    fetchHeatmap(rank, scope)
       .then((d) => !cancelled && setData(d))
       .catch((e: unknown) => !cancelled && setError(e instanceof Error ? e.message : String(e)));
     return () => {
       cancelled = true;
     };
-  }, [rank]);
+  }, [rank, scope]);
 
   const lookup = useMemo(() => {
     const map = new Map<string, { count: number; perGenome: number | null }>();
@@ -111,9 +120,14 @@ export function HeatmapView() {
                             key={column}
                             className="border border-line px-2 py-1 text-center font-mono tabular-nums"
                             style={{
-                              backgroundColor: intensity > 0 ? base : "transparent",
-                              opacity: intensity > 0 ? intensity : 1,
-                              color: intensity > 0.55 ? "#FFFFFF" : "#5B5F58",
+                              // Alpha on the FILL, not `opacity` on the cell.
+                              // Element opacity faded the number along with
+                              // its background, so exactly the cells with the
+                              // least ink — the low-rate ones a reader most
+                              // needs to read a value off — had the least
+                              // legible text.
+                              backgroundColor: intensity > 0 ? withAlpha(base, intensity) : "transparent",
+                              color: intensity > 0.55 ? "#FFFFFF" : COLORS.ink,
                             }}
                             title={`${cell?.count ?? 0} clusters · ${rate.toFixed(2)}/genome · ${genomes} genome(s)`}
                           >

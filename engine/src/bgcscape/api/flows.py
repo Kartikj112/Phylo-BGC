@@ -28,7 +28,12 @@ from collections import defaultdict
 
 from sqlalchemy.orm import Session
 
-from bgcscape.api.tree_builder import component_classes, load_classified_bgc_rows
+from bgcscape.api.tree_builder import (
+    TreeScope,
+    component_classes,
+    load_classified_bgc_rows,
+    taxon_ids_in_scope,
+)
 from bgcscape.models import BGC, Genome, Taxon, TaxonRank
 
 
@@ -38,7 +43,11 @@ def _component_classes(bgc: BGC) -> list[str]:
     return [bgc.bgc_class.value]
 
 
-def build_taxonomy_class_flow(session: Session, max_nodes_per_stage: int = 12) -> dict:
+def build_taxonomy_class_flow(
+    session: Session,
+    max_nodes_per_stage: int = 12,
+    scope: TreeScope = "all",
+) -> dict:
     """Build `phylum -> genus -> BGC class` flows.
 
     Stages beyond `max_nodes_per_stage` are collapsed into an explicit
@@ -88,7 +97,13 @@ def build_taxonomy_class_flow(session: Session, max_nodes_per_stage: int = 12) -
     hybrid_double_counted = 0
     unclassified = 0
 
+    # Scoped to one taxonomy: GTDB and NCBI ranks are not comparable, so a
+    # merged phylum column would put Ascomycota beside Actinomycetota and
+    # invite a comparison the data cannot support.
+    in_scope = taxon_ids_in_scope(session, scope)
     for _genome_id, taxon_id, bgc_class, subtype in load_classified_bgc_rows(session):
+        if in_scope is not None and taxon_id not in in_scope:
+            continue
         phylum = ancestor_at(taxon_id, TaxonRank.PHYLUM)
         genus = ancestor_at(taxon_id, TaxonRank.GENUS)
         if phylum is None or genus is None:
@@ -146,5 +161,13 @@ def build_taxonomy_class_flow(session: Session, max_nodes_per_stage: int = 12) -
         ],
         "hybrid_double_counted": hybrid_double_counted,
         "unclassified_bgcs": unclassified,
-        "total_bgcs": session.query(BGC).count(),
+        "total_bgcs": (
+            session.query(BGC).count()
+            if in_scope is None
+            else sum(
+                1
+                for _g, t, _c, _s in load_classified_bgc_rows(session)
+                if t in in_scope
+            )
+        ),
     }

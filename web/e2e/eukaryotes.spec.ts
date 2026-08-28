@@ -19,6 +19,7 @@ async function ready(page: Page) {
 
 const nodes = (page: Page) => page.locator("svg [data-figure-root='true'] g[data-node-key]");
 const euk = (page: Page) => page.getByRole("button", { name: "Eukaryotes", exact: true });
+const pro = (page: Page) => page.getByRole("button", { name: "Prokaryotes", exact: true });
 
 test("the Eukaryotes tab renders an NCBI-ranked fungal tree", async ({ page }) => {
   await ready(page);
@@ -83,4 +84,54 @@ test("switching tabs does not carry stale view state across", async ({ page }) =
   await page.getByRole("button", { name: "Tree", exact: true }).click();
   await page.waitForTimeout(2500);
   expect(await nodes(page).count()).toBeGreaterThan(20);
+});
+
+
+test("taxonomy and view are separate controls", async ({ page }) => {
+  await ready(page);
+  // The tabs used to read "Tree | Eukaryotes | Flows | Matrix" — one named a
+  // widget, the next named a clade, and there was no way to reach the Sankey
+  // or the matrix for eukaryotes at all.
+  await expect(pro(page)).toBeVisible();
+  await expect(euk(page)).toBeVisible();
+  for (const view of ["Tree", "Flows", "Matrix"]) {
+    await expect(page.getByRole("button", { name: view, exact: true })).toBeVisible();
+  }
+});
+
+test("Flows and Matrix follow the selected taxonomy", async ({ page }) => {
+  await ready(page);
+
+  await page.getByRole("button", { name: "Matrix", exact: true }).click();
+  await page.waitForTimeout(2000);
+  // Bacterial genera, and no fungal ones.
+  await expect(page.getByText("Streptomyces", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Aspergillus", { exact: true })).toHaveCount(0);
+
+  await euk(page).click();
+  await page.waitForTimeout(2500);
+  // ...and the reverse. Unscoped, both appeared as peer rows even though
+  // GTDB and NCBI ranks are not comparable.
+  await expect(page.getByText("Aspergillus", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Streptomyces", { exact: true })).toHaveCount(0);
+});
+
+test("matrix cell values stay legible at low intensity", async ({ page }) => {
+  await ready(page);
+  await page.getByRole("button", { name: "Matrix", exact: true }).click();
+  await page.waitForTimeout(2000);
+
+  // Intensity belongs in the fill's alpha, not in `opacity` on the cell:
+  // element opacity faded the NUMBER along with its background, so the
+  // low-rate cells a reader most needs to read a value off were the least
+  // legible ones.
+  const faded = await page.evaluate(() =>
+    Array.from(document.querySelectorAll("td"))
+      .filter((td) => /^\d+$/.test(td.textContent?.trim() ?? ""))
+      .filter((td) => {
+        const o = getComputedStyle(td).opacity;
+        return o !== "" && Number(o) < 0.95;
+      }).length,
+  );
+  expect(faded, "cells with numbers must not be faded by element opacity").toBe(0);
 });

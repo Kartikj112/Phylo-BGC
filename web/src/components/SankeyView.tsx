@@ -2,7 +2,7 @@
 
 import { sankey, sankeyLinkHorizontal, type SankeyGraph } from "d3-sankey";
 import { useEffect, useMemo, useState } from "react";
-import { fetchTaxonomyClassFlow } from "@/lib/api-client";
+import { fetchTaxonomyClassFlow, type TreeScope } from "@/lib/api-client";
 import type { TaxonomyClassFlow } from "@/lib/api-types";
 import { BGC_CLASS_COLORS, BGC_CLASS_LABELS, COLORS } from "@/lib/colors";
 
@@ -26,19 +26,19 @@ interface SankeyLink {
 const WIDTH = 880;
 const HEIGHT = 520;
 
-export function SankeyView() {
+export function SankeyView({ scope = "all" }: { scope?: TreeScope }) {
   const [data, setData] = useState<TaxonomyClassFlow | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    fetchTaxonomyClassFlow()
+    fetchTaxonomyClassFlow(scope)
       .then((d) => !cancelled && setData(d))
       .catch((e: unknown) => !cancelled && setError(e instanceof Error ? e.message : String(e)));
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [scope]);
 
   const graph = useMemo(() => {
     if (!data || data.nodes.length === 0) return null;

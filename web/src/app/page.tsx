@@ -46,14 +46,19 @@ import {
 } from "@/lib/tree-logic";
 
 export default function HomePage() {
-  const [view, setView] = useState<"tree" | "eukaryotes" | "flow" | "heatmap">("tree");
-  // Two taxonomies, two views. GTDB (genome-based) and NCBI (literature-based)
-  // are different methodologies that disagree, so the eukaryotes GTDB cannot
-  // represent get their own tree rather than being grafted onto the bacterial
-  // backbone — a merged tree would be a hybrid a reader could not pick apart.
-  // Both use the same canvas and the same controls.
-  const isTreeView = view === "tree" || view === "eukaryotes";
-  const treeScope = view === "eukaryotes" ? "eukaryote" : "prokaryote";
+  // Taxonomy and view are independent axes, and conflating them was a
+  // labelling bug: the tabs read "Tree | Eukaryotes | Flows | Matrix", so one
+  // named a widget and the next named a clade, and there was no way to see
+  // the Sankey or the matrix for eukaryotes at all. They are now two
+  // controls — which taxonomy, and which view of it.
+  //
+  // The split is not cosmetic. GTDB (genome-based, rank-normalised) and NCBI
+  // (literature-based) disagree, so every view is scoped to one of them:
+  // a merged phylum column would put Ascomycota beside Actinomycetota.
+  const [taxonomy, setTaxonomy] = useState<"prokaryote" | "eukaryote">("prokaryote");
+  const [view, setView] = useState<"tree" | "flow" | "heatmap">("tree");
+  const isTreeView = view === "tree";
+  const treeScope = taxonomy;
   const { tree, loading, error } = useTaxonomyTree(treeScope);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [activeClasses, setActiveClasses] = useState<Set<string>>(new Set(CLASS_ORDER));
@@ -180,6 +185,7 @@ export default function HomePage() {
     setComparisonTaxonIds([]);
     setNodeOffsets(new Map());
   }, [treeScope]);
+
 
   // Open on a readable summary, not on every leaf at once.
   //
@@ -354,12 +360,31 @@ export default function HomePage() {
       <Header query={query} onQueryChange={setQuery} genomeCount={genomeCount}
         totalGenomes={pruned?.totalGenomes ?? 0}
         matchCount={matchCount}
-        taxonomyLabel={view === "eukaryotes" ? "NCBI Taxonomy" : "GTDB"}>
+        taxonomyLabel={taxonomy === "eukaryote" ? "NCBI Taxonomy" : "GTDB"}>
         <div className="flex flex-shrink-0 overflow-hidden rounded border border-line">
           {(
             [
-              ["tree", "Tree", "Prokaryotes on the GTDB backbone"],
-              ["eukaryotes", "Eukaryotes", "Fungi and plants, ranked by NCBI Taxonomy — GTDB is prokaryote-only and cannot represent them"],
+              ["prokaryote", "Prokaryotes", "Bacteria and archaea, on the GTDB backbone"],
+              ["eukaryote", "Eukaryotes", "Fungi and plants, ranked by NCBI Taxonomy — GTDB is prokaryote-only and cannot represent them"],
+            ] as const
+          ).map(([id, label, hint]) => (
+            <button
+              key={id}
+              title={hint}
+              onClick={() => setTaxonomy(id)}
+              className={`px-2.5 py-1 text-xs ${
+                taxonomy === id ? "bg-signal-wash text-signal" : "text-ink-muted hover:text-ink"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex flex-shrink-0 overflow-hidden rounded border border-line">
+          {(
+            [
+              ["tree", "Tree", "The taxonomic tree, with BGCs on each tip"],
               ["flow", "Flows", "Phylum to genus to BGC class"],
               ["heatmap", "Matrix", "Clade by BGC class"],
             ] as const
@@ -550,8 +575,8 @@ export default function HomePage() {
               <BgcTypeDonut />
             </div>
           )}
-          {view === "flow" && <SankeyView />}
-          {view === "heatmap" && <HeatmapView />}
+          {view === "flow" && <SankeyView scope={taxonomy} />}
+          {view === "heatmap" && <HeatmapView scope={taxonomy} />}
           {isTreeView && loading && (
             <div className="flex h-full items-center justify-center text-sm text-ink-muted">
               Loading taxonomy tree…

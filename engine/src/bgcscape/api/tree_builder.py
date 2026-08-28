@@ -219,3 +219,44 @@ def component_classes(bgc_class, subtype: str | None) -> list[str]:
     if value == "hybrid" and subtype:
         return [p.strip().lower() for p in subtype.split("+") if p.strip()]
     return [value]
+
+
+def taxon_ids_in_scope(session: Session, scope: TreeScope) -> set[uuid.UUID] | None:
+    """Taxon ids belonging to one taxonomy, or None for "everything".
+
+    The heatmap and the Sankey aggregate over taxa directly rather than
+    walking the tree, so scoping them needs the id set the tree would have
+    contained. Without it both views silently merge the two taxonomies:
+    Ascomycota (a fungal phylum, from NCBI) appears in the same phylum column
+    as Actinomycetota (bacterial, from GTDB), and *Aspergillus* beside
+    *Streptomyces* in the same genus column. Those ranks are not comparable —
+    GTDB is rank-normalised and NCBI is not — so the merged view invites a
+    comparison the data cannot support.
+
+    Taxa with no lineage at all (metagenomes, plasmids, "uncultured X")
+    belong to neither taxonomy and stay with the prokaryote scope, matching
+    where the tree already groups them.
+    """
+    if scope == "all":
+        return None
+
+    rows = session.query(Taxon.id, Taxon.parent_id, Taxon.name, Taxon.rank).all()
+    children: dict[uuid.UUID | None, list] = defaultdict(list)
+    for row in rows:
+        children[row.parent_id].append(row)
+
+    euk_root = next(
+        (r for r in children.get(None, []) if r.name == EUKARYOTA and r.rank == TaxonRank.DOMAIN),
+        None,
+    )
+    eukaryote_ids: set[uuid.UUID] = set()
+    if euk_root is not None:
+        stack = [euk_root]
+        while stack:
+            node = stack.pop()
+            eukaryote_ids.add(node.id)
+            stack.extend(children.get(node.id, []))
+
+    if scope == "eukaryote":
+        return eukaryote_ids
+    return {r.id for r in rows} - eukaryote_ids

@@ -65,6 +65,7 @@ from bgcscape.api.schemas import (
 from bgcscape.api.tree_builder import (
     TreeScope,
     build_taxonomy_tree,
+    taxon_ids_in_scope,
     component_classes,
     load_classified_bgc_rows,
 )
@@ -564,17 +565,30 @@ def get_prioritization(
 
 
 @app.get("/api/v1/flows/taxonomy-class", response_model=TaxonomyClassFlow)
-def get_taxonomy_class_flow(session: Session = Depends(get_session)) -> TaxonomyClassFlow:
-    """Sankey flows from phylum through genus to BGC class."""
-    return TaxonomyClassFlow(**build_taxonomy_class_flow(session))
+def get_taxonomy_class_flow(
+    scope: TreeScope = "all",
+    session: Session = Depends(get_session),
+) -> TaxonomyClassFlow:
+    """Sankey flows from phylum through genus to BGC class.
+
+    `scope` selects the taxonomy — see the heatmap below for why a merged
+    view would be misleading.
+    """
+    return TaxonomyClassFlow(**build_taxonomy_class_flow(session, scope=scope))
 
 
 @app.get("/api/v1/heatmap", response_model=PresenceHeatmap)
 def get_presence_heatmap(
     rank: str = "genus",
+    scope: TreeScope = "all",
     session: Session = Depends(get_session),
 ) -> PresenceHeatmap:
-    """Clade x BGC-class matrix (report section 4.9)."""
+    """Clade x BGC-class matrix (report section 4.9).
+
+    `scope` selects the taxonomy, for the same reason the tree does: GTDB and
+    NCBI ranks are not comparable, so a merged matrix would list *Aspergillus*
+    (fungal, NCBI) and *Streptomyces* (bacterial, GTDB) as peer rows.
+    """
     try:
         target_rank = TaxonRank(rank)
     except ValueError as exc:
@@ -619,6 +633,8 @@ def get_presence_heatmap(
             ancestor_cache[node] = found
         return found
 
+    in_scope = taxon_ids_in_scope(session, scope)
+
     counts: dict[str, dict[str, int]] = {}
     genome_counts: dict[str, int] = {}
     row_names: dict[str, str] = {}
@@ -635,6 +651,8 @@ def get_presence_heatmap(
         .filter(Genome.taxon_id.isnot(None))
         .group_by(Genome.taxon_id)
     ):
+        if in_scope is not None and taxon_id not in in_scope:
+            continue
         clade = ancestor_at(taxon_id)
         if clade is None:
             continue
@@ -644,6 +662,8 @@ def get_presence_heatmap(
         genome_counts[key] = genome_counts.get(key, 0) + genome_total
 
     for _genome_id, taxon_id, bgc_class, subtype in load_classified_bgc_rows(session):
+        if in_scope is not None and taxon_id not in in_scope:
+            continue
         clade = ancestor_at(taxon_id)
         if clade is None:
             continue

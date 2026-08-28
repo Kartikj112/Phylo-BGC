@@ -207,3 +207,73 @@ def test_tree_scope_separates_the_two_taxonomies(session, sources, taxdump):
     assert "Eukaryota" not in [c.name for c in pro.children]
     assert "Bacteria" in [c.name for c in pro.children]
     assert {c.name for c in every.children} >= {"Eukaryota", "Bacteria"}
+
+
+def test_flows_and_heatmap_are_scoped_to_one_taxonomy(session, sources, taxdump):
+    """The Sankey and the matrix aggregate over taxa directly rather than
+    walking the tree, so they need scoping of their own.
+
+    Unscoped they silently merged the two taxonomies: Ascomycota (a fungal
+    phylum, NCBI) appeared in the same phylum column as Actinomycetota
+    (bacterial, GTDB), and *Aspergillus* beside *Streptomyces* in the same
+    genus column. Those ranks are not comparable — GTDB is rank-normalised
+    and NCBI is not — so the merged view invited a comparison the data
+    cannot support.
+    """
+    from bgcscape.api.tree_builder import taxon_ids_in_scope
+
+    mibig, ncbi = sources
+    _orphan(session, "Aspergillus nidulans", 162425, mibig)
+    bacteria = Taxon(
+        name="Bacteria",
+        rank=TaxonRank.DOMAIN,
+        source_id=mibig.id,
+        evidence_level=EvidenceLevel.OBSERVED_CURATED,
+    )
+    session.add(bacteria)
+    session.flush()
+    strep = Taxon(
+        name="Streptomyces",
+        rank=TaxonRank.GENUS,
+        parent_id=bacteria.id,
+        source_id=mibig.id,
+        evidence_level=EvidenceLevel.OBSERVED_CURATED,
+    )
+    session.add(strep)
+    session.commit()
+    ingest_ncbi_lineages(session, ncbi, taxdump)
+
+    euk = taxon_ids_in_scope(session, "eukaryote")
+    pro = taxon_ids_in_scope(session, "prokaryote")
+
+    assert taxon_ids_in_scope(session, "all") is None  # no filtering at all
+    assert euk is not None and pro is not None
+    assert not (euk & pro), "a taxon cannot belong to both taxonomies"
+    assert strep.id in pro and strep.id not in euk
+    assert bacteria.id in pro
+
+    fungi = session.query(Taxon).filter_by(name="Fungi").one()
+    assert fungi.id in euk and fungi.id not in pro
+
+
+def test_unplaceable_organisms_stay_with_the_prokaryote_scope(session, sources, taxdump):
+    """Metagenomes and plasmids belong to neither taxonomy.
+
+    They keep the prokaryote scope, which is where the tree already groups
+    them as "Unplaced organisms" — dropping them from both would make them
+    invisible rather than merely unplaced.
+    """
+    from bgcscape.api.tree_builder import taxon_ids_in_scope
+
+    mibig, ncbi = sources
+    stray = Taxon(
+        name="sponge metagenome",
+        rank=TaxonRank.SPECIES,
+        source_id=mibig.id,
+        evidence_level=EvidenceLevel.OBSERVED_CURATED,
+    )
+    session.add(stray)
+    session.commit()
+
+    assert stray.id in taxon_ids_in_scope(session, "prokaryote")
+    assert stray.id not in taxon_ids_in_scope(session, "eukaryote")

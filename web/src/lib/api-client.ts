@@ -137,12 +137,14 @@ export async function exportFigure(
   return res.blob();
 }
 
-export function fetchTaxonomyClassFlow(): Promise<TaxonomyClassFlow> {
-  return getJson<TaxonomyClassFlow>("/api/v1/flows/taxonomy-class");
+export function fetchTaxonomyClassFlow(scope: TreeScope = "all"): Promise<TaxonomyClassFlow> {
+  return getJson<TaxonomyClassFlow>(`/api/v1/flows/taxonomy-class?scope=${scope}`);
 }
 
-export function fetchHeatmap(rank = "genus"): Promise<PresenceHeatmap> {
-  return getJson<PresenceHeatmap>(`/api/v1/heatmap?rank=${encodeURIComponent(rank)}`);
+export function fetchHeatmap(rank = "genus", scope: TreeScope = "all"): Promise<PresenceHeatmap> {
+  return getJson<PresenceHeatmap>(
+    `/api/v1/heatmap?rank=${encodeURIComponent(rank)}&scope=${scope}`,
+  );
 }
 
 export function fetchBgcTypeCounts(): Promise<BGCTypeCount[]> {
