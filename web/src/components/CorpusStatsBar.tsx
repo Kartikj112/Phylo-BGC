@@ -64,8 +64,8 @@ export function CorpusStatsBar({
   const filtered = activeClasses.size < counts.length;
 
   return (
-    <div className="flex flex-shrink-0 flex-wrap items-center gap-x-6 gap-y-2 border-b border-line bg-card px-4 py-2">
-      <div className="flex items-center gap-5">
+    <div className="flex flex-shrink-0 flex-wrap items-center gap-x-4 gap-y-1.5 border-b border-chrome-line bg-chrome px-3 py-1.5 sm:gap-y-2 sm:gap-x-6 sm:px-4 sm:py-2">
+      <div className="-mx-3 flex w-full flex-nowrap items-center gap-x-4 overflow-x-auto px-3 sm:mx-0 sm:w-auto sm:flex-wrap sm:gap-x-5 sm:px-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <Stat value={clusterTotal} label="clusters" />
         <Stat
           value={shownGenomes}
@@ -77,8 +77,8 @@ export function CorpusStatsBar({
       </div>
 
       {/* Proportional class strip — doubles as the class filter. */}
-      <div className="flex min-w-[260px] flex-1 flex-col justify-center gap-1">
-        <div className="flex h-3 w-full overflow-hidden rounded-sm">
+      <div className="flex w-full min-w-0 flex-col justify-center gap-1 sm:w-auto sm:min-w-[260px] sm:flex-1">
+        <div className="flex h-4 w-full overflow-hidden rounded-sm sm:h-3">
           {counts.map((c) => {
             const active = activeClasses.has(c.bgc_class);
             return (
@@ -99,27 +99,27 @@ export function CorpusStatsBar({
             );
           })}
         </div>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
+        <div className="-mx-3 flex flex-nowrap items-center gap-x-3 overflow-x-auto px-3 sm:mx-0 sm:flex-wrap sm:gap-y-0.5 sm:px-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {counts.map((c) => {
             const active = activeClasses.has(c.bgc_class);
             return (
               <button
                 key={c.bgc_class}
                 onClick={() => onToggleClass(c.bgc_class)}
-                className="flex items-center gap-1 text-[11px]"
+                className="flex flex-shrink-0 items-center gap-1 whitespace-nowrap py-0.5 text-[11px]"
                 style={{ opacity: active ? 1 : 0.4 }}
               >
                 <span
                   className="inline-block h-2 w-2 flex-shrink-0 rounded-full"
                   style={{ backgroundColor: BGC_CLASS_COLORS[c.bgc_class] ?? COLORS.inkFaint }}
                 />
-                <span className="text-ink">{BGC_CLASS_LABELS[c.bgc_class] ?? c.bgc_class}</span>
-                <span className="font-mono tabular-nums text-ink-faint">{c.count}</span>
+                <span className="text-chrome-ink">{BGC_CLASS_LABELS[c.bgc_class] ?? c.bgc_class}</span>
+                <span className="font-mono tabular-nums text-chrome-ink-faint">{c.count}</span>
               </button>
             );
           })}
           {filtered && (
-            <button onClick={onResetClasses} className="text-[11px] text-signal hover:underline">
+            <button onClick={onResetClasses} className="flex-shrink-0 whitespace-nowrap text-[11px] text-chrome-accent hover:underline">
               show all
             </button>
           )}
@@ -127,7 +127,7 @@ export function CorpusStatsBar({
       </div>
 
       {hybridDoubleCount > 0 && (
-        <p className="max-w-[15rem] text-[11px] leading-tight text-ink-faint">
+        <p className="w-full text-[10px] leading-tight text-chrome-ink-faint sm:w-auto sm:max-w-[15rem] sm:text-[11px]">
           {hybridDoubleCount} hybrid cluster{hybridDoubleCount === 1 ? "" : "s"} count under each
           component class, so the class figures total {classTotal}, not {clusterTotal}.
         </p>
@@ -138,16 +138,18 @@ export function CorpusStatsBar({
 
 function Stat({ value, label, of }: { value: number; label: string; of?: number }) {
   return (
-    <div className="flex flex-col items-start leading-none">
-      <span className="font-mono text-base font-semibold tabular-nums text-ink">
+    <div className="flex flex-shrink-0 flex-col items-start whitespace-nowrap leading-none">
+      <span className="font-mono text-sm font-semibold tabular-nums text-chrome-ink sm:text-base">
         {value.toLocaleString()}
         {of != null && (
-          <span className="ml-0.5 text-[11px] font-normal text-ink-faint">
+          <span className="ml-0.5 text-[11px] font-normal text-chrome-ink-faint">
             / {of.toLocaleString()}
           </span>
         )}
       </span>
-      <span className="mt-1 text-[10px] uppercase tracking-wider text-ink-faint">{label}</span>
+      <span className="mt-0.5 text-[9px] uppercase tracking-wider text-chrome-ink-faint sm:mt-1 sm:text-[10px]">
+        {label}
+      </span>
     </div>
   );
 }

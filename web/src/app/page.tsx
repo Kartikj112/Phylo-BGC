@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Breadcrumbs } from "@/components/Breadcrumbs";
 import { BgcTypeDonut } from "@/components/BgcTypeDonut";
 import { ClassFilterRail } from "@/components/ClassFilterRail";
@@ -98,6 +99,20 @@ export default function HomePage() {
   // inline form is still the better read when only a handful of tips are on
   // screen, and it makes the two directly comparable.
   const [alignedGlyphs, setAlignedGlyphs] = useState(true);
+  // Below `lg` the left rail is an off-canvas drawer rather than a column:
+  // at 375px a 208px rail leaves 167px of tree, which is not a view of
+  // anything. It is a plain overlay, not a separate route, so every filter
+  // keeps the exact same component and state it has on the desktop layout.
+  const [railOpen, setRailOpen] = useState(false);
+
+  /** Close the drawer after an action that changes the tree, so the result
+   * is visible without a second tap. Desktop keeps the rail pinned open, so
+   * this is scoped to the viewport where the rail actually overlays. */
+  const closeRailOnMobile = useCallback(() => {
+    if (typeof window !== "undefined" && !window.matchMedia("(min-width: 1024px)").matches) {
+      setRailOpen(false);
+    }
+  }, []);
 
   function toggleComparisonTaxon(taxonId: string): void {
     setComparisonTaxonIds((prev) =>
@@ -262,6 +277,7 @@ export default function HomePage() {
 
   function selectFamily(id: string | null): void {
     setSelectedFamilyId(id);
+    if (id) closeRailOnMobile();
     // Focusing the whole interface on a family; a stale genome/BGC panel
     // would compete with the distribution view.
     setSelection(null);
@@ -326,6 +342,7 @@ export default function HomePage() {
 
   function selectLevel(level: CollapseLevel): void {
     if (!root) return;
+    closeRailOnMobile();
     setActiveLevel(level);
     setAutoFramed(false);
     setCollapsed(collapseToLevel(root, level));
@@ -356,12 +373,14 @@ export default function HomePage() {
   }
 
   return (
-    <div className="flex h-screen w-full flex-col bg-paper">
+    <div className="flex h-[100dvh] w-full flex-col overflow-hidden bg-paper">
       <Header query={query} onQueryChange={setQuery} genomeCount={genomeCount}
         totalGenomes={pruned?.totalGenomes ?? 0}
         matchCount={matchCount}
+        railOpen={railOpen}
+        onToggleRail={() => setRailOpen((v) => !v)}
         taxonomyLabel={taxonomy === "eukaryote" ? "NCBI Taxonomy" : "GTDB"}>
-        <div className="flex flex-shrink-0 overflow-hidden rounded border border-line">
+        <div className="flex flex-shrink-0 overflow-hidden rounded border border-chrome-line">
           {(
             [
               ["prokaryote", "Prokaryotes", "Bacteria and archaea, on the GTDB backbone"],
@@ -372,8 +391,10 @@ export default function HomePage() {
               key={id}
               title={hint}
               onClick={() => setTaxonomy(id)}
-              className={`px-2.5 py-1 text-xs ${
-                taxonomy === id ? "bg-signal-wash text-signal" : "text-ink-muted hover:text-ink"
+              className={`whitespace-nowrap px-2.5 py-1.5 text-xs ${
+                taxonomy === id
+                  ? "bg-chrome-accent-wash text-chrome-accent"
+                  : "text-chrome-ink-muted hover:bg-chrome-soft hover:text-chrome-ink"
               }`}
             >
               {label}
@@ -381,7 +402,7 @@ export default function HomePage() {
           ))}
         </div>
 
-        <div className="flex flex-shrink-0 overflow-hidden rounded border border-line">
+        <div className="flex flex-shrink-0 overflow-hidden rounded border border-chrome-line">
           {(
             [
               ["tree", "Tree", "The taxonomic tree, with BGCs on each tip"],
@@ -393,8 +414,10 @@ export default function HomePage() {
               key={id}
               title={hint}
               onClick={() => setView(id)}
-              className={`px-2.5 py-1 text-xs ${
-                view === id ? "bg-signal-wash text-signal" : "text-ink-muted hover:text-ink"
+              className={`whitespace-nowrap px-2.5 py-1.5 text-xs ${
+                view === id
+                  ? "bg-chrome-accent-wash text-chrome-accent"
+                  : "text-chrome-ink-muted hover:bg-chrome-soft hover:text-chrome-ink"
               }`}
             >
               {label}
@@ -403,7 +426,7 @@ export default function HomePage() {
         </div>
 
         {isTreeView && (
-        <div className="flex flex-shrink-0 overflow-hidden rounded border border-line">
+        <div className="flex flex-shrink-0 overflow-hidden rounded border border-chrome-line">
           {(["horizontal", "radial"] as const).map((mode) => (
             <button
               key={mode}
@@ -412,8 +435,10 @@ export default function HomePage() {
                 setFitSignal((n) => n + 1);
               }}
               title={mode === "horizontal" ? "Horizontal tree" : "Circular tree"}
-              className={`px-2 py-1 text-xs ${
-                orientation === mode ? "bg-signal-wash text-signal" : "text-ink-muted hover:text-ink"
+              className={`px-2.5 py-1.5 text-xs ${
+                orientation === mode
+                  ? "bg-chrome-accent-wash text-chrome-accent"
+                  : "text-chrome-ink-muted hover:bg-chrome-soft hover:text-chrome-ink"
               }`}
             >
               {mode === "horizontal" ? "⊢" : "◎"}
@@ -430,8 +455,10 @@ export default function HomePage() {
                 ? "Cluster glyphs share one aligned track, so counts and classes line up across the whole tree. Click to hang them off each node instead."
                 : "Cluster glyphs hang off each node. Click to align them on a shared track so rows can be compared."
             }
-            className={`flex-shrink-0 whitespace-nowrap rounded border border-line px-2 py-1 text-xs ${
-              alignedGlyphs ? "bg-signal-wash text-signal" : "text-ink-muted hover:text-ink"
+            className={`flex-shrink-0 whitespace-nowrap rounded border border-chrome-line px-2 py-1.5 text-xs ${
+              alignedGlyphs
+                ? "bg-chrome-accent-wash text-chrome-accent"
+                : "text-chrome-ink-muted hover:bg-chrome-soft hover:text-chrome-ink"
             }`}
           >
             Aligned
@@ -446,8 +473,10 @@ export default function HomePage() {
                 ? "Hide the taxonomic grouping shading"
                 : "Show subtle shading behind each clade to make the taxonomic nesting visible"
             }
-            className={`flex-shrink-0 whitespace-nowrap rounded border border-line px-2 py-1 text-xs ${
-              showRegions ? "bg-signal-wash text-signal" : "text-ink-muted hover:text-ink"
+            className={`flex-shrink-0 whitespace-nowrap rounded border border-chrome-line px-2 py-1.5 text-xs ${
+              showRegions
+                ? "bg-chrome-accent-wash text-chrome-accent"
+                : "text-chrome-ink-muted hover:bg-chrome-soft hover:text-chrome-ink"
             }`}
           >
             Clades
@@ -463,7 +492,7 @@ export default function HomePage() {
                 ? "Layout is already tidy — drag nodes to rearrange, then use this to restore it"
                 : `Discard ${nodeOffsets.size} manual node move(s) and re-centre`
             }
-            className="flex-shrink-0 whitespace-nowrap rounded border border-line px-2 py-1 text-xs text-ink-muted enabled:hover:text-ink disabled:opacity-40"
+            className="flex-shrink-0 whitespace-nowrap rounded border border-chrome-line px-2 py-1.5 text-xs text-chrome-ink-muted enabled:hover:bg-chrome-soft enabled:hover:text-chrome-ink disabled:opacity-40"
           >
             Auto arrange
           </button>
@@ -506,21 +535,49 @@ export default function HomePage() {
         <Breadcrumbs path={focused.path} focusLost={focused.focusLost} onNavigate={focusNode} />
       )}
 
-      <div className="flex min-h-0 flex-1">
-        <div className="w-52 flex-shrink-0 overflow-y-auto border-r border-line p-4">
+      <div className="relative flex min-h-0 flex-1">
+        {/* Scrim for the mobile drawer. Below `lg` the rail floats over the
+            canvas, so a tap outside it has to dismiss it — otherwise the
+            only way back to the tree is the header button, which the rail
+            partially covers on a narrow phone. */}
+        {railOpen && (
+          <div
+            aria-hidden
+            onClick={() => setRailOpen(false)}
+            className="absolute inset-0 z-30 bg-ink/50 lg:hidden"
+          />
+        )}
+
+        <aside
+          aria-label="Controls"
+          className={`chrome-scroll absolute inset-y-0 left-0 z-40 w-[17rem] max-w-[86vw] flex-shrink-0 overflow-y-auto overscroll-contain border-r border-chrome-line bg-chrome p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-2xl transition-transform duration-200 ease-out lg:static lg:z-auto lg:w-56 lg:translate-x-0 lg:shadow-none ${
+            railOpen ? "translate-x-0" : "-translate-x-full"
+          }`}
+        >
+          <div className="mb-4 flex items-center justify-between lg:hidden">
+            <span className="text-xs uppercase tracking-wider text-chrome-ink-muted">Controls</span>
+            <button
+              onClick={() => setRailOpen(false)}
+              aria-label="Close controls"
+              className="-mr-1 flex h-8 w-8 items-center justify-center rounded text-chrome-ink-faint hover:bg-chrome-soft hover:text-chrome-ink"
+            >
+              <X size={18} />
+            </button>
+          </div>
+
           <div className="mb-5">
-            <label className="flex cursor-pointer items-start gap-2">
+            <label className="flex cursor-pointer items-start gap-2 py-1">
               <input
                 type="checkbox"
                 checked={onlyWithBgcs}
                 onChange={(e) => setOnlyWithBgcs(e.target.checked)}
-                className="mt-0.5 accent-[#2C5F52]"
+                className="mt-0.5 h-4 w-4 accent-[#7CD3B6]"
               />
-              <span className="text-sm text-ink">Only genomes with BGCs</span>
+              <span className="text-sm text-chrome-ink">Only genomes with BGCs</span>
             </label>
-            <p className="mt-1 pl-6 text-xs leading-relaxed text-ink-faint">
+            <p className="mt-1 pl-6 text-xs leading-relaxed text-chrome-ink-faint">
               {pruned?.fellBackToFull ? (
-                <span className="text-amber-700">
+                <span className="text-amber-300">
                   No genome in this dataset has BGCs yet — showing all. Run{" "}
                   <span className="font-mono">bgcscape ingest antismash</span> to populate them.
                 </span>
@@ -562,9 +619,13 @@ export default function HomePage() {
             totalPhyla={totalPhyla}
             onFamiliesLoaded={setFamiliesList}
           />
-        </div>
+        </aside>
 
-        <div className={`relative flex-1 p-6 ${isTreeView ? "overflow-hidden" : "overflow-auto"}`}>
+        <div
+          className={`relative min-w-0 flex-1 p-2 sm:p-4 lg:p-6 ${
+            isTreeView ? "overflow-hidden" : "overflow-auto"
+          }`}
+        >
           {/* Bottom-right, out of the tree's way. It is context for the tree,
               not a peer of it, so it sits in the corner the eye reaches last
               and never crosses the centre where the radial layout puts its
@@ -617,6 +678,9 @@ export default function HomePage() {
           )}
         </div>
 
+        {/* Right-hand panels. Below `lg` they dock to the bottom as a sheet
+            instead of taking a 320px column out of a 375px screen — same
+            components, same content, different edge. */}
         {selection ? (
           <DetailPanel
             selection={selection}

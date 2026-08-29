@@ -74,7 +74,7 @@ export function SankeyView({ scope = "all" }: { scope?: TreeScope }) {
     n.stage === "bgc_class" ? (BGC_CLASS_COLORS[n.label] ?? COLORS.inkFaint) : COLORS.inkMuted;
 
   return (
-    <div className="p-6">
+    <div className="p-1 sm:p-4 lg:p-6">
       <div className="mb-1 text-sm text-ink">Biosynthetic potential by lineage</div>
       <div className="mb-4 max-w-3xl text-xs leading-relaxed text-ink-muted">
         Phylum → genus → BGC class. Ribbon width is the number of clusters.{" "}
@@ -93,7 +93,16 @@ export function SankeyView({ scope = "all" }: { scope?: TreeScope }) {
         )}
       </div>
 
-      <svg width="100%" viewBox={`0 0 ${WIDTH} ${HEIGHT}`} style={{ maxHeight: "70vh" }}>
+      {/* Below `sm` the diagram keeps its drawn width and scrolls sideways
+          rather than being squeezed to a third of it: at 375px a fitted
+          880px Sankey renders its genus labels at about 4px. */}
+      <div className="-mx-1 overflow-x-auto px-1 sm:mx-0 sm:overflow-visible sm:px-0">
+        <svg
+          width="100%"
+          viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
+          className="min-w-[680px] sm:min-w-0"
+          style={{ maxHeight: "70dvh" }}
+        >
         <g>
           {graph.links.map((link, i) => {
             const target = link.target as SankeyNode;
@@ -140,7 +149,8 @@ export function SankeyView({ scope = "all" }: { scope?: TreeScope }) {
             );
           })}
         </g>
-      </svg>
+        </svg>
+      </div>
     </div>
   );
 }

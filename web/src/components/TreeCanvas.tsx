@@ -1,6 +1,7 @@
 "use client";
 
 import * as d3 from "d3";
+import { Minus, Plus } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { DisplayNode, TaxonDisplayNode } from "@/lib/api-types";
 import { BGC_CLASS_COLORS, BGC_CLASS_LABELS, CLADE_REGION_OPACITY, COLORS, cladeHue, classColor } from "@/lib/colors";
@@ -177,6 +178,38 @@ export function TreeCanvas({
   const [scale, setScale] = useState(1);
   const [vb, setVb] = useState({ w: 1000, h: 700 });
 
+  // Is the primary pointer a fingertip? Drives the interaction model, not
+  // the layout: a phone has no hover to reveal a title, no shift key to
+  // compare with, and `dblclick` on an SVG <text> is unreliable across
+  // mobile browsers — so on a coarse pointer a tap on a taxon label opens
+  // an explicit action menu instead. Same actions, same handlers; only the
+  // gesture that reaches them differs.
+  const [coarsePointer, setCoarsePointer] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const mq = window.matchMedia("(pointer: coarse)");
+    const sync = () => setCoarsePointer(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
+
+  const [nodeMenu, setNodeMenu] = useState<{
+    x: number;
+    y: number;
+    key: string;
+    name: string;
+    taxonId: string | null;
+    isCollapsed: boolean;
+    hasChildren: boolean;
+    inComparison: boolean;
+  } | null>(null);
+
+  /** True while a two-finger canvas gesture is in flight. A pinch that
+   * starts with a finger already resting on a node would otherwise zoom the
+   * canvas and drag that node at the same time. */
+  const pinchingRef = useRef(false);
+
   // Width comes from the viewport, not a constant, so the hierarchy spreads
   // across the screen it is actually given. TREE_WIDTH is the floor for a
   // narrow window rather than the target.
@@ -260,6 +293,28 @@ export function TreeCanvas({
     d3.select(svgEl).call(behavior.transform, d3.zoomIdentity.translate(tx, ty).scale(k));
   }, [isRadial]);
 
+  /** Step the zoom about the centre of the viewport.
+   *
+   * Buttons rather than gesture-only: pinch works (see the zoom filter), but
+   * it is a two-handed gesture on a phone held in one, it is unavailable to
+   * anyone using a device with assistive touch, and on a trackpad-less
+   * desktop there is no wheel either. Same zoom behaviour, so the transform,
+   * the scale extent and the semantic-zoom label thresholds are identical
+   * however the user got there. */
+  const zoomByStep = useCallback((factor: number) => {
+    const svgEl = localSvgRef.current;
+    const behavior = zoomBehaviorRef.current;
+    const el = containerRef.current;
+    if (!svgEl || !behavior || !el) return;
+    d3.select(svgEl)
+      .transition()
+      .duration(180)
+      .call(behavior.scaleBy, factor, [
+        (el.clientWidth || vbRef.current.w) / 2,
+        (el.clientHeight || vbRef.current.h) / 2,
+      ]);
+  }, []);
+
   /** Frame an explicit box, in zoom-layer coordinates. */
   const fitToBox = useCallback(
     (bx: number, by: number, bw: number, bh: number, maxZoom: number) => {
@@ -328,6 +383,17 @@ export function TreeCanvas({
       .scaleExtent([0.1, 8])
       .filter((event: any) => {
         if (event.type === "wheel") return true;
+        // Touch. Two or more fingers always pinch-zoom / pan the canvas,
+        // wherever they land — that is the gesture people reach for first,
+        // and demanding they find empty space to start it would make zoom
+        // feel broken on a dense tree. One finger pans only from empty
+        // canvas, so a single-finger tap still selects and a single-finger
+        // drag on a node still moves that node.
+        if (event.type === "touchstart") {
+          if ((event.touches?.length ?? 0) >= 2) return true;
+          const t = event.target as Element | null;
+          return !!t && (t === svgEl || t.getAttribute?.("data-canvas-bg") === "true");
+        }
         if (event.button === 1) return true; // middle-drag pan
         // Left-drag pans only when it starts on empty canvas, never on a
         // node or label (those are select / compare / focus).
@@ -336,6 +402,15 @@ export function TreeCanvas({
           return !!t && (t === svgEl || t.getAttribute?.("data-canvas-bg") === "true");
         }
         return false;
+      })
+      .on("start", (event) => {
+        pinchingRef.current = (event.sourceEvent?.touches?.length ?? 0) >= 2;
+        // A menu anchored to a screen position is wrong the moment the
+        // canvas moves under it.
+        setNodeMenu(null);
+      })
+      .on("end", () => {
+        pinchingRef.current = false;
       })
       .on("zoom", (event) => {
         const t = event.transform;
@@ -427,9 +502,16 @@ export function TreeCanvas({
     const scaleAt = () => transformRef.current.k || 1;
     const behavior = d3
       .drag<SVGGElement, unknown>()
-      .clickDistance(4)
+      // `clickDistance(4)` keeps a click a click on a mouse; a fingertip
+      // wobbles further than a cursor does, so touch gets a wider slop
+      // before a tap is reclassified as a drag.
+      .clickDistance(10)
       .on("start", (event) => event.sourceEvent?.stopPropagation())
       .on("drag", function (event) {
+        // A two-finger canvas gesture owns the interaction; without this a
+        // pinch begun with a finger resting on a node would zoom the canvas
+        // and drag that node at the same time.
+        if (pinchingRef.current) return;
         const key = (this as SVGGElement).getAttribute("data-node-key");
         if (!key) return;
         // dx/dy arrive in screen pixels; divide by the zoom scale so a drag
@@ -445,6 +527,40 @@ export function TreeCanvas({
       selection.on(".drag", null);
     };
   });
+
+  /** Anchor the touch action menu near the tap, clamped inside the canvas so
+   * a label at the right-hand edge — where half the radial tree's labels
+   * live — does not open a menu that runs off-screen. */
+  const openNodeMenu = useCallback(
+    (
+      clientX: number,
+      clientY: number,
+      info: {
+        key: string;
+        name: string;
+        taxonId: string | null;
+        isCollapsed: boolean;
+        hasChildren: boolean;
+        inComparison: boolean;
+      },
+    ) => {
+      const el = containerRef.current;
+      if (!el) return;
+      const box = el.getBoundingClientRect();
+      const MENU_W = 208;
+      const MENU_H = 200;
+      const x = Math.min(Math.max(8, clientX - box.left - MENU_W / 2), Math.max(8, box.width - MENU_W - 8));
+      const y = Math.min(Math.max(8, clientY - box.top + 12), Math.max(8, box.height - MENU_H - 8));
+      setNodeMenu({ x, y, ...info });
+    },
+    [],
+  );
+
+  // A menu pinned to a node that is no longer drawn (the tree was refiltered,
+  // reoriented or refocused underneath it) would act on a stale key.
+  useEffect(() => {
+    setNodeMenu(null);
+  }, [root, orientation, selectedFamilyId]);
 
   const linkGenerator = useMemo(
     () =>
@@ -628,7 +744,11 @@ export function TreeCanvas({
         width="100%"
         height="100%"
         viewBox={`0 0 ${vb.w} ${vb.h}`}
-        style={{ display: "block", cursor: "grab" }}
+        // `touchAction: none` hands every touch on the canvas to d3-zoom and
+        // d3-drag. Without it the browser claims the gesture first: a pan
+        // scrolls the page, a pinch zooms the document, and the tree's own
+        // navigation never sees either event.
+        style={{ display: "block", cursor: "grab", touchAction: "none" }}
       >
         <rect
           data-canvas-bg="true"
@@ -797,10 +917,21 @@ export function TreeCanvas({
                       inComparison={node.id !== null && comparisonTaxonIds.includes(node.id)}
                       maxGenomeCount={maxGenomeCount}
                       trackOffset={alignedGlyphs ? Math.max(0, glyphTrackAt - pos.y) : 0}
+                      touchMode={coarsePointer}
                       onToggleCollapse={() => onToggleCollapse(key)}
                       onFocus={() => onFocusNode(key)}
                       onToggleComparison={() =>
                         node.id !== null && onToggleComparisonTaxon(node.id)
+                      }
+                      onOpenMenu={(cx, cy) =>
+                        openNodeMenu(cx, cy, {
+                          key,
+                          name: node.name,
+                          taxonId: node.id,
+                          isCollapsed: openCollapsed.has(key),
+                          hasChildren: node.children.length > 0,
+                          inComparison: node.id !== null && comparisonTaxonIds.includes(node.id),
+                        })
                       }
                     />
                   )}
@@ -813,6 +944,7 @@ export function TreeCanvas({
                       matched={isMatch}
                       searchQuery={searchQuery}
                       aligned={alignedGlyphs}
+                      touchMode={coarsePointer}
                       trackOffset={Math.max(0, glyphTrackAt - pos.y)}
                       isEnclosing={isEnclosing}
                       dimmedBySelection={selectedId !== null && selectedId !== node.id}
@@ -829,22 +961,119 @@ export function TreeCanvas({
 
         {hiddenLabelCount > 0 && (
           <text x={12} y={20} fontSize={11} fill={COLORS.inkFaint}>
-            {hiddenLabelCount} label{hiddenLabelCount === 1 ? "" : "s"} hidden for space · scroll to
-            zoom in, drag to pan
+            {hiddenLabelCount} label{hiddenLabelCount === 1 ? "" : "s"} hidden for space ·{" "}
+            {coarsePointer ? "pinch to zoom in, drag to pan" : "scroll to zoom in, drag to pan"}
           </text>
         )}
       </svg>
 
-      <div className="pointer-events-none absolute right-3 top-3 flex gap-1.5">
+      <div className="pointer-events-none absolute right-2 top-2 flex flex-col items-end gap-1.5 sm:right-3 sm:top-3">
         <button
           onClick={fitView}
-          className="pointer-events-auto rounded border border-line bg-card px-2 py-1 text-xs text-ink-muted shadow-sm hover:border-line-strong hover:text-ink"
+          className="pointer-events-auto rounded border border-line bg-card px-2.5 py-1.5 text-xs text-ink-muted shadow-sm hover:border-line-strong hover:text-ink"
           title="Fit the tree to the screen"
         >
           Recenter
         </button>
+        <div className="pointer-events-auto flex flex-col overflow-hidden rounded border border-line bg-card shadow-sm">
+          <button
+            onClick={() => zoomByStep(1.5)}
+            aria-label="Zoom in"
+            title="Zoom in"
+            className="flex h-9 w-9 items-center justify-center border-b border-line text-ink-muted hover:bg-paper hover:text-ink"
+          >
+            <Plus size={16} />
+          </button>
+          <button
+            onClick={() => zoomByStep(1 / 1.5)}
+            aria-label="Zoom out"
+            title="Zoom out"
+            className="flex h-9 w-9 items-center justify-center text-ink-muted hover:bg-paper hover:text-ink"
+          >
+            <Minus size={16} />
+          </button>
+        </div>
       </div>
+
+      {/* Touch action menu.
+          On a coarse pointer there is no shift-click and no dependable
+          double-click on an SVG <text>, so focus and compare — the two
+          navigation moves the tree is built around — would simply be
+          unreachable. A tap on a taxon label opens this instead; it calls
+          exactly the same handlers the keyboard modifiers do. */}
+      {nodeMenu && (
+        <>
+          <div
+            aria-hidden
+            className="absolute inset-0 z-20"
+            onClick={() => setNodeMenu(null)}
+            onTouchStart={() => setNodeMenu(null)}
+          />
+          <div
+            role="menu"
+            className="absolute z-30 w-52 overflow-hidden rounded-md border border-line bg-card shadow-lg"
+            style={{ left: nodeMenu.x, top: nodeMenu.y }}
+          >
+            <div className="truncate border-b border-line px-3 py-2 text-xs font-medium text-ink">
+              {nodeMenu.name}
+            </div>
+            <MenuItem
+              onClick={() => {
+                onFocusNode(nodeMenu.key);
+                setNodeMenu(null);
+              }}
+            >
+              Focus on this clade
+            </MenuItem>
+            {nodeMenu.hasChildren && (
+              <MenuItem
+                onClick={() => {
+                  onToggleCollapse(nodeMenu.key);
+                  setNodeMenu(null);
+                }}
+              >
+                {nodeMenu.isCollapsed ? "Expand" : "Collapse"}
+              </MenuItem>
+            )}
+            {nodeMenu.taxonId !== null && (
+              <MenuItem
+                onClick={() => {
+                  onToggleComparisonTaxon(nodeMenu.taxonId!);
+                  setNodeMenu(null);
+                }}
+              >
+                {nodeMenu.inComparison ? "Remove from comparison" : "Add to comparison"}
+              </MenuItem>
+            )}
+            <MenuItem muted onClick={() => setNodeMenu(null)}>
+              Cancel
+            </MenuItem>
+          </div>
+        </>
+      )}
     </div>
+  );
+}
+
+function MenuItem({
+  children,
+  onClick,
+  muted,
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  muted?: boolean;
+}) {
+  return (
+    <button
+      role="menuitem"
+      onClick={onClick}
+      className={`block w-full border-t border-line px-3 py-2.5 text-left text-sm first:border-t-0 hover:bg-signal-wash ${
+        muted ? "text-ink-faint" : "text-ink"
+      }`}
+    >
+      {children}
+    </button>
   );
 }
 
@@ -860,9 +1089,11 @@ function TaxonNode({
   inComparison,
   maxGenomeCount,
   trackOffset,
+  touchMode,
   onToggleCollapse,
   onToggleComparison,
   onFocus,
+  onOpenMenu,
 }: {
   node: Extract<DisplayNode, { _kind: "taxon" }>;
   isRadial: boolean;
@@ -877,6 +1108,11 @@ function TaxonNode({
   onToggleCollapse: () => void;
   onToggleComparison: () => void;
   onFocus: () => void;
+  /** Coarse pointer: a tap on the label opens the action menu instead of
+   * relying on shift-click and double-click, neither of which a touchscreen
+   * can produce. */
+  touchMode: boolean;
+  onOpenMenu: (clientX: number, clientY: number) => void;
   trackOffset: number;
 }) {
   const isHighRank = node.rank === "domain" || node.rank === "phylum";
@@ -886,6 +1122,9 @@ function TaxonNode({
   const labelX = isRadial ? (flip ? -14 : 14) : -9;
   const labelTransform = flip ? "rotate(180)" : undefined;
   const badgeX = isRadial ? (flip ? 8 : -20) : -node.name.length * 6.6 - 22;
+  // Same 6.6px-per-character estimate the badge offset already uses — good
+  // enough for a hit box, and it avoids a getBBox() measure per node.
+  const labelBoxWidth = (node.name.length + (hiddenCount > 0 ? 5 : 0)) * 6.6 + 8;
   return (
     <>
       {/* The tightest clade wrapping the selected family gets a ring, so
@@ -899,17 +1138,21 @@ function TaxonNode({
           maxGenomeCount={maxGenomeCount}
           flip={isRadial && isLeftHalf(angle)}
           trackOffset={trackOffset}
+          touchMode={touchMode}
           onToggleCollapse={onToggleCollapse}
         />
       ) : (
-        <circle
-          r={4.5}
-          fill={COLORS.paper}
-          stroke={inSelectedFamily ? COLORS.present : COLORS.ink}
-          strokeWidth={inSelectedFamily ? 1.75 : 1.25}
-          className="cursor-pointer"
-          onClick={onToggleCollapse}
-        />
+        <g className="cursor-pointer" onClick={onToggleCollapse}>
+          {/* Invisible halo: a 4.5px dot is a fine mouse target and an
+              impossible finger one. */}
+          {touchMode && <circle r={14} fill="transparent" />}
+          <circle
+            r={4.5}
+            fill={COLORS.paper}
+            stroke={inSelectedFamily ? COLORS.present : COLORS.ink}
+            strokeWidth={inSelectedFamily ? 1.75 : 1.25}
+          />
+        </g>
       )}
 
       {matched && !isRadial && (
@@ -951,37 +1194,63 @@ function TaxonNode({
       )}
 
       {showLabel && (
-        <text
-          x={labelX}
-          textAnchor={labelAnchor}
-          transform={labelTransform}
-          dy="0.32em"
-          fontStyle={node.rank === "species" ? "italic" : "normal"}
-          fontSize={isHighRank ? 13 : 12}
-          fontWeight={matched || isHighRank || inSelectedFamily || inComparison ? 600 : 400}
-          fill={
-            matched
-              ? "#8A6D0B"
-              : inSelectedFamily || inComparison
-                ? COLORS.signal
-                : COLORS.ink
-          }
-          className="cursor-pointer"
-          onClick={(e) => {
-            if (e.shiftKey) {
-              e.stopPropagation();
-              onToggleComparison();
+        <g transform={labelTransform}>
+          {/* Touch hit target. Glyph outlines are the only thing a bare
+              <text> catches a tap on, which is a few pixels of stroke — well
+              under the ~44px a fingertip needs. This transparent rect covers
+              the label's box so the tap lands where the reader aimed. It is
+              only drawn on coarse pointers, so the mouse hit area, and the
+              exported figure, are unchanged. */}
+          {touchMode && (
+            <rect
+              x={labelAnchor === "end" ? labelX - labelBoxWidth : labelX - 2}
+              y={-11}
+              width={labelBoxWidth + 4}
+              height={22}
+              fill="transparent"
+              className="cursor-pointer"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenMenu(e.clientX, e.clientY);
+              }}
+            />
+          )}
+          <text
+            x={labelX}
+            textAnchor={labelAnchor}
+            dy="0.32em"
+            fontStyle={node.rank === "species" ? "italic" : "normal"}
+            fontSize={isHighRank ? 13 : 12}
+            fontWeight={matched || isHighRank || inSelectedFamily || inComparison ? 600 : 400}
+            fill={
+              matched
+                ? "#8A6D0B"
+                : inSelectedFamily || inComparison
+                  ? COLORS.signal
+                  : COLORS.ink
             }
-          }}
-          onDoubleClick={(e) => {
-            e.stopPropagation();
-            onFocus();
-          }}
-        >
-          {inComparison ? "◆ " : ""}
-          {node.name}
-          {hiddenCount > 0 ? ` (+${hiddenCount})` : ""}
-        </text>
+            className="cursor-pointer"
+            onClick={(e) => {
+              if (touchMode) {
+                e.stopPropagation();
+                onOpenMenu(e.clientX, e.clientY);
+                return;
+              }
+              if (e.shiftKey) {
+                e.stopPropagation();
+                onToggleComparison();
+              }
+            }}
+            onDoubleClick={(e) => {
+              e.stopPropagation();
+              onFocus();
+            }}
+          >
+            {inComparison ? "◆ " : ""}
+            {node.name}
+            {hiddenCount > 0 ? ` (+${hiddenCount})` : ""}
+          </text>
+        </g>
       )}
     </>
   );
@@ -992,11 +1261,13 @@ function CladeGlyph({
   maxGenomeCount,
   flip,
   trackOffset,
+  touchMode,
   onToggleCollapse,
 }: {
   node: Extract<DisplayNode, { _kind: "taxon" }>;
   maxGenomeCount: number;
   flip: boolean;
+  touchMode: boolean;
   /** Distance out to the shared aligned track. A collapsed clade is visually
    * a tip, so it shares the genomes' baseline — otherwise expanding one
    * clade would shift the whole comparison. 0 keeps the old hang-off-node
@@ -1028,6 +1299,12 @@ function CladeGlyph({
       transform={flip ? "rotate(180)" : undefined}
       onClick={onToggleCollapse}
     >
+      {/* The bar is 13px tall — half a fingertip. Widen the target without
+          widening the mark. */}
+      {touchMode && (
+        <rect x={x - 6} y={-16} width={width + 12} height={32} fill="transparent" />
+      )}
+
       <title>
         {node.name}: {summary.genomeCount} genome{summary.genomeCount === 1 ? "" : "s"},{" "}
         {summary.bgcCount} BGC{summary.bgcCount === 1 ? "" : "s"}
@@ -1107,6 +1384,7 @@ function GenomeNode({
   selectedFamilyId,
   aligned,
   trackOffset,
+  touchMode,
   onSelectGenome,
   onSelectBgc,
 }: {
@@ -1126,6 +1404,8 @@ function GenomeNode({
   aligned: boolean;
   /** Distance from this node out to the aligned track, in layout units. */
   trackOffset: number;
+  /** Coarse pointer: widen the tip's hit area (see the halo below). */
+  touchMode: boolean;
   onSelectGenome: () => void;
   onSelectBgc: (id: string) => void;
 }) {
@@ -1147,6 +1427,10 @@ function GenomeNode({
   return (
     <g className="cursor-pointer" onClick={onSelectGenome} opacity={dimmedBySelection ? 0.55 : 1}>
       <g transform={flip ? "rotate(180)" : undefined}>
+        {/* Finger-sized hit area for the tip. A `tier.radius` of 2.5–6px is
+            a comfortable mouse target and an unreachable touch one; the halo
+            is transparent, so nothing about the drawn figure changes. */}
+        {touchMode && <circle r={Math.max(tier.radius + 8, 12)} fill="transparent" />}
         {isEnclosing && <circle r={tier.radius + 4} fill="none" stroke={COLORS.present} strokeWidth={1.75} />}
         <circle
           r={tier.radius}

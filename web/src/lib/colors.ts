@@ -20,6 +20,19 @@ export const COLORS = {
   lineStrong: "#C4C6BF",
   signal: "#2C5F52",
   signalWash: "#E7EEEC",
+  /** Chrome — the top bar and the left filter rail. Deliberately dark:
+   * see the comment in tailwind.config.ts. Kept here too because a few
+   * SVG-rendered bits (the donut, inline legends) sit on chrome and need
+   * the value at render time, not as a class name. */
+  chrome: "#1E2A26",
+  chromeSoft: "#2A3833",
+  chromeLine: "#3B4A45",
+  chromeLineStrong: "#56655F",
+  chromeInk: "#EDF0EE",
+  chromeInkMuted: "#A6B1AC",
+  chromeInkFaint: "#8B9691",
+  chromeAccent: "#7CD3B6",
+  chromeAccentWash: "#2F4F46",
   /** Presence-track + selected-family highlight fills. `present` is the
    * signal green at full weight; `presentSoft` backs bands and washes;
    * `absent` is the hollow-cell stroke. Kept distinct from the BGC-class

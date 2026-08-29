@@ -66,19 +66,19 @@ export function ExportButton({
   }
 
   return (
-    <div className="flex items-center gap-2">
-      <Download size={13} className="text-ink-faint" />
+    <div className="flex flex-shrink-0 items-center gap-1.5">
+      <Download size={13} className="flex-shrink-0 text-chrome-ink-faint" />
       {(["svg", "pdf"] as const).map((format) => (
         <button
           key={format}
           onClick={() => handleExport(format)}
           disabled={busy !== null}
-          className="rounded border border-line px-2 py-1 text-xs uppercase tracking-wide text-ink-muted hover:border-line-strong hover:text-ink disabled:opacity-50"
+          className="rounded border border-chrome-line px-2 py-1.5 text-xs uppercase tracking-wide text-chrome-ink-muted hover:border-chrome-line-strong hover:bg-chrome-soft hover:text-chrome-ink disabled:opacity-50"
         >
           {busy === format ? "…" : format}
         </button>
       ))}
-      {error && <span className="max-w-xs truncate text-xs text-red-700">{error}</span>}
+      {error && <span className="max-w-[10rem] truncate text-xs text-red-300">{error}</span>}
     </div>
   );
 }

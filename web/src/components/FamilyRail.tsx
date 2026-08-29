@@ -141,14 +141,14 @@ export function FamilyRail({
   }, [families, familyIndex, query, sort]);
 
   return (
-    <div className="mt-6 border-t border-line pt-4">
+    <div className="mt-6 border-t border-chrome-line pt-4">
       <div className="mb-2 flex items-center justify-between">
-        <span className="flex items-center gap-1.5 text-xs uppercase tracking-wider text-ink-muted">
+        <span className="flex items-center gap-1.5 text-xs uppercase tracking-wider text-chrome-ink-muted">
           <Layers size={12} />
           {kind.title}
         </span>
         {selectedFamilyId && (
-          <button onClick={() => onSelectFamily(null)} className="text-xs text-signal hover:underline">
+          <button onClick={() => onSelectFamily(null)} className="py-1 text-xs text-chrome-accent hover:underline">
             Clear
           </button>
         )}
@@ -156,14 +156,14 @@ export function FamilyRail({
 
       {!loading && !error && families.length > 0 && (
         <>
-          <p className="mb-2 text-[11px] leading-relaxed text-ink-faint">{kind.blurb}</p>
+          <p className="mb-2 text-[11px] leading-relaxed text-chrome-ink-faint">{kind.blurb}</p>
           <div className="relative mb-1.5">
-            <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-ink-faint" />
+            <Search size={12} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-chrome-ink-faint" />
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Filter by name or organism"
-              className="w-full rounded border border-line bg-paper py-1 pl-7 pr-2 text-xs text-ink outline-none focus:border-line-strong"
+              className="w-full rounded border border-chrome-line bg-chrome-soft py-1.5 pl-7 pr-2 text-xs text-chrome-ink placeholder:text-chrome-ink-faint outline-none focus:border-chrome-accent"
             />
           </div>
           <div className="mb-2 flex flex-wrap gap-1">
@@ -172,10 +172,10 @@ export function FamilyRail({
                 key={s.id}
                 onClick={() => setSort(s.id)}
                 title={s.hint}
-                className={`rounded border px-1.5 py-0.5 text-[11px] ${
+                className={`rounded border px-2 py-1 text-[11px] ${
                   sort === s.id
-                    ? "border-signal bg-signal-wash text-signal"
-                    : "border-line text-ink-muted hover:text-ink"
+                    ? "border-chrome-accent bg-chrome-accent-wash text-chrome-accent"
+                    : "border-chrome-line text-chrome-ink-muted hover:bg-chrome-soft hover:text-chrome-ink"
                 }`}
               >
                 {s.label}
@@ -185,20 +185,20 @@ export function FamilyRail({
         </>
       )}
 
-      {loading && <div className="text-xs text-ink-faint">Loading…</div>}
-      {error && <div className="text-xs text-red-700">{error}</div>}
+      {loading && <div className="text-xs text-chrome-ink-faint">Loading…</div>}
+      {error && <div className="text-xs text-red-300">{error}</div>}
       {!loading && !error && families.length === 0 && (
-        <div className="text-xs leading-relaxed text-ink-faint">
+        <div className="text-xs leading-relaxed text-chrome-ink-faint">
           No groups yet. Run <span className="font-mono">bgcscape group-by-compound</span> to group
           clusters by their curated product, or{" "}
           <span className="font-mono">bgcscape ingest bigscape</span> for sequence-based families.
         </div>
       )}
       {!loading && !error && families.length > 0 && rows.length === 0 && (
-        <div className="text-xs text-ink-faint">No {kind.unit} matches “{query}”.</div>
+        <div className="text-xs text-chrome-ink-faint">No {kind.unit} matches “{query}”.</div>
       )}
 
-      <div className="flex max-h-[40vh] flex-col gap-0.5 overflow-y-auto pr-1">
+      <div className="chrome-scroll flex max-h-[40vh] flex-col gap-0.5 overflow-y-auto pr-1">
         {rows.map((family) => {
           const selected = family.id === selectedFamilyId;
           const idx = familyIndex.get(family.id);
@@ -210,8 +210,10 @@ export function FamilyRail({
             <button
               key={family.id}
               onClick={() => onSelectFamily(selected ? null : family.id)}
-              className={`rounded px-2 py-1.5 text-left transition-colors ${
-                selected ? "bg-signal-wash ring-1 ring-signal/40" : "hover:bg-paper"
+              className={`rounded px-2 py-2 text-left transition-colors ${
+                selected
+                  ? "bg-chrome-accent-wash ring-1 ring-chrome-accent/50"
+                  : "hover:bg-chrome-soft"
               }`}
             >
               <div className="flex items-center gap-2">
@@ -224,7 +226,7 @@ export function FamilyRail({
                     />
                   ))}
                 </span>
-                <span className="flex-1 truncate font-mono text-xs text-ink">{family.label}</span>
+                <span className="flex-1 truncate font-mono text-xs text-chrome-ink">{family.label}</span>
                 {/* A group keyed on a product CATEGORY ("carotenoid") means
                  * "both make some carotenoid", not "both make the same
                  * molecule" — a materially weaker claim, and the largest
@@ -233,13 +235,13 @@ export function FamilyRail({
                  * visible instead of implied. */}
                 {family.is_generic_product && (
                   <span
-                    className="rounded-sm bg-paper px-1 py-px font-mono text-[9px] uppercase tracking-wide text-ink-faint ring-1 ring-line"
+                    className="rounded-sm bg-chrome-soft px-1 py-px font-mono text-[9px] uppercase tracking-wide text-chrome-ink-faint ring-1 ring-chrome-line"
                     title="Product category, not a single compound: members make some molecule of this class, not necessarily the same one."
                   >
                     category
                   </span>
                 )}
-                <span className="font-mono text-xs tabular-nums text-ink-faint">
+                <span className="font-mono text-xs tabular-nums text-chrome-ink-faint">
                   {family.member_count}
                 </span>
               </div>
@@ -252,16 +254,16 @@ export function FamilyRail({
                       <span
                         key={i}
                         className="inline-block h-2.5 w-1 rounded-[1px]"
-                        style={{ backgroundColor: i < phyla ? COLORS.present : COLORS.absent }}
+                        style={{ backgroundColor: i < phyla ? COLORS.chromeAccent : COLORS.chromeLineStrong }}
                       />
                     ))}
                   </span>
                 )}
-                <span className="font-mono text-[11px] text-ink-faint">
+                <span className="font-mono text-[11px] text-chrome-ink-faint">
                   {genomes}g · {genera}gen{phyla > 0 ? ` · ${phyla}phy` : ""}
                 </span>
                 {scattered && (
-                  <span className="ml-auto text-[11px] text-signal">scattered</span>
+                  <span className="ml-auto text-[11px] text-chrome-accent">scattered</span>
                 )}
               </div>
             </button>

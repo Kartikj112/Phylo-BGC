@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import type { ReactNode } from "react";
 import "./globals.css";
@@ -37,10 +37,30 @@ export const metadata: Metadata = {
   description: "Interactive exploration of biosynthetic diversity across the tree of life.",
 };
 
+/**
+ * Declared explicitly rather than left to the framework default.
+ *
+ * `viewportFit: "cover"` puts the layout under the notch/home-indicator so
+ * the chrome can reach the screen edges; the safe-area insets in page.tsx
+ * keep the controls out from under them.
+ *
+ * `userScalable` is left ON. The tree has its own pinch-zoom, but locking
+ * browser zoom would also lock the panels, the tables and every label out
+ * of a reader's reach — an accessibility regression for a gain the canvas
+ * already provides on its own (the canvas swallows its own gestures via
+ * `touch-action: none`, so the two do not fight).
+ */
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: "#1E2A26",
+};
+
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" className={`${plexSans.variable} ${plexMono.variable}`}>
-      <body className="font-sans bg-paper text-ink">{children}</body>
+      <body className="font-sans bg-paper text-ink antialiased">{children}</body>
     </html>
   );
 }

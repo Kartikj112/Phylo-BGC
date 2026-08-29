@@ -31,5 +31,28 @@ export default defineConfig({
     // sees.
     viewport: { width: 1440, height: 900 },
   },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  projects: [
+    {
+      name: "chromium",
+      use: { ...devices["Desktop Chrome"] },
+      // The desktop specs assert the desktop layout — a pinned left rail, a
+      // side detail column, shift-click and double-click. Running them under
+      // the phone project would assert a layout that deliberately does not
+      // exist there.
+      testIgnore: /mobile\.spec\.ts/,
+    },
+    {
+      // The touch build is a different interaction model, not a narrower
+      // one: pinch instead of wheel, an action menu instead of modifier
+      // clicks, a bottom sheet instead of a column. `hasTouch` is what makes
+      // `(pointer: coarse)` match, which is what the canvas branches on.
+      name: "mobile",
+      // Chromium, not the device's default WebKit: the pinch assertions
+      // dispatch raw multi-touch through CDP, which is Chromium-only. The
+      // device profile still supplies what matters here — the 390px
+      // viewport, the touch flags, and the mobile user agent.
+      use: { ...devices["iPhone 13"], browserName: "chromium" },
+      testMatch: /mobile\.spec\.ts/,
+    },
+  ],
 });

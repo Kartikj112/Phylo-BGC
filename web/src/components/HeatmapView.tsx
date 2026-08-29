@@ -49,15 +49,15 @@ export function HeatmapView({ scope = "all" }: { scope?: TreeScope }) {
   );
 
   return (
-    <div className="p-6">
-      <div className="mb-1 flex items-center gap-3">
+    <div className="p-2 sm:p-4 lg:p-6">
+      <div className="mb-1 flex flex-wrap items-center gap-2 sm:gap-3">
         <span className="text-sm text-ink">Biosynthetic classes by clade</span>
         <div className="flex overflow-hidden rounded border border-line">
           {RANKS.map((r) => (
             <button
               key={r}
               onClick={() => setRank(r)}
-              className={`px-2 py-0.5 text-xs ${
+              className={`px-2.5 py-1.5 text-xs ${
                 rank === r ? "bg-signal-wash text-signal" : "text-ink-muted hover:text-ink"
               }`}
             >
@@ -73,7 +73,7 @@ export function HeatmapView({ scope = "all" }: { scope?: TreeScope }) {
       {data && (
         <>
           <div className="mb-4 max-w-3xl text-xs leading-relaxed text-ink-muted">{data.caveat}</div>
-          <div className="overflow-auto">
+          <div className="-mx-2 overflow-auto px-2 sm:mx-0 sm:px-0">
             <table className="border-collapse text-xs">
               <thead>
                 <tr>

@@ -1,6 +1,6 @@
 "use client";
 
-import { Dna, Search } from "lucide-react";
+import { Dna, PanelLeft, Search, X } from "lucide-react";
 
 interface HeaderProps {
   query: string;
@@ -12,6 +12,10 @@ interface HeaderProps {
    * eukaryote view is NCBI, the prokaryote view is GTDB, and labelling both
    * "GTDB" would misattribute half the corpus. */
   taxonomyLabel?: string;
+  /** Mobile only: opens/closes the off-canvas filter rail. Below `lg` the
+   * rail is a drawer, so the header carries its handle. */
+  railOpen?: boolean;
+  onToggleRail?: () => void;
   children?: React.ReactNode;
 }
 
@@ -22,49 +26,95 @@ export function Header({
   totalGenomes,
   matchCount,
   taxonomyLabel = "GTDB",
+  railOpen = false,
+  onToggleRail,
   children,
 }: HeaderProps) {
   return (
-    <div className="flex flex-shrink-0 items-center gap-4 border-b border-line bg-card px-4 py-3">
-      <div className="flex flex-shrink-0 items-center gap-2">
-        <Dna size={18} className="text-signal" />
-        <span className="whitespace-nowrap text-sm font-semibold tracking-wide text-ink">
-          BGC-scape
+    <div className="flex flex-shrink-0 flex-col gap-1.5 border-b border-chrome-line bg-chrome px-3 py-1.5 pt-[max(0.375rem,env(safe-area-inset-top))] sm:gap-2 sm:px-4 sm:py-3 lg:flex-row lg:items-center lg:gap-4">
+      {/* Row 1 on small screens, left group on large: identity + search.
+          These two are the only things that must always be reachable, so
+          they never move into the scrolling toolbar below. */}
+      <div className="flex min-w-0 items-center gap-2 sm:gap-3 lg:flex-shrink-0">
+        {onToggleRail && (
+          <button
+            onClick={onToggleRail}
+            aria-label={railOpen ? "Close controls" : "Open controls"}
+            aria-expanded={railOpen}
+            className="-ml-1 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded text-chrome-ink-muted hover:bg-chrome-soft hover:text-chrome-ink lg:hidden"
+          >
+            {railOpen ? <X size={18} /> : <PanelLeft size={18} />}
+          </button>
+        )}
+
+        <div className="flex flex-shrink-0 items-center gap-2">
+          <Dna size={18} className="text-chrome-accent" />
+          <span className="whitespace-nowrap text-sm font-semibold tracking-wide text-chrome-ink">
+            BGC-scape
+          </span>
+        </div>
+
+        <div className="relative min-w-0 flex-1 lg:w-44 lg:flex-none xl:w-52 2xl:w-64">
+          <Search
+            size={13}
+            className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-chrome-ink-faint"
+          />
+          <input
+            value={query}
+            onChange={(e) => onQueryChange(e.target.value)}
+            placeholder="Search organism or accession"
+            aria-label="Search organism or accession"
+            /* 16px on touch: anything smaller makes iOS Safari zoom the
+               whole page on focus, which then leaves the tree off-screen. */
+            className="w-full rounded border border-chrome-line bg-chrome-soft py-2 pl-7 pr-16 text-base text-chrome-ink placeholder:text-chrome-ink-faint outline-none focus:border-chrome-accent sm:py-1.5 sm:text-sm"
+          />
+          {/* An explicit count so "no matches" is distinguishable from "search
+              is broken" — the failure mode the first version had. */}
+          {query.trim() !== "" && matchCount != null && (
+            <span
+              className={`absolute right-2 top-1/2 -translate-y-1/2 font-mono text-xs ${
+                matchCount === 0 ? "text-red-300" : "text-chrome-ink-faint"
+              }`}
+            >
+              {matchCount === 0 ? "no matches" : `${matchCount}`}
+            </span>
+          )}
+        </div>
+
+      </div>
+
+      {/* Row 2 on small screens: the view/orientation toolbar. It scrolls
+          sideways rather than wrapping into three ragged rows or being
+          hidden behind another menu — every control stays one swipe away,
+          and the strip keeps a fixed height so the tree never reflows. */}
+      <div className="-mx-3 flex min-w-0 items-center gap-2 overflow-x-auto px-3 pb-0.5 sm:-mx-4 sm:px-4 lg:mx-0 lg:flex-1 lg:px-0 lg:pb-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {children}
+        <span className="ml-auto whitespace-nowrap pl-2 font-mono text-[11px] text-chrome-ink-faint lg:hidden">
+          {totalGenomes && totalGenomes !== genomeCount
+            ? `${genomeCount}/${totalGenomes} genomes`
+            : `${genomeCount} genome${genomeCount === 1 ? "" : "s"}`}
         </span>
       </div>
 
-      <div className="relative w-40 flex-shrink lg:w-56 xl:w-64">
-        <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-ink-faint" />
-        <input
-          value={query}
-          onChange={(e) => onQueryChange(e.target.value)}
-          placeholder="Search organism or accession"
-          className="w-full rounded border border-line bg-paper py-1.5 pl-7 pr-16 text-sm text-ink outline-none focus:border-line-strong"
-        />
-        {/* An explicit count so "no matches" is distinguishable from "search
-            is broken" — the failure mode the first version had. */}
-        {query.trim() !== "" && matchCount != null && (
-          <span
-            className={`absolute right-2 top-1/2 -translate-y-1/2 font-mono text-xs ${
-              matchCount === 0 ? "text-red-700" : "text-ink-faint"
-            }`}
-          >
-            {matchCount === 0 ? "no matches" : `${matchCount}`}
-          </span>
-        )}
-      </div>
-
-      {children}
-
-      <span className="ml-auto flex flex-shrink-0 items-center gap-3 text-xs text-ink-faint">
-        <span className="hidden 2xl:inline">double-click a clade to focus · shift-click to compare</span>
-        <span className="hidden whitespace-nowrap font-mono md:inline">
+      {/* Status, hard right. On a phone this is replaced by the short form
+          at the end of the toolbar row above — a viewport that can't fit
+          the tree and a 320px column certainly can't fit a hint about a
+          modifier key it has no way to press. */}
+      <span className="ml-auto hidden flex-shrink-0 items-center gap-3 text-xs text-chrome-ink-faint lg:flex">
+        <span className="hidden 2xl:inline">
+          double-click a clade to focus · shift-click to compare
+        </span>
+        <span className="whitespace-nowrap font-mono">
           {/* "N of M" rather than a bare count: a filtered tree that
               doesn't say so is indistinguishable from missing data. */}
           {totalGenomes && totalGenomes !== genomeCount
             ? `${genomeCount} of ${totalGenomes} genomes`
-            : `${genomeCount} genome${genomeCount === 1 ? "" : "s"}`}{" "}
-          · taxonomic tree ({taxonomyLabel})
+            : `${genomeCount} genome${genomeCount === 1 ? "" : "s"}`}
+          {/* Which taxonomy the tree came from stays on screen at every
+              desktop width: an NCBI tree labelled "GTDB" misattributes half
+              the corpus. Below xl it goes, because there the toolbar's own
+              Prokaryotes/Eukaryotes pair is the only thing still legible. */}
+          <span className="hidden xl:inline"> · taxonomic tree ({taxonomyLabel})</span>
         </span>
       </span>
     </div>

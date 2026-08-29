@@ -23,7 +23,7 @@ test("opens radial, collapsed to a readable level", async ({ page }) => {
 
   // Radial is the default: its toggle is the active one.
   const radialBtn = page.getByTitle("Circular tree");
-  await expect(radialBtn).toHaveClass(/bg-signal-wash/);
+  await expect(radialBtn).toHaveClass(/bg-chrome-accent-wash/);
 
   // Far fewer than the fully-expanded 3,528 — the point is that the shape of
   // the corpus is readable before the user expands anything.

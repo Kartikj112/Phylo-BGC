@@ -18,10 +18,10 @@ interface BreadcrumbsProps {
 export function Breadcrumbs({ path, focusLost, onNavigate }: BreadcrumbsProps) {
   if (focusLost) {
     return (
-      <div className="flex items-center gap-2 border-b border-line bg-amber-50 px-4 py-1.5 text-xs text-amber-900">
+      <div className="flex flex-wrap items-center gap-2 border-b border-chrome-line bg-amber-200/95 px-3 py-1.5 text-xs text-amber-950 sm:px-4">
         The focused clade isn&apos;t in the current view — it may have been filtered out. Showing the full
         tree.
-        <button onClick={() => onNavigate(null)} className="text-signal hover:underline">
+        <button onClick={() => onNavigate(null)} className="font-medium text-amber-900 underline">
           Dismiss
         </button>
       </div>
@@ -30,11 +30,14 @@ export function Breadcrumbs({ path, focusLost, onNavigate }: BreadcrumbsProps) {
 
   if (path.length === 0) return null;
 
+  // Nowrap + horizontal scroll below `sm`: a deep lineage wrapped to three
+  // or four rows on a phone and pushed the tree itself off the screen.
+
   return (
-    <div className="flex flex-wrap items-center gap-1 border-b border-line bg-card px-4 py-1.5">
+    <div className="flex flex-nowrap items-center gap-1 overflow-x-auto border-b border-chrome-line bg-chrome px-3 py-1.5 sm:flex-wrap sm:px-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
       <button
         onClick={() => onNavigate(null)}
-        className="flex items-center gap-1 text-xs text-ink-muted hover:text-signal"
+        className="flex flex-shrink-0 items-center gap-1 whitespace-nowrap py-1 text-xs text-chrome-ink-muted hover:text-chrome-accent"
         title="Back to the whole tree"
       >
         <Home size={11} />
@@ -48,18 +51,18 @@ export function Breadcrumbs({ path, focusLost, onNavigate }: BreadcrumbsProps) {
         // The synthetic root is already represented by "All".
         if (node.id === null) return null;
         return (
-          <span key={key} className="flex items-center gap-1">
-            <ChevronRight size={11} className="text-ink-faint" />
+          <span key={key} className="flex flex-shrink-0 items-center gap-1">
+            <ChevronRight size={11} className="text-chrome-ink-faint" />
             <button
               onClick={() => onNavigate(isLast ? null : key)}
               disabled={isLast}
-              className={`flex items-center gap-1 text-xs ${
-                isLast ? "font-medium text-ink" : "text-ink-muted hover:text-signal"
+              className={`flex items-center gap-1 whitespace-nowrap py-1 text-xs ${
+                isLast ? "font-medium text-chrome-ink" : "text-chrome-ink-muted hover:text-chrome-accent"
               } ${node.rank === "species" ? "italic" : ""}`}
               title={isLast ? "Current focus" : `Focus on ${node.name}`}
             >
               {badge && (
-                <span className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-sm border border-line-strong text-[8px] font-semibold not-italic text-ink-muted">
+                <span className="inline-flex h-3.5 w-3.5 flex-shrink-0 items-center justify-center rounded-sm border border-chrome-line-strong text-[8px] font-semibold not-italic text-chrome-ink-muted">
                   {badge}
                 </span>
               )}
@@ -69,7 +72,7 @@ export function Breadcrumbs({ path, focusLost, onNavigate }: BreadcrumbsProps) {
         );
       })}
 
-      <span className="ml-2 font-mono text-xs text-ink-faint">
+      <span className="ml-2 hidden flex-shrink-0 whitespace-nowrap font-mono text-xs text-chrome-ink-faint sm:inline">
         {path[path.length - 1]?.genome_count ?? 0} genomes in view
       </span>
     </div>

@@ -17,7 +17,13 @@ async function waitForTree(page: Page) {
   // The canvas only mounts once the tree has loaded, so this doubles as the
   // "did the API round-trip succeed" assertion.
   await page.waitForSelector("svg [data-figure-root='true']", { timeout: 45_000 });
-  await expect(page.locator("svg circle, svg rect, svg path").first()).toBeVisible();
+  // Scoped to the figure root on purpose. Unscoped, "the first svg shape on
+  // the page" is whichever icon the header happens to render first, which
+  // says nothing about whether the tree drew — and silently starts failing
+  // when an icon that is hidden at this breakpoint is added above it.
+  await expect(
+    page.locator("svg [data-figure-root='true'] circle, svg [data-figure-root='true'] path").first(),
+  ).toBeVisible();
 }
 
 function nodeCount(page: Page) {

@@ -13,8 +13,8 @@ export function ClassFilterRail({ activeClasses, counts, onToggle, onReset }: Cl
   return (
     <div className="flex flex-col gap-1">
       <div className="mb-2 flex items-center justify-between">
-        <span className="text-xs uppercase tracking-wider text-ink-muted">BGC class</span>
-        <button onClick={onReset} className="text-xs text-signal hover:underline">
+        <span className="text-xs uppercase tracking-wider text-chrome-ink-muted">BGC class</span>
+        <button onClick={onReset} className="py-1 text-xs text-chrome-accent hover:underline">
           Reset
         </button>
       </div>
@@ -28,14 +28,14 @@ export function ClassFilterRail({ activeClasses, counts, onToggle, onReset }: Cl
             key={cls}
             onClick={() => onToggle(cls)}
             disabled={count === 0}
-            className={`flex items-center gap-2 rounded px-2 py-1.5 text-left transition-opacity ${
-              active ? "bg-signal-wash" : ""
+            className={`flex items-center gap-2 rounded px-2 py-2 text-left transition-opacity ${
+              active ? "bg-chrome-accent-wash" : "hover:bg-chrome-soft"
             }`}
             style={{ opacity: count === 0 ? 0.35 : active ? 1 : 0.45 }}
           >
             <span className="inline-block h-2.5 w-2.5 flex-shrink-0 rounded-full" style={{ backgroundColor: color }} />
-            <span className="flex-1 text-sm text-ink">{BGC_CLASS_LABELS[cls] ?? cls}</span>
-            <span className="font-mono text-xs tabular-nums text-ink-faint">{count}</span>
+            <span className="flex-1 text-sm text-chrome-ink">{BGC_CLASS_LABELS[cls] ?? cls}</span>
+            <span className="font-mono text-xs tabular-nums text-chrome-ink-faint">{count}</span>
           </button>
         );
       })}

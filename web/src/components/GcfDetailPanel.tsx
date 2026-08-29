@@ -63,9 +63,10 @@ export function GcfDetailPanel({
 
   const curated = (family?.evidence_level ?? detail?.evidence_level) === "observed_curated";
 
+  /* Bottom sheet below `lg`, side column above — see DetailPanel. */
   return (
-    <div className="flex w-80 flex-shrink-0 flex-col border-l border-line bg-card">
-      <div className="flex items-start justify-between border-b border-line p-4">
+    <div className="flex w-full flex-shrink-0 flex-col border-t border-line bg-card absolute inset-x-0 bottom-0 z-30 max-h-[55dvh] shadow-[0_-8px_24px_rgba(28,30,27,0.18)] lg:static lg:inset-auto lg:z-auto lg:max-h-none lg:w-80 lg:border-l lg:border-t-0 lg:shadow-none">
+      <div className="flex flex-shrink-0 items-start justify-between border-b border-line p-4">
         <div className="min-w-0">
           <div className="text-xs uppercase tracking-wider text-ink-muted">
             {family?.clustering_method === COMPOUND_METHOD ? "Compound group" : "Gene cluster family"}
@@ -74,12 +75,12 @@ export function GcfDetailPanel({
             {family?.label ?? familyId.slice(0, 12)}
           </div>
         </div>
-        <button onClick={onClose} aria-label="Close family panel" className="text-ink-faint hover:text-ink">
-          <X size={16} />
+        <button onClick={onClose} aria-label="Close family panel" className="-m-1 p-1 text-ink-faint hover:text-ink">
+          <X size={18} />
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4">
+      <div className="chrome-scroll flex-1 overflow-y-auto overscroll-contain p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
         {/* Identity */}
         <div className="flex flex-wrap items-center gap-2">
           {(family?.bgc_classes ?? []).map((cls) => (

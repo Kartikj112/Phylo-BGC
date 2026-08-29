@@ -55,18 +55,24 @@ export function DetailPanel({ selection, onClose, onSelectBgc, familyIds, onShow
 
   if (!selection) return null;
 
+  /* A side column on a desktop, a bottom sheet on a phone. A 320px column
+     on a 375px screen leaves 55px of tree, so below `lg` the panel docks to
+     the bottom edge instead and caps at 55dvh, leaving a strip of the tree
+     and the whole top bar in view — the panel is deep enough to read and
+     scrolls internally, so the cap costs nothing but the reader keeps the
+     context they tapped from. */
   return (
-    <div className="flex w-80 flex-shrink-0 flex-col border-l border-line bg-card">
-      <div className="flex items-start justify-between border-b border-line p-4">
+    <div className="flex w-full flex-shrink-0 flex-col border-t border-line bg-card absolute inset-x-0 bottom-0 z-30 max-h-[55dvh] shadow-[0_-8px_24px_rgba(28,30,27,0.18)] lg:static lg:inset-auto lg:z-auto lg:max-h-none lg:w-80 lg:border-l lg:border-t-0 lg:shadow-none">
+      <div className="flex flex-shrink-0 items-start justify-between border-b border-line p-4">
         <span className="text-xs uppercase tracking-wider text-ink-muted">
           {selection.kind === "genome" ? "Genome" : "BGC"}
         </span>
-        <button onClick={onClose} aria-label="Close detail panel" className="text-ink-faint hover:text-ink">
-          <X size={16} />
+        <button onClick={onClose} aria-label="Close detail panel" className="-m-1 p-1 text-ink-faint hover:text-ink">
+          <X size={18} />
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4">
+      <div className="chrome-scroll flex-1 overflow-y-auto overscroll-contain p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
         {loading && <div className="text-sm text-ink-muted">Loading…</div>}
         {error && <div className="text-sm text-red-700">{error}</div>}
         {genome && <GenomeDetailView genome={genome} onSelectBgc={onSelectBgc} />}

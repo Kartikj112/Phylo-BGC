@@ -43,7 +43,7 @@ export function ComparisonPanel({ taxonIds, onClose, onClearSelection }: Compari
   if (taxonIds.length === 0) return null;
 
   return (
-    <div className="flex max-h-[45vh] flex-col border-t border-line bg-card">
+    <div className="flex max-h-[38dvh] flex-shrink-0 sm:max-h-[45dvh] flex-col border-t border-line bg-card pb-[env(safe-area-inset-bottom)]">
       <div className="flex flex-shrink-0 items-center justify-between border-b border-line px-4 py-2">
         <span className="text-xs uppercase tracking-wider text-ink-muted">
           Comparing {taxonIds.length} clade{taxonIds.length === 1 ? "" : "s"}
@@ -52,16 +52,16 @@ export function ComparisonPanel({ taxonIds, onClose, onClearSelection }: Compari
           <button onClick={onClearSelection} className="text-xs text-signal hover:underline">
             Clear selection
           </button>
-          <button onClick={onClose} aria-label="Close comparison" className="text-ink-faint hover:text-ink">
-            <X size={16} />
+          <button onClick={onClose} aria-label="Close comparison" className="-m-1 p-1 text-ink-faint hover:text-ink">
+            <X size={18} />
           </button>
         </div>
       </div>
 
-      <div className="overflow-y-auto p-4">
+      <div className="chrome-scroll overflow-y-auto overscroll-contain p-4">
         {taxonIds.length < 2 && (
           <div className="text-sm text-ink-muted">
-            Select at least one more clade to compare. Shift-click taxon labels in the tree.
+            Select at least one more clade to compare. Shift-click a taxon label in the tree (on touch, tap the label and choose “Compare”).
           </div>
         )}
         {loading && <div className="text-sm text-ink-muted">Comparing…</div>}
