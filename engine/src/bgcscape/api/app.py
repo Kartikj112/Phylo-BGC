@@ -20,7 +20,7 @@ from fastapi.responses import Response
 from pydantic import ValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from sqlalchemy import func
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from bgcscape import __version__
@@ -714,21 +714,31 @@ def get_presence_heatmap(
 
 
 @app.get("/api/v1/bgc-type-counts", response_model=list[BGCTypeCount])
-def get_bgc_type_counts(session: Session = Depends(get_session)) -> list[BGCTypeCount]:
-    """Corpus-wide BGC class distribution, for the summary donut.
+def get_bgc_type_counts(
+    scope: TreeScope = "all",
+    session: Session = Depends(get_session),
+) -> list[BGCTypeCount]:
+    """BGC class distribution for one taxonomy, for the summary strip and donut.
 
     Hybrids are attributed to each component class, matching every other
     count in the app (filter rail, comparison, heatmap, flows) — a donut
     disagreeing with the sidebar beside it would be worse than no donut.
+
+    `scope` exists for exactly that reason. Without it this endpoint answered
+    corpus-wide however the interface was scoped, so the eukaryote view's
+    summary strip reported the prokaryotes' clusters too: PKS 1010 above a
+    tree holding 251, beside a filter rail — computed from the tree — saying
+    251. Two numbers for one class on one screen, and the larger one wired to
+    the filter.
     """
     # GROUP BY in the database, then expand hybrids in Python. The previous
     # version loaded every BGC as a mapped object — decoding each
     # `raw_annotation` blob — to produce seven integers. The distinct
     # (class, subtype) pairs number in the dozens, not the thousands.
+    query = session.query(BGC.bgc_class, BGC.subtype, func.count(BGC.id))
+    query = _restrict_bgcs_to_scope(session, query, scope)
     counts: dict[str, int] = {}
-    for bgc_class, subtype, n in session.query(
-        BGC.bgc_class, BGC.subtype, func.count(BGC.id)
-    ).group_by(BGC.bgc_class, BGC.subtype):
+    for bgc_class, subtype, n in query.group_by(BGC.bgc_class, BGC.subtype):
         for component in component_classes(bgc_class, subtype):
             counts[component] = counts.get(component, 0) + n
     return [
@@ -736,17 +746,67 @@ def get_bgc_type_counts(session: Session = Depends(get_session)) -> list[BGCType
     ]
 
 
+def _restrict_bgcs_to_scope(session: Session, query, scope: TreeScope):
+    """Narrow a BGC query to the genomes of one taxonomy.
+
+    A BGC reaches its taxonomy only through its genome, so the restriction is
+    a two-hop subquery rather than a column filter. `taxon_ids_in_scope`
+    returns None for `all`, which means "no restriction" — not "no taxa".
+    """
+    taxon_ids = taxon_ids_in_scope(session, scope)
+    if taxon_ids is None:
+        return query
+    return query.filter(
+        BGC.genome_id.in_(
+            select(Genome.id).where(Genome.taxon_id.in_(taxon_ids))
+        )
+    )
+
+
 @app.get("/api/v1/provenance", response_model=DatasetProvenanceResponse)
-def get_provenance(session: Session = Depends(get_session)) -> DatasetProvenanceResponse:
-    """What this database actually contains — for figure captions and to
-    populate ViewConfig.dataset."""
+def get_provenance(
+    scope: TreeScope = "all",
+    session: Session = Depends(get_session),
+) -> DatasetProvenanceResponse:
+    """What this database contains — for figure captions, ViewConfig.dataset,
+    and the interface's summary bar.
+
+    `scope` defaults to `all`, so the export path (which describes the whole
+    database deliberately) is unchanged. The summary bar passes the taxonomy
+    on screen instead: it used to report `COUNT(*) FROM bgc` whichever tab was
+    open, so the eukaryote view claimed 2,437 clusters over a tree holding
+    466 — a 5.2x overstatement that no interaction could correct, because the
+    number never depended on the tab in the first place.
+
+    The corpus-wide totals ride along so a caller can render "N of M" without
+    a second round trip.
+    """
+    corpus_genomes = session.query(Genome).count()
+    corpus_bgcs = session.query(BGC).count()
+    corpus_taxa = session.query(Taxon).count()
+
+    taxon_ids = taxon_ids_in_scope(session, scope)
+    if taxon_ids is None:
+        genome_count, bgc_count, taxon_count = corpus_genomes, corpus_bgcs, corpus_taxa
+    else:
+        genome_count = session.query(Genome).filter(Genome.taxon_id.in_(taxon_ids)).count()
+        bgc_count = _restrict_bgcs_to_scope(session, session.query(BGC), scope).count()
+        taxon_count = len(taxon_ids)
+
     return DatasetProvenanceResponse(
         sources=[SourceRead.model_validate(s) for s in session.query(Source).order_by(Source.name).all()],
-        genome_count=session.query(Genome).count(),
-        bgc_count=session.query(BGC).count(),
-        taxon_count=session.query(Taxon).count(),
+        genome_count=genome_count,
+        bgc_count=bgc_count,
+        taxon_count=taxon_count,
+        # Families are not taxon-scoped: a family is defined across the whole
+        # corpus by construction, and slicing it per taxonomy would report a
+        # different number for the same family depending on the open tab.
         family_count=session.query(BGCFamily).count(),
         engine_version=__version__,
+        scope=scope,
+        corpus_genome_count=corpus_genomes,
+        corpus_bgc_count=corpus_bgcs,
+        corpus_taxon_count=corpus_taxa,
     )
 
 

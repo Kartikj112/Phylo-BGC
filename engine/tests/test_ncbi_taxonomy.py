@@ -20,6 +20,8 @@ from bgcscape.ingest.ncbi_taxonomy import (
 )
 from bgcscape.models import (
     AssemblyLevel,
+    BGC,
+    BGCClass,
     EvidenceLevel,
     Genome,
     Source,
@@ -277,3 +279,112 @@ def test_unplaceable_organisms_stay_with_the_prokaryote_scope(session, sources, 
 
     assert stray.id in taxon_ids_in_scope(session, "prokaryote")
     assert stray.id not in taxon_ids_in_scope(session, "eukaryote")
+
+
+def _genome_with_bgcs(session, taxon, source, accession, classes):
+    """A genome under `taxon` carrying one cluster per entry in `classes`.
+
+    An entry may be `(BGCClass.HYBRID, "nrps+pks")` to exercise the hybrid
+    expansion, which is the part of the class counts most likely to drift.
+    """
+    genome = Genome(
+        accession=accession,
+        taxon_id=taxon.id,
+        assembly_level=AssemblyLevel.LOCUS,
+        is_mag=False,
+        source_id=source.id,
+        evidence_level=EvidenceLevel.OBSERVED_CURATED,
+    )
+    session.add(genome)
+    session.flush()
+    for entry in classes:
+        bgc_class, subtype = entry if isinstance(entry, tuple) else (entry, None)
+        session.add(
+            BGC(
+                genome_id=genome.id,
+                bgc_class=bgc_class,
+                subtype=subtype,
+                predicted_by_tool="test",
+                source_id=source.id,
+                evidence_level=EvidenceLevel.PREDICTED,
+            )
+        )
+    session.flush()
+    return genome
+
+
+def test_summary_counts_are_scoped_to_one_taxonomy(session, sources, taxdump):
+    """The summary bar's own numbers, which were corpus-wide on every tab.
+
+    `/provenance` and `/bgc-type-counts` took no scope at all, so the
+    eukaryote view reported the prokaryotes' clusters and taxa as its own:
+    on the bundled corpus, 2,437 clusters above a tree holding 466, and a
+    class strip reading "PKS 1010" beside a filter rail — computed from the
+    tree, and therefore right — reading "PKS 251". The strip is also the
+    class filter, so it invited filtering on counts that were not the
+    tree's.
+
+    Scoping is asserted here as a partition: the two taxonomies must sum to
+    the corpus, because anything else means a genome or a cluster is being
+    double-counted or dropped rather than merely mis-attributed.
+    """
+    from bgcscape.api.app import get_bgc_type_counts, get_provenance
+
+    mibig, ncbi = sources
+    aspergillus = _orphan(session, "Aspergillus nidulans", 162425, mibig)
+    bacteria = Taxon(
+        name="Bacteria",
+        rank=TaxonRank.DOMAIN,
+        source_id=mibig.id,
+        evidence_level=EvidenceLevel.OBSERVED_CURATED,
+    )
+    session.add(bacteria)
+    session.flush()
+
+    # Eukaryote: 3 clusters, one of them a hybrid that expands to two classes.
+    _genome_with_bgcs(
+        session, aspergillus, mibig, "EUK_1",
+        [BGCClass.PKS, BGCClass.TERPENE, (BGCClass.HYBRID, "nrps+pks")],
+    )
+    # Prokaryote: 2 clusters.
+    _genome_with_bgcs(session, bacteria, mibig, "PRO_1", [BGCClass.RIPP, BGCClass.NRPS])
+    session.commit()
+    ingest_ncbi_lineages(session, ncbi, taxdump)
+
+    every = get_provenance(scope="all", session=session)
+    euk = get_provenance(scope="eukaryote", session=session)
+    pro = get_provenance(scope="prokaryote", session=session)
+
+    # Every count partitions cleanly. `_orphan` also leaves a bare genome
+    # under Aspergillus, so genome totals are asserted as a sum rather than
+    # against a literal.
+    assert euk.bgc_count == 3 and pro.bgc_count == 2
+    assert euk.bgc_count + pro.bgc_count == every.bgc_count
+    assert euk.genome_count + pro.genome_count == every.genome_count
+    assert euk.taxon_count + pro.taxon_count == every.taxon_count
+
+    # The corpus totals ride along unscoped, so a caller can render "N of M"
+    # from one request rather than two.
+    for body in (every, euk, pro):
+        assert body.corpus_bgc_count == every.bgc_count
+        assert body.corpus_genome_count == every.genome_count
+        assert body.corpus_taxon_count == every.taxon_count
+    assert (every.scope, euk.scope, pro.scope) == ("all", "eukaryote", "prokaryote")
+
+    # `all` must be byte-identical to the old unscoped behaviour: the export
+    # path still calls it that way to describe the whole database.
+    assert every.bgc_count == session.query(BGC).count()
+
+    def by_class(scope):
+        return {c.bgc_class: c.count for c in get_bgc_type_counts(scope=scope, session=session)}
+
+    # Hybrids are attributed to each component, so the eukaryote's 3 clusters
+    # yield 4 class-attributions — the same rule the tree and rail already use.
+    assert by_class("eukaryote") == {"pks": 2, "terpene": 1, "nrps": 1}
+    assert by_class("prokaryote") == {"ripp": 1, "nrps": 1}
+    assert by_class("all") == {"pks": 2, "terpene": 1, "nrps": 2, "ripp": 1}
+
+    # The class the eukaryote tree does not carry must be absent from its
+    # strip, not merely small: this is what made "6 BGC classes" right on the
+    # bundled corpus by luck rather than by calculation.
+    assert "ripp" not in by_class("eukaryote")

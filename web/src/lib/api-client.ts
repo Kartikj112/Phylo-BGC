@@ -104,8 +104,14 @@ export function fetchComparison(taxonIds: string[]): Promise<CladeComparison> {
   return getJson<CladeComparison>(`/api/v1/compare?${params}`);
 }
 
-export function fetchProvenance(): Promise<DatasetProvenanceResponse> {
-  return getJson<DatasetProvenanceResponse>("/api/v1/provenance");
+/**
+ * `scope` defaults to "all" — the whole database — because that is what the
+ * export path wants: a figure's recorded provenance describes the dataset it
+ * came from, not the tab that was open. The summary bar passes the taxonomy
+ * on screen instead, and reads the `corpus_*` fields for its denominators.
+ */
+export function fetchProvenance(scope: TreeScope = "all"): Promise<DatasetProvenanceResponse> {
+  return getJson<DatasetProvenanceResponse>(`/api/v1/provenance?scope=${scope}`);
 }
 
 /**
@@ -147,6 +153,6 @@ export function fetchHeatmap(rank = "genus", scope: TreeScope = "all"): Promise<
   );
 }
 
-export function fetchBgcTypeCounts(): Promise<BGCTypeCount[]> {
-  return getJson<BGCTypeCount[]>("/api/v1/bgc-type-counts");
+export function fetchBgcTypeCounts(scope: TreeScope = "all"): Promise<BGCTypeCount[]> {
+  return getJson<BGCTypeCount[]>(`/api/v1/bgc-type-counts?scope=${scope}`);
 }

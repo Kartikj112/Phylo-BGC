@@ -23,6 +23,13 @@ const PROVENANCE: DatasetProvenanceResponse = {
   genome_count: 5,
   bgc_count: 12,
   taxon_count: 9,
+  // The export path asks for the whole database on purpose — a figure's
+  // recorded provenance describes the dataset, not the tab that was open —
+  // so the scoped and corpus counts coincide here.
+  scope: "all",
+  corpus_genome_count: 5,
+  corpus_bgc_count: 12,
+  corpus_taxon_count: 9,
   family_count: 2,
   engine_version: "0.1.0",
 };

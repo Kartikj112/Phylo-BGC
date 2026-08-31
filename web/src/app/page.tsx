@@ -517,6 +517,7 @@ export default function HomePage() {
         onResetClasses={() => setActiveClasses(new Set(CLASS_ORDER))}
         shownGenomes={genomeCount}
         totalGenomes={pruned?.totalGenomes ?? 0}
+        scope={treeScope}
       />
 
       {isTreeView && selectedFamilyId && familyDist && (
@@ -633,7 +634,7 @@ export default function HomePage() {
               whole viewport more than the breakdown does. */}
           {isTreeView && root && (
             <div className="pointer-events-none absolute bottom-4 right-4 z-10 hidden lg:block">
-              <BgcTypeDonut />
+              <BgcTypeDonut scope={treeScope} />
             </div>
           )}
           {view === "flow" && <SankeyView scope={taxonomy} />}

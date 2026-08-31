@@ -3,6 +3,7 @@
 import * as d3 from "d3";
 import { useEffect, useMemo, useState } from "react";
 import { fetchBgcTypeCounts } from "@/lib/api-client";
+import type { TreeScope } from "@/lib/api-client";
 import type { BGCTypeCount } from "@/lib/api-types";
 import { BGC_CLASS_COLORS, BGC_CLASS_LABELS, COLORS } from "@/lib/colors";
 
@@ -12,22 +13,30 @@ import { BGC_CLASS_COLORS, BGC_CLASS_LABELS, COLORS } from "@/lib/colors";
 const SIZE = 92;
 const THICKNESS = 17;
 
-/** Corpus-wide BGC class distribution. Values come from the API, which
- * attributes hybrids to each component class exactly as the filter rail
- * and heatmap do — a donut disagreeing with the sidebar next to it would
- * be worse than no donut. */
-export function BgcTypeDonut() {
+interface BgcTypeDonutProps {
+  /** Which taxonomy to count over. The donut sits ON the tree, so counting
+   * corpus-wide while the tree shows one taxonomy would put two different
+   * numbers for the same class on one screen — which is exactly what the
+   * scoped `/bgc-type-counts` endpoint exists to prevent. */
+  scope: TreeScope;
+}
+
+/** BGC class distribution for the taxonomy on screen. Values come from the
+ * API, which attributes hybrids to each component class exactly as the
+ * filter rail and heatmap do — a donut disagreeing with the sidebar next to
+ * it would be worse than no donut. */
+export function BgcTypeDonut({ scope }: BgcTypeDonutProps) {
   const [data, setData] = useState<BGCTypeCount[] | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    fetchBgcTypeCounts()
+    fetchBgcTypeCounts(scope)
       .then((d) => !cancelled && setData(d))
       .catch(() => !cancelled && setData([]));
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [scope]);
 
   const arcs = useMemo(() => {
     if (!data || data.length === 0) return [];

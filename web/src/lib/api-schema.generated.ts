@@ -230,6 +230,9 @@ export interface paths {
         /**
          * Get Taxonomy Class Flow
          * @description Sankey flows from phylum through genus to BGC class.
+         *
+         *     `scope` selects the taxonomy — see the heatmap below for why a merged
+         *     view would be misleading.
          */
         get: operations["get_taxonomy_class_flow_api_v1_flows_taxonomy_class_get"];
         put?: never;
@@ -250,6 +253,10 @@ export interface paths {
         /**
          * Get Presence Heatmap
          * @description Clade x BGC-class matrix (report section 4.9).
+         *
+         *     `scope` selects the taxonomy, for the same reason the tree does: GTDB and
+         *     NCBI ranks are not comparable, so a merged matrix would list *Aspergillus*
+         *     (fungal, NCBI) and *Streptomyces* (bacterial, GTDB) as peer rows.
          */
         get: operations["get_presence_heatmap_api_v1_heatmap_get"];
         put?: never;
@@ -269,11 +276,18 @@ export interface paths {
         };
         /**
          * Get Bgc Type Counts
-         * @description Corpus-wide BGC class distribution, for the summary donut.
+         * @description BGC class distribution for one taxonomy, for the summary strip and donut.
          *
          *     Hybrids are attributed to each component class, matching every other
          *     count in the app (filter rail, comparison, heatmap, flows) — a donut
          *     disagreeing with the sidebar beside it would be worse than no donut.
+         *
+         *     `scope` exists for exactly that reason. Without it this endpoint answered
+         *     corpus-wide however the interface was scoped, so the eukaryote view's
+         *     summary strip reported the prokaryotes' clusters too: PKS 1010 above a
+         *     tree holding 251, beside a filter rail — computed from the tree — saying
+         *     251. Two numbers for one class on one screen, and the larger one wired to
+         *     the filter.
          */
         get: operations["get_bgc_type_counts_api_v1_bgc_type_counts_get"];
         put?: never;
@@ -293,8 +307,18 @@ export interface paths {
         };
         /**
          * Get Provenance
-         * @description What this database actually contains — for figure captions and to
-         *     populate ViewConfig.dataset.
+         * @description What this database contains — for figure captions, ViewConfig.dataset,
+         *     and the interface's summary bar.
+         *
+         *     `scope` defaults to `all`, so the export path (which describes the whole
+         *     database deliberately) is unchanged. The summary bar passes the taxonomy
+         *     on screen instead: it used to report `COUNT(*) FROM bgc` whichever tab was
+         *     open, so the eukaryote view claimed 2,437 clusters over a tree holding
+         *     466 — a 5.2x overstatement that no interaction could correct, because the
+         *     number never depended on the tab in the first place.
+         *
+         *     The corpus-wide totals ride along so a caller can render "N of M" without
+         *     a second round trip.
          */
         get: operations["get_provenance_api_v1_provenance_get"];
         put?: never;
@@ -654,6 +678,17 @@ export interface components {
             family_count: number;
             /** Engine Version */
             engine_version: string;
+            /**
+             * Scope
+             * @default all
+             */
+            scope: string;
+            /** Corpus Genome Count */
+            corpus_genome_count: number;
+            /** Corpus Bgc Count */
+            corpus_bgc_count: number;
+            /** Corpus Taxon Count */
+            corpus_taxon_count: number;
         };
         /**
          * EvidenceLevel
@@ -1376,7 +1411,9 @@ export interface operations {
     };
     get_taxonomy_class_flow_api_v1_flows_taxonomy_class_get: {
         parameters: {
-            query?: never;
+            query?: {
+                scope?: "all" | "prokaryote" | "eukaryote";
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -1392,12 +1429,22 @@ export interface operations {
                     "application/json": components["schemas"]["TaxonomyClassFlow"];
                 };
             };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
         };
     };
     get_presence_heatmap_api_v1_heatmap_get: {
         parameters: {
             query?: {
                 rank?: string;
+                scope?: "all" | "prokaryote" | "eukaryote";
             };
             header?: never;
             path?: never;
@@ -1427,7 +1474,9 @@ export interface operations {
     };
     get_bgc_type_counts_api_v1_bgc_type_counts_get: {
         parameters: {
-            query?: never;
+            query?: {
+                scope?: "all" | "prokaryote" | "eukaryote";
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -1443,11 +1492,22 @@ export interface operations {
                     "application/json": components["schemas"]["BGCTypeCount"][];
                 };
             };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
         };
     };
     get_provenance_api_v1_provenance_get: {
         parameters: {
-            query?: never;
+            query?: {
+                scope?: "all" | "prokaryote" | "eukaryote";
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -1461,6 +1521,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DatasetProvenanceResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

@@ -289,6 +289,20 @@ class DatasetProvenanceResponse(BaseModel):
     family_count: int
     engine_version: str
 
+    #: Which taxonomy the four counts above are over. `all` is the whole
+    #: database; `prokaryote` / `eukaryote` restrict to one taxonomy, because
+    #: the corpus holds two that must never be summed into one figure.
+    scope: str = "all"
+
+    #: The same three counts over the WHOLE database, regardless of `scope`.
+    #:
+    #: Carried alongside rather than fetched separately so a caller can say
+    #: "1,971 of 2,437 clusters" from one request. When `scope` is `all` these
+    #: are equal to the scoped counts by construction.
+    corpus_genome_count: int
+    corpus_bgc_count: int
+    corpus_taxon_count: int
+
 
 class ExportRequest(BaseModel):
     """SVG produced by the frontend, plus the view state that made it."""

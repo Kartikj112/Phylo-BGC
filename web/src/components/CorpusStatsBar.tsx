@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { fetchBgcTypeCounts, fetchProvenance } from "@/lib/api-client";
+import { fetchBgcTypeCounts, fetchProvenance, type TreeScope } from "@/lib/api-client";
 import type { BGCTypeCount, DatasetProvenanceResponse } from "@/lib/api-types";
 import { BGC_CLASS_COLORS, BGC_CLASS_LABELS, COLORS } from "@/lib/colors";
 
@@ -13,16 +13,28 @@ interface CorpusStatsBarProps {
   /** Genomes actually drawn vs. present, from the pruning pass. */
   shownGenomes: number;
   totalGenomes: number;
+  /** Which taxonomy is on screen. Every figure in this bar is scoped to it. */
+  scope: TreeScope;
 }
 
 /**
- * What this dataset contains, stated once at the top: how many clusters,
- * of what kinds, over how many genomes.
+ * What the taxonomy on screen contains: how many clusters, of what kinds,
+ * over how many genomes.
  *
- * The class strip is proportional, so the composition of the corpus reads
- * as a shape before any number is parsed — and it is the same filter as
- * the left rail rather than a second, separate control, so the two can
- * never disagree about what is selected.
+ * EVERY number here is scoped to `scope`, and the ones that describe the
+ * dataset say what they are a fraction of. That is a correction, not a
+ * flourish. This bar used to mix three different denominators without
+ * saying so — whole database for clusters, taxa and the class strip;
+ * current taxonomy for the genome total; current taxonomy after pruning for
+ * genomes drawn — because it predates the prokaryote/eukaryote split and
+ * was never taught about it. The visible result was that switching tabs
+ * moved one number out of four, and the eukaryote view claimed 2,437
+ * clusters over a tree holding 466.
+ *
+ * Worse, the class strip is also the class filter, and the filter operates
+ * on the scoped tree: it read "PKS 1010" next to a left rail that read "PKS
+ * 251" for the same class on the same screen, and the larger, wrong number
+ * was the one wired to the control.
  *
  * Counts come from `/bgc-type-counts`, which attributes a hybrid cluster to
  * each of its component classes exactly as the tree, heatmap, Sankey and
@@ -36,13 +48,21 @@ export function CorpusStatsBar({
   onResetClasses,
   shownGenomes,
   totalGenomes,
+  scope,
 }: CorpusStatsBarProps) {
   const [counts, setCounts] = useState<BGCTypeCount[] | null>(null);
   const [provenance, setProvenance] = useState<DatasetProvenanceResponse | null>(null);
 
+  // Keyed on `scope`: this effect used to run once on mount, which is
+  // precisely how the numbers came to be independent of the open tab.
   useEffect(() => {
     let cancelled = false;
-    Promise.all([fetchBgcTypeCounts(), fetchProvenance()])
+    // Cleared first. Holding the previous taxonomy's figures on screen while
+    // the new ones load would show a stats bar that disagrees with the tree
+    // beside it — a milder version of the bug this is fixing.
+    setCounts(null);
+    setProvenance(null);
+    Promise.all([fetchBgcTypeCounts(scope), fetchProvenance(scope)])
       .then(([c, p]) => {
         if (cancelled) return;
         setCounts(c);
@@ -54,26 +74,69 @@ export function CorpusStatsBar({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [scope]);
 
   if (!counts || counts.length === 0) return null;
 
   const classTotal = counts.reduce((sum, c) => sum + c.count, 0);
   const clusterTotal = provenance?.bgc_count ?? classTotal;
+  const corpusClusters = provenance?.corpus_bgc_count ?? clusterTotal;
   const hybridDoubleCount = classTotal - clusterTotal;
   const filtered = activeClasses.size < counts.length;
+  const scopeLabel =
+    scope === "eukaryote"
+      ? "the eukaryote taxonomy"
+      : scope === "prokaryote"
+        ? "the prokaryote taxonomy"
+        : "the corpus";
 
   return (
     <div className="flex flex-shrink-0 flex-wrap items-center gap-x-4 gap-y-1.5 border-b border-chrome-line bg-chrome px-3 py-1.5 sm:gap-y-2 sm:gap-x-6 sm:px-4 sm:py-2">
       <div className="-mx-3 flex w-full flex-nowrap items-center gap-x-4 overflow-x-auto px-3 sm:mx-0 sm:w-auto sm:flex-wrap sm:gap-x-5 sm:px-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        <Stat value={clusterTotal} label="clusters" />
+        {/* "N of M" on clusters and taxa, where M is the whole corpus: it is
+            the only thing on screen that says a tab is a SLICE rather than
+            the dataset. Genomes keeps its own pair — drawn of present in
+            this taxonomy — because that is what the header states too, and
+            because the rail's "Hiding 21 genome(s)…" sentence explains it.
+            The two meanings are spelled out in the tooltips rather than left
+            for a reader to infer, which is the failure being corrected. */}
+        <Stat
+          value={clusterTotal}
+          of={corpusClusters !== clusterTotal ? corpusClusters : undefined}
+          label="clusters"
+          title={
+            corpusClusters !== clusterTotal
+              ? `${clusterTotal.toLocaleString()} clusters in ${scopeLabel}, of ${corpusClusters.toLocaleString()} in the whole corpus`
+              : `${clusterTotal.toLocaleString()} clusters`
+          }
+        />
         <Stat
           value={shownGenomes}
           of={totalGenomes !== shownGenomes ? totalGenomes : undefined}
           label="genomes"
+          title={
+            totalGenomes !== shownGenomes
+              ? `${shownGenomes.toLocaleString()} genomes drawn, of ${totalGenomes.toLocaleString()} in ${scopeLabel}. The rest carry no predicted clusters.`
+              : `${shownGenomes.toLocaleString()} genomes in ${scopeLabel}`
+          }
         />
-        {provenance && <Stat value={provenance.taxon_count} label="taxa" />}
-        <Stat value={counts.length} label="BGC classes" />
+        {provenance && (
+          <Stat
+            value={provenance.taxon_count}
+            of={
+              provenance.corpus_taxon_count !== provenance.taxon_count
+                ? provenance.corpus_taxon_count
+                : undefined
+            }
+            label="taxa"
+            title={`${provenance.taxon_count.toLocaleString()} taxa in ${scopeLabel}, of ${provenance.corpus_taxon_count.toLocaleString()} in the whole corpus`}
+          />
+        )}
+        <Stat
+          value={counts.length}
+          label="BGC classes"
+          title={`${counts.length} biosynthetic classes are represented in ${scopeLabel}`}
+        />
       </div>
 
       {/* Proportional class strip — doubles as the class filter. */}
@@ -136,9 +199,24 @@ export function CorpusStatsBar({
   );
 }
 
-function Stat({ value, label, of }: { value: number; label: string; of?: number }) {
+function Stat({
+  value,
+  label,
+  of,
+  title,
+}: {
+  value: number;
+  label: string;
+  of?: number;
+  /** Spells out what the two numbers are. A bare "1,971 / 2,437" is exactly
+   * the kind of unexplained ratio that let the old bar mislead quietly. */
+  title?: string;
+}) {
   return (
-    <div className="flex flex-shrink-0 flex-col items-start whitespace-nowrap leading-none">
+    <div
+      title={title}
+      className="flex flex-shrink-0 flex-col items-start whitespace-nowrap leading-none"
+    >
       <span className="font-mono text-sm font-semibold tabular-nums text-chrome-ink sm:text-base">
         {value.toLocaleString()}
         {of != null && (
