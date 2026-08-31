@@ -2,11 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   MAX_BRANCH_WIDTH,
   MIN_BRANCH_WIDTH,
+  MIN_ANCHOR_LABEL_ARC_PX,
   MIN_LABEL_ARC_PX,
+  MIN_LABEL_ROW_PX,
   RANK_ABBREVIATIONS,
   RANK_DEPTH_ORDER,
   computeRadialTreeLayout,
   hasRoomForLabel,
+  placeRectangularLabels,
   isAnchorRank,
   isLeftHalf,
   rankAbbreviation,
@@ -578,10 +581,23 @@ describe("semantic label management", () => {
     expect(hasRoomForLabel(340, step, 1)).toBe(true);
   });
 
-  it("always shows anchor ranks regardless of space", () => {
+  it("gives anchor ranks a lower bar, not an exemption", () => {
+    // This used to assert `alwaysShow`, which returned true for an anchor
+    // at ANY arc. An exemption is not a priority: every phylum in a tightly
+    // packed ring drew on top of its neighbours, and overlapping text is
+    // not more informative than less text — none of it can be read.
     const step = (2 * Math.PI) / 400;
-    expect(hasRoomForLabel(5, step, 0.3)).toBe(false);
-    expect(hasRoomForLabel(5, step, 0.3, true)).toBe(true);
+
+    // An arc that clears the anchor bar but not the ordinary one: the
+    // anchor label survives where a species label would be dropped.
+    const roomy = MIN_ANCHOR_LABEL_ARC_PX / (step * 1);
+    expect(hasRoomForLabel(roomy, step, 1)).toBe(false);
+    expect(hasRoomForLabel(roomy, step, 1, true)).toBe(true);
+
+    // But an anchor with essentially no arc at all is still suppressed.
+    expect(hasRoomForLabel(5, step, 0.3, true)).toBe(false);
+
+    expect(MIN_ANCHOR_LABEL_ARC_PX).toBeLessThan(MIN_LABEL_ARC_PX);
     expect(isAnchorRank("domain")).toBe(true);
     expect(isAnchorRank("phylum")).toBe(true);
     expect(isAnchorRank("species")).toBe(false);
@@ -1203,5 +1219,99 @@ describe("family distribution — the central question", () => {
     expect(
       layout.nodes.some((n) => n.data._kind === "genome" && n.data.accession.includes("AVERMITILIS")),
     ).toBe(false);
+  });
+});
+
+describe("rectangular label placement", () => {
+  /** A stand-in for what d3.tree() hands the canvas: `x` is the cross-axis
+   * position (the row), `depth` is the column. Only those three fields and
+   * `data` are read, so the fixture stays honest about its coupling. */
+  function row(name: string, x: number, depth: number, rank = "genus") {
+    return {
+      x,
+      y: depth * 150,
+      depth,
+      data: { _kind: "taxon", id: name, name, rank, children: [], direct_genomes: [], bgcs: [] },
+    } as never;
+  }
+
+  it("suppresses labels whose rows are too close to read", () => {
+    // This is the bug. `rowHeightFor` takes rows to 11px past 600 leaves,
+    // against 12-13px text, and the rectangular layout had no rule at all:
+    // `showLabel` read `!isRadial || …`, which short-circuits to true for
+    // every node whenever the tree is not radial.
+    const nodes = [row("a", 0, 3), row("b", 11, 3), row("c", 22, 3)];
+    const { visible, suppressed } = placeRectangularLabels(nodes);
+    // 11-unit rows against 12-13px text: text taller than its own row.
+
+    expect(visible.size).toBeLessThan(nodes.length);
+    expect(suppressed).toBeGreaterThan(0);
+    // Whatever survives must be mutually legible.
+    const kept = nodes.filter((n) => visible.has((n as never as { data: { name: string } }).data.name));
+    for (let i = 1; i < kept.length; i += 1) {
+      const gap = Math.abs((kept[i] as never as { x: number }).x - (kept[i - 1] as never as { x: number }).x);
+      expect(gap).toBeGreaterThanOrEqual(MIN_LABEL_ROW_PX);
+    }
+  });
+
+  it("keeps every label once rows are far enough apart", () => {
+    const nodes = [row("a", 0, 3), row("b", 40, 3), row("c", 80, 3)];
+    const { visible, suppressed } = placeRectangularLabels(nodes);
+    expect(visible.size).toBe(3);
+    expect(suppressed).toBe(0);
+  });
+
+  it("measures overlap in layout units, because the text scales too", () => {
+    // The zoom transform is one scale(k) over the whole figure layer, so
+    // label TEXT magnifies with the rows it sits between. Two names that
+    // collide at 1x collide identically at 4x. A placement rule that
+    // divided by the zoom would hand the reader overlapping text again the
+    // moment they zoomed in to read it.
+    const nodes = [row("a", 0, 3), row("b", 8, 3), row("c", 16, 3)];
+    expect(placeRectangularLabels(nodes).visible.size).toBeLessThan(3);
+  });
+
+  it("does not let one column crowd out another", () => {
+    // Each depth is its own column on screen, so nodes at different depths
+    // cannot collide however close their rows are. Treating the tree as one
+    // flat list would throw away most of the labels for nothing.
+    const nodes = [row("a", 0, 1), row("b", 1, 2), row("c", 2, 3)];
+    expect(placeRectangularLabels(nodes).visible.size).toBe(3);
+  });
+
+  it("drops an ordinary label before an orienting one", () => {
+    // Anchor ranks are what tells a reader where they are in the tree, so
+    // they win the row when something has to give.
+    const nodes = [row("Streptomyces", 0, 3, "genus"), row("Actinomycetota", 4, 3, "phylum")];
+    const { visible } = placeRectangularLabels(nodes);
+    expect(visible.has("Actinomycetota")).toBe(true);
+    expect(visible.has("Streptomyces")).toBe(false);
+  });
+
+  it("keeps a search hit even against an anchor", () => {
+    // A name the reader is actively looking for is the last thing to drop,
+    // never the first — otherwise searching hides its own answer.
+    const nodes = [row("Actinomycetota", 0, 3, "phylum"), row("Streptomyces", 4, 3, "genus")];
+    const { visible } = placeRectangularLabels(nodes, {
+      boost: (n) => ((n as never as { data: { name: string } }).data.name === "Streptomyces" ? 5000 : 0),
+    });
+    expect(visible.has("Streptomyces")).toBe(true);
+  });
+
+  it("is stable across repeated calls so panning does not reshuffle labels", () => {
+    const nodes = [row("a", 0, 3), row("b", 7, 3), row("c", 14, 3), row("d", 21, 3)];
+    const first = [...placeRectangularLabels(nodes).visible].sort();
+    const second = [...placeRectangularLabels(nodes).visible].sort();
+    expect(first).toEqual(second);
+  });
+
+  it("keeps at least one label per column while the text is legible", () => {
+    // However tightly packed a column is, the most important label in it
+    // still gets drawn — going blank at a readable zoom would trade an
+    // unreadable state for an empty one, which is not an improvement.
+    // (Below the legibility floor the whole set goes, which is a different
+    // rule and is covered above.)
+    const nodes = [row("a", 0, 3), row("b", 0.5, 3), row("c", 1, 3)];
+    expect(placeRectangularLabels(nodes).visible.size).toBe(1);
   });
 });

@@ -33,6 +33,31 @@ export const COLORS = {
   chromeInkFaint: "#8B9691",
   chromeAccent: "#7CD3B6",
   chromeAccentWash: "#2F4F46",
+  /** ---- Figure typography -------------------------------------------
+   *
+   * Label colour and its halo are their own tokens rather than reuses of
+   * `ink`/`paper`, following the separation a data-dense reference like
+   * bklit makes between UI chrome and figure furniture: a label sitting on
+   * a figure has a different job from body text on a card, and wants to be
+   * tunable without dragging the interface's ink with it.
+   *
+   * `labelHalo` is painted as a stroke UNDER the glyph (`paint-order:
+   * stroke fill`), which is what makes a name readable where it crosses a
+   * branch, a clade wash or the BGC glyph track. It is the stage colour
+   * rather than white, so the halo disappears into the paper instead of
+   * announcing itself as a box.
+   */
+  label: "#1C1E1B",
+  labelMuted: "#5B5F58",
+  labelHalo: "#F7F7F4",
+  /** Search hit. Darkened from the previous #8A6D0B, which cleared 4.5:1
+   * on paper only barely, at 4.58:1. That margin is spent by the halo:
+   * stroking the glyph's own outline in the stage colour thins the mark
+   * optically, so a label that measured as passing stops looking it. 5.71:1
+   * buys the headroom back, and this is the one label colour whose whole
+   * job is to be found at a glance. */
+  labelMatch: "#7A5E00",
+
   /** Presence-track + selected-family highlight fills. `present` is the
    * signal green at full weight; `presentSoft` backs bands and washes;
    * `absent` is the hollow-cell stroke. Kept distinct from the BGC-class

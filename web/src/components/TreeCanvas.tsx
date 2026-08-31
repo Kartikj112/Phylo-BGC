@@ -26,6 +26,7 @@ import {
   nodeKey,
   nodeMatchesOrContains,
   nodeVisibleClasses,
+  placeRectangularLabels,
   rankAbbreviation,
   subtreeBgcCount,
   type FamilyMembershipSets,
@@ -227,6 +228,26 @@ export function TreeCanvas({
   const isRadial = orientation === "radial";
   const nodes = isRadial ? radial.nodes : horizontal.nodes;
   const links = isRadial ? radial.links : horizontal.links;
+
+  /* Which rectangular labels can be drawn without landing on each other.
+   *
+   * Independent of zoom, and that is not an oversight: the transform is one
+   * scale(k) over the whole figure layer, so label text magnifies with the
+   * rows it sits between. Two names that collide at 1x collide identically
+   * at 4x. Search hits and the selected family's clades are boosted so the
+   * names a reader is actively looking for are the last to be dropped. */
+  const rectLabels = useMemo(() => {
+    if (isRadial) return null;
+    return placeRectangularLabels(horizontal.nodes, {
+      boost: (n) => {
+        const node = n.data;
+        let extra = 0;
+        if (searchQuery && nodeMatchesOrContains(node, searchQuery)) extra += 2000;
+        if (familyMembership?.nodeKeys.has(nodeKey(node))) extra += 1500;
+        return extra;
+      },
+    });
+  }, [isRadial, horizontal.nodes, searchQuery, familyMembership]);
 
 
   // Keep the viewBox locked to the container's pixel size so 1 viewBox unit
@@ -907,8 +928,14 @@ export function TreeCanvas({
                       isRadial={isRadial}
                       angle={n.x}
                       showLabel={
-                        !isRadial ||
-                        hasRoomForLabel(n.y, radial.angularStep, scale, isAnchorRank(node.rank))
+                        isRadial
+                          ? hasRoomForLabel(
+                              n.y,
+                              radial.angularStep,
+                              scale,
+                              isAnchorRank(node.rank),
+                            )
+                          : (rectLabels?.visible.has(key) ?? true)
                       }
                       hiddenCount={hidden}
                       matched={isMatch}
@@ -940,7 +967,11 @@ export function TreeCanvas({
                       node={node}
                       isRadial={isRadial}
                       angle={n.x}
-                      showLabel={!isRadial || hasRoomForLabel(n.y, radial.angularStep, scale)}
+                      showLabel={
+                        isRadial
+                          ? hasRoomForLabel(n.y, radial.angularStep, scale)
+                          : (rectLabels?.visible.has(key) ?? true)
+                      }
                       matched={isMatch}
                       searchQuery={searchQuery}
                       aligned={alignedGlyphs}
@@ -1222,12 +1253,13 @@ function TaxonNode({
             fontStyle={node.rank === "species" ? "italic" : "normal"}
             fontSize={isHighRank ? 13 : 12}
             fontWeight={matched || isHighRank || inSelectedFamily || inComparison ? 600 : 400}
+            {...LABEL_HALO}
             fill={
               matched
-                ? "#8A6D0B"
+                ? COLORS.labelMatch
                 : inSelectedFamily || inComparison
                   ? COLORS.signal
-                  : COLORS.ink
+                  : COLORS.label
             }
             className="cursor-pointer"
             onClick={(e) => {
@@ -1369,6 +1401,25 @@ function CladeGlyph({
   );
 }
 
+/** Painted UNDER the glyph, so a label stays readable where it crosses a
+ * branch, a clade wash or the glyph track.
+ *
+ * Set as SVG presentation attributes rather than a CSS class on purpose:
+ * `lib/export.ts` inlines only font properties when it lifts the figure out
+ * of the DOM, on the documented understanding that fill and stroke are
+ * already attributes on the elements. A class-based halo would look right
+ * on screen and silently vanish from every exported figure.
+ *
+ * `paintOrder: "stroke"` is what puts the stroke behind the fill; without
+ * it this would outline the letterforms instead of backing them.
+ */
+const LABEL_HALO = {
+  stroke: COLORS.labelHalo,
+  strokeWidth: 3,
+  strokeLinejoin: "round",
+  paintOrder: "stroke",
+} as const;
+
 const BARCODE_START_X = 132;
 const BARCODE_TICK_WIDTH = 11;
 
@@ -1458,7 +1509,8 @@ function GenomeNode({
             dy="0.32em"
             fontSize={11.5}
             fontWeight={matched ? 600 : 400}
-            fill={matched ? COLORS.ink : COLORS.inkMuted}
+            {...LABEL_HALO}
+            fill={matched ? COLORS.label : COLORS.labelMuted}
             className="font-mono"
           >
             {node.accession}

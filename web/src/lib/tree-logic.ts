@@ -580,15 +580,129 @@ export function isLeftHalf(angleRadians: number): boolean {
  */
 export const MIN_LABEL_ARC_PX = 11;
 
+/** Arc an ANCHOR label (domain/phylum/class) has to clear.
+ *
+ * Lower than `MIN_LABEL_ARC_PX`, not zero. These labels are what orients a
+ * reader in a radial tree, so they get priority — but the previous
+ * `alwaysShow` bypass gave them an exemption rather than a priority, and an
+ * exemption means every phylum in a tightly packed ring draws on top of its
+ * neighbours. Overlapping text is not more informative than less text; it
+ * is less, because none of it can be read.
+ */
+export const MIN_ANCHOR_LABEL_ARC_PX = 7;
+
 export function hasRoomForLabel(
   radiusAtNode: number,
   angularStep: number,
   zoomScale: number,
-  alwaysShow = false,
+  isAnchor = false,
 ): boolean {
-  if (alwaysShow) return true;
   const arc = radiusAtNode * angularStep * Math.max(zoomScale, 0.01);
-  return arc >= MIN_LABEL_ARC_PX;
+  return arc >= (isAnchor ? MIN_ANCHOR_LABEL_ARC_PX : MIN_LABEL_ARC_PX);
+}
+
+/** Vertical room one label needs, in LAYOUT units.
+ *
+ * Layout units, not screen pixels, and the distinction is the whole point.
+ * The zoom transform is a single `scale(k)` on the entire figure layer, so
+ * label text scales with the tree: two rows 24 units apart carrying 12-unit
+ * text are 24k apart with 12k text at every zoom. Whether they collide is
+ * therefore scale-INVARIANT, decided by `rowHeightFor` against the font
+ * size and by nothing else. Zooming in cannot separate two labels that
+ * overlap, because it magnifies the gap and the glyphs equally.
+ *
+ * 15 against 12-13px labels leaves a couple of units of air, which is what
+ * keeps consecutive rows reading as separate lines rather than one block.
+ */
+export const MIN_LABEL_ROW_PX = 15;
+
+/**
+ * Which labels can be drawn in the rectangular layout without colliding.
+ *
+ * The rectangular layout had no such rule at all. `showLabel` read
+ * `!isRadial || hasRoomForLabel(...)`, which short-circuits to `true` for
+ * every node whenever the tree is not radial — so every label always
+ * rendered. Meanwhile `rowHeightFor` takes rows down to 11px once a clade
+ * passes 600 leaves, against 12-13px text: text taller than its own row, on
+ * every row. The comment on `rowHeightFor` claiming the canvas hides labels
+ * "well before rows get this tight" described a rule that existed only for
+ * the radial case.
+ *
+ * This handles label-on-label collision, which is scale-invariant. It does
+ * NOT handle the separate problem of a label being too small to read: at
+ * fit-to-view a default tree sits near k=0.2, rendering 12px text at about
+ * 2.4px. Gating on that here would correctly blank the entire opening view,
+ * which is a product decision about how the canvas scales its type rather
+ * than something a placement pass should decide on its own.
+ *
+ * Placement is greedy rather than all-or-nothing, because "no labels below
+ * a threshold" trades one unreadable state for a blank one. Labels are
+ * bucketed by depth — each depth is its own column, and a column can only
+ * collide with itself — then taken in priority order, and each kept only if
+ * it clears every label already placed in that column.
+ *
+ * `boost` lets the caller raise something above the depth ordering (a
+ * search hit, a selected family's clade) so the labels a reader is
+ * currently looking for survive the cut. Ties break on position, so the
+ * result is stable across renders and does not flicker while panning.
+ */
+export interface LabelPlacement {
+  /** `nodeKey()` of every node whose label can be drawn. */
+  visible: Set<string>;
+  /** How many were suppressed, so the canvas can say so rather than
+   * leaving a reader to wonder why a name they expected is missing. */
+  suppressed: number;
+}
+
+export function placeRectangularLabels(
+  nodes: d3.HierarchyPointNode<DisplayNode>[],
+  options: {
+    /** Higher wins. Anchor ranks already outrank ordinary nodes. */
+    boost?: (node: d3.HierarchyPointNode<DisplayNode>) => number;
+    /** Layout units of separation a label needs. Scale-invariant. */
+    minSeparation?: number;
+  } = {},
+): LabelPlacement {
+  const { boost, minSeparation = MIN_LABEL_ROW_PX } = options;
+
+  const ranked = nodes.map((n) => {
+    const node = n.data;
+    const rank = node._kind === "taxon" ? node.rank : null;
+    let priority = isAnchorRank(rank) ? 1000 : 500 - n.depth;
+    if (boost) priority += boost(n);
+    return { n, priority };
+  });
+
+  // Priority first, then position — a stable order, so panning never
+  // reshuffles which labels won.
+  ranked.sort((a, b) => b.priority - a.priority || a.n.x - b.n.x);
+
+  const placedByDepth = new Map<number, number[]>();
+  const visible = new Set<string>();
+  let suppressed = 0;
+
+  for (const { n } of ranked) {
+    const column = placedByDepth.get(n.depth) ?? [];
+    // Columns hold at most a few thousand entries and the common case
+    // rejects on the first neighbour, so a linear scan beats the
+    // bookkeeping of a sorted structure here.
+    let clear = true;
+    for (const x of column) {
+      if (Math.abs(x - n.x) < minSeparation) {
+        clear = false;
+        break;
+      }
+    }
+    if (clear) {
+      column.push(n.x);
+      placedByDepth.set(n.depth, column);
+      visible.add(nodeKey(n.data));
+    } else {
+      suppressed += 1;
+    }
+  }
+
+  return { visible, suppressed };
 }
 
 export function isAnchorRank(rank: string | null | undefined): boolean {
