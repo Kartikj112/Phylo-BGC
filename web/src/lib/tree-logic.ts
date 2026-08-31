@@ -601,18 +601,24 @@ export function hasRoomForLabel(
   return arc >= (isAnchor ? MIN_ANCHOR_LABEL_ARC_PX : MIN_LABEL_ARC_PX);
 }
 
-/** Vertical room one label needs, in LAYOUT units.
+/** Vertical room one label needs, in SCREEN pixels.
  *
- * Layout units, not screen pixels, and the distinction is the whole point.
- * The zoom transform is a single `scale(k)` on the entire figure layer, so
- * label text scales with the tree: two rows 24 units apart carrying 12-unit
- * text are 24k apart with 12k text at every zoom. Whether they collide is
- * therefore scale-INVARIANT, decided by `rowHeightFor` against the font
- * size and by nothing else. Zooming in cannot separate two labels that
- * overlap, because it magnifies the gap and the glyphs equally.
+ * Screen pixels because the canvas draws labels at a constant screen size:
+ * font size and label offsets are divided by the zoom (see `labelScale` in
+ * TreeCanvas), so a name is ~12px whether the tree is at 0.2x or 3x. Type
+ * that shrinks with the figure is unreadable long before it is crowded —
+ * at fit-to-view a default tree sits near k=0.2, which rendered 12px labels
+ * at about 2.4px.
  *
- * 15 against 12-13px labels leaves a couple of units of air, which is what
- * keeps consecutive rows reading as separate lines rather than one block.
+ * Holding type constant moves the whole problem into density: at 0.2x the
+ * rows themselves are only a few screen pixels apart, so most labels cannot
+ * be drawn and the placement pass below is what decides which ones are.
+ * That is the trade — constant legibility, varying density — and it is why
+ * this threshold is compared against layout distance MULTIPLIED by the
+ * zoom, rather than against layout distance alone.
+ *
+ * 15 against 12-13px labels leaves a couple of pixels of air, which keeps
+ * consecutive rows reading as separate lines rather than one block.
  */
 export const MIN_LABEL_ROW_PX = 15;
 
@@ -628,12 +634,13 @@ export const MIN_LABEL_ROW_PX = 15;
  * "well before rows get this tight" described a rule that existed only for
  * the radial case.
  *
- * This handles label-on-label collision, which is scale-invariant. It does
- * NOT handle the separate problem of a label being too small to read: at
- * fit-to-view a default tree sits near k=0.2, rendering 12px text at about
- * 2.4px. Gating on that here would correctly blank the entire opening view,
- * which is a product decision about how the canvas scales its type rather
- * than something a placement pass should decide on its own.
+ * Because labels hold a constant screen size, this is the only thing
+ * standing between the reader and a pile of overlapping names: nothing else
+ * thins them out as the tree zooms away. `zoomScale` is therefore load-
+ * bearing — the separation a label needs in layout units is
+ * `MIN_LABEL_ROW_PX / k`, which grows as the reader zooms out and shrinks
+ * back as they zoom in. Labels reappear on zoom, which is the behaviour the
+ * radial layout has always had.
  *
  * Placement is greedy rather than all-or-nothing, because "no labels below
  * a threshold" trades one unreadable state for a blank one. Labels are
@@ -656,14 +663,17 @@ export interface LabelPlacement {
 
 export function placeRectangularLabels(
   nodes: d3.HierarchyPointNode<DisplayNode>[],
+  zoomScale: number,
   options: {
     /** Higher wins. Anchor ranks already outrank ordinary nodes. */
     boost?: (node: d3.HierarchyPointNode<DisplayNode>) => number;
-    /** Layout units of separation a label needs. Scale-invariant. */
-    minSeparation?: number;
+    /** Screen pixels of separation a label needs. */
+    minSeparationPx?: number;
   } = {},
 ): LabelPlacement {
-  const { boost, minSeparation = MIN_LABEL_ROW_PX } = options;
+  const { boost, minSeparationPx = MIN_LABEL_ROW_PX } = options;
+  // Layout units that buy `minSeparationPx` on screen at this zoom.
+  const minSeparation = minSeparationPx / Math.max(zoomScale, 0.001);
 
   const ranked = nodes.map((n) => {
     const node = n.data;

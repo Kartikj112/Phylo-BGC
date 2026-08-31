@@ -229,16 +229,25 @@ export function TreeCanvas({
   const nodes = isRadial ? radial.nodes : horizontal.nodes;
   const links = isRadial ? radial.links : horizontal.links;
 
-  /* Which rectangular labels can be drawn without landing on each other.
+  /* Labels hold a constant SIZE on screen and vary in DENSITY.
    *
-   * Independent of zoom, and that is not an oversight: the transform is one
-   * scale(k) over the whole figure layer, so label text magnifies with the
-   * rows it sits between. Two names that collide at 1x collide identically
-   * at 4x. Search hits and the selected family's clades are boosted so the
-   * names a reader is actively looking for are the last to be dropped. */
+   * The zoom transform is one scale(k) over the whole figure layer, so
+   * anything drawn in layout units shrinks with the tree — which at
+   * fit-to-view (k ~ 0.2 for a default tree) rendered 12px names at about
+   * 2.4px. Dividing type size and label offsets by k holds them at their
+   * intended screen size instead, so a name is as readable zoomed out as
+   * zoomed in.
+   *
+   * The cost lands on density: at 0.2x the rows are only a few screen
+   * pixels apart, so most names cannot be drawn at all. `rectLabels` is
+   * what decides which ones are, and it is the only thing preventing a pile
+   * of overlapping text. Search hits and the selected family's clades are
+   * boosted so the names a reader is actively looking for are the last to
+   * be dropped, never the first. */
+  const labelScale = 1 / Math.max(scale, 0.001);
   const rectLabels = useMemo(() => {
     if (isRadial) return null;
-    return placeRectangularLabels(horizontal.nodes, {
+    return placeRectangularLabels(horizontal.nodes, scale, {
       boost: (n) => {
         const node = n.data;
         let extra = 0;
@@ -247,7 +256,7 @@ export function TreeCanvas({
         return extra;
       },
     });
-  }, [isRadial, horizontal.nodes, searchQuery, familyMembership]);
+  }, [isRadial, horizontal.nodes, scale, searchQuery, familyMembership]);
 
 
   // Keep the viewBox locked to the container's pixel size so 1 viewBox unit
@@ -944,6 +953,7 @@ export function TreeCanvas({
                       inComparison={node.id !== null && comparisonTaxonIds.includes(node.id)}
                       maxGenomeCount={maxGenomeCount}
                       trackOffset={alignedGlyphs ? Math.max(0, glyphTrackAt - pos.y) : 0}
+                      labelScale={labelScale}
                       touchMode={coarsePointer}
                       onToggleCollapse={() => onToggleCollapse(key)}
                       onFocus={() => onFocusNode(key)}
@@ -975,6 +985,7 @@ export function TreeCanvas({
                       matched={isMatch}
                       searchQuery={searchQuery}
                       aligned={alignedGlyphs}
+                      labelScale={labelScale}
                       touchMode={coarsePointer}
                       trackOffset={Math.max(0, glyphTrackAt - pos.y)}
                       isEnclosing={isEnclosing}
@@ -1120,6 +1131,7 @@ function TaxonNode({
   inComparison,
   maxGenomeCount,
   trackOffset,
+  labelScale,
   touchMode,
   onToggleCollapse,
   onToggleComparison,
@@ -1136,6 +1148,12 @@ function TaxonNode({
   isEnclosing: boolean;
   inComparison: boolean;
   maxGenomeCount: number;
+  /** 1/zoom. Every label dimension is multiplied by this so type holds a
+   * constant SCREEN size while the figure scales — see `labelScale` in
+   * TreeCanvas. Data marks (node radii, branch widths, glyph bars) are
+   * deliberately NOT scaled this way: they encode magnitude and must keep
+   * their proportion to the tree. */
+  labelScale: number;
   onToggleCollapse: () => void;
   onToggleComparison: () => void;
   onFocus: () => void;
@@ -1150,12 +1168,17 @@ function TaxonNode({
   const badge = rankAbbreviation(node.rank);
   const flip = isRadial && isLeftHalf(angle);
   const labelAnchor = isRadial ? (flip ? "end" : "start") : "end";
-  const labelX = isRadial ? (flip ? -14 : 14) : -9;
+  const ls = labelScale;
+  const labelSize = (isHighRank ? 13 : 12) * ls;
+  const labelX = (isRadial ? (flip ? -14 : 14) : -9) * ls;
   const labelTransform = flip ? "rotate(180)" : undefined;
-  const badgeX = isRadial ? (flip ? 8 : -20) : -node.name.length * 6.6 - 22;
-  // Same 6.6px-per-character estimate the badge offset already uses — good
-  // enough for a hit box, and it avoids a getBBox() measure per node.
-  const labelBoxWidth = (node.name.length + (hiddenCount > 0 ? 5 : 0)) * 6.6 + 8;
+  // 6.6px per character at the base 12px size, so the estimate scales with
+  // the type rather than drifting away from it as the reader zooms.
+  const charWidth = 6.6 * ls;
+  const badgeX = isRadial ? (flip ? 8 : -20) * ls : -node.name.length * charWidth - 22 * ls;
+  // Same per-character estimate the badge offset uses — good enough for a
+  // hit box, and it avoids a getBBox() measure per node.
+  const labelBoxWidth = (node.name.length + (hiddenCount > 0 ? 5 : 0)) * charWidth + 8 * ls;
   return (
     <>
       {/* The tightest clade wrapping the selected family gets a ring, so
@@ -1188,10 +1211,10 @@ function TaxonNode({
 
       {matched && !isRadial && (
         <rect
-          x={-9 - node.name.length * 6.6 - 4}
-          y={-8}
-          width={node.name.length * 6.6 + 8}
-          height={16}
+          x={labelX - node.name.length * charWidth - 4 * ls}
+          y={-8 * ls}
+          width={node.name.length * charWidth + 8 * ls}
+          height={16 * ls}
           fill="#FDF3C7"
           stroke="#E8C84A"
           strokeWidth={0.75}
@@ -1212,10 +1235,10 @@ function TaxonNode({
             strokeWidth={0.75}
           />
           <text
-            x={badgeX + 6.5}
+            x={badgeX + 6.5 * ls}
             textAnchor="middle"
             dy="0.32em"
-            fontSize={8.5}
+            fontSize={8.5 * ls}
             fontWeight={600}
             fill={COLORS.inkMuted}
           >
@@ -1234,10 +1257,10 @@ function TaxonNode({
               exported figure, are unchanged. */}
           {touchMode && (
             <rect
-              x={labelAnchor === "end" ? labelX - labelBoxWidth : labelX - 2}
-              y={-11}
-              width={labelBoxWidth + 4}
-              height={22}
+              x={labelAnchor === "end" ? labelX - labelBoxWidth : labelX - 2 * ls}
+              y={-11 * ls}
+              width={labelBoxWidth + 4 * ls}
+              height={22 * ls}
               fill="transparent"
               className="cursor-pointer"
               onClick={(e) => {
@@ -1251,7 +1274,7 @@ function TaxonNode({
             textAnchor={labelAnchor}
             dy="0.32em"
             fontStyle={node.rank === "species" ? "italic" : "normal"}
-            fontSize={isHighRank ? 13 : 12}
+            fontSize={labelSize}
             fontWeight={matched || isHighRank || inSelectedFamily || inComparison ? 600 : 400}
             {...LABEL_HALO}
             fill={
@@ -1435,6 +1458,7 @@ function GenomeNode({
   selectedFamilyId,
   aligned,
   trackOffset,
+  labelScale,
   touchMode,
   onSelectGenome,
   onSelectBgc,
@@ -1455,6 +1479,8 @@ function GenomeNode({
   aligned: boolean;
   /** Distance from this node out to the aligned track, in layout units. */
   trackOffset: number;
+  /** 1/zoom — see TaxonNode's `labelScale`. */
+  labelScale: number;
   /** Coarse pointer: widen the tip's hit area (see the halo below). */
   touchMode: boolean;
   onSelectGenome: () => void;
@@ -1470,9 +1496,14 @@ function GenomeNode({
     GLYPH_SEGMENT_WIDTH,
     GLYPH_MAX_WIDTH / Math.max(node.bgcs.length, 1),
   );
+  const gls = labelScale;
+  // The gap the label needs before the glyphs start is a function of the
+  // LABEL, which is now constant on screen — so this offset has to be too,
+  // or the barcode slides under the accession as the reader zooms out.
+  const barcodeStart = (showLabel ? BARCODE_START_X : 12) * gls;
   const barEnd = aligned
     ? trackOffset + node.bgcs.length * segWidth
-    : (showLabel ? BARCODE_START_X : 12) + node.bgcs.length * BARCODE_TICK_WIDTH;
+    : barcodeStart + node.bgcs.length * BARCODE_TICK_WIDTH;
   const dominant = dominantBgcClass(node);
   const dominantColor = dominant ? (BGC_CLASS_COLORS[dominant] ?? COLORS.inkMuted) : COLORS.inkMuted;
   return (
@@ -1492,10 +1523,10 @@ function GenomeNode({
         />
         {matched && showLabel && (
           <rect
-            x={flip ? -node.accession.length * 6.9 - 14 : 6}
-            y={-8}
-            width={node.accession.length * 6.9 + 8}
-            height={16}
+            x={flip ? -node.accession.length * 6.9 * gls - 14 * gls : 6 * gls}
+            y={-8 * gls}
+            width={node.accession.length * 6.9 * gls + 8 * gls}
+            height={16 * gls}
             fill="#FDF3C7"
             stroke="#E8C84A"
             strokeWidth={0.75}
@@ -1504,10 +1535,10 @@ function GenomeNode({
         )}
         {showLabel && (
           <text
-            x={flip ? -(tier.radius + 6) : tier.radius + 6}
+            x={flip ? -(tier.radius + 6 * gls) : tier.radius + 6 * gls}
             textAnchor={flip ? "end" : "start"}
             dy="0.32em"
-            fontSize={11.5}
+            fontSize={11.5 * gls}
             fontWeight={matched ? 600 : 400}
             {...LABEL_HALO}
             fill={matched ? COLORS.label : COLORS.labelMuted}
@@ -1547,7 +1578,7 @@ function GenomeNode({
         // classes" and implies no coordinate.
         const base = aligned
           ? trackOffset + i * segWidth
-          : (showLabel ? BARCODE_START_X : 12) + i * BARCODE_TICK_WIDTH;
+          : barcodeStart + i * BARCODE_TICK_WIDTH;
         // Mirror into the flipped frame: a rect at [v, v+w] must become
         // [-(v+w), -v] so rotate(180) lands it back outward.
         const bx = (offset: number, w: number) => (flip ? -(base + offset) - w : base + offset);
@@ -1617,11 +1648,9 @@ function GenomeNode({
       })}
       {node.is_mag && showLabel && (
         <text
-          x={
-            flip ? -(barEnd + 6) : barEnd + 6
-          }
+          x={flip ? -(barEnd + 6 * gls) : barEnd + 6 * gls}
           dy="0.32em"
-          fontSize={9.5}
+          fontSize={9.5 * gls}
           fill={COLORS.inkFaint}
           textAnchor={flip ? "end" : "start"}
         >

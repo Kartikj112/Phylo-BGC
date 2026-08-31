@@ -1240,9 +1240,9 @@ describe("rectangular label placement", () => {
     // against 12-13px text, and the rectangular layout had no rule at all:
     // `showLabel` read `!isRadial || …`, which short-circuits to true for
     // every node whenever the tree is not radial.
+    // 11px rows against 12-13px text: text taller than its own row.
     const nodes = [row("a", 0, 3), row("b", 11, 3), row("c", 22, 3)];
-    const { visible, suppressed } = placeRectangularLabels(nodes);
-    // 11-unit rows against 12-13px text: text taller than its own row.
+    const { visible, suppressed } = placeRectangularLabels(nodes, 1);
 
     expect(visible.size).toBeLessThan(nodes.length);
     expect(suppressed).toBeGreaterThan(0);
@@ -1256,19 +1256,29 @@ describe("rectangular label placement", () => {
 
   it("keeps every label once rows are far enough apart", () => {
     const nodes = [row("a", 0, 3), row("b", 40, 3), row("c", 80, 3)];
-    const { visible, suppressed } = placeRectangularLabels(nodes);
+    const { visible, suppressed } = placeRectangularLabels(nodes, 1);
     expect(visible.size).toBe(3);
     expect(suppressed).toBe(0);
   });
 
-  it("measures overlap in layout units, because the text scales too", () => {
-    // The zoom transform is one scale(k) over the whole figure layer, so
-    // label TEXT magnifies with the rows it sits between. Two names that
-    // collide at 1x collide identically at 4x. A placement rule that
-    // divided by the zoom would hand the reader overlapping text again the
-    // moment they zoomed in to read it.
+  it("reveals suppressed labels as the reader zooms in", () => {
+    // Labels hold a constant screen size, so zooming spreads the rows apart
+    // underneath type that does not grow — which is exactly the room a
+    // suppressed label was waiting for. Density varies, size does not.
     const nodes = [row("a", 0, 3), row("b", 8, 3), row("c", 16, 3)];
-    expect(placeRectangularLabels(nodes).visible.size).toBeLessThan(3);
+    expect(placeRectangularLabels(nodes, 1).visible.size).toBeLessThan(3);
+    expect(placeRectangularLabels(nodes, 4).visible.size).toBe(3);
+  });
+
+  it("suppresses more as the reader zooms out", () => {
+    // The other direction, and the one that matters at first paint:
+    // fit-to-view lands near k=0.2 for a default tree, where rows are only
+    // a few screen pixels apart and almost nothing can be labelled.
+    const nodes = Array.from({ length: 40 }, (_, i) => row(`n${i}`, i * 24, 3));
+    const wide = placeRectangularLabels(nodes, 1).visible.size;
+    const far = placeRectangularLabels(nodes, 0.2).visible.size;
+    expect(far).toBeLessThan(wide);
+    expect(far).toBeGreaterThan(0);
   });
 
   it("does not let one column crowd out another", () => {
@@ -1276,14 +1286,14 @@ describe("rectangular label placement", () => {
     // cannot collide however close their rows are. Treating the tree as one
     // flat list would throw away most of the labels for nothing.
     const nodes = [row("a", 0, 1), row("b", 1, 2), row("c", 2, 3)];
-    expect(placeRectangularLabels(nodes).visible.size).toBe(3);
+    expect(placeRectangularLabels(nodes, 1).visible.size).toBe(3);
   });
 
   it("drops an ordinary label before an orienting one", () => {
     // Anchor ranks are what tells a reader where they are in the tree, so
     // they win the row when something has to give.
     const nodes = [row("Streptomyces", 0, 3, "genus"), row("Actinomycetota", 4, 3, "phylum")];
-    const { visible } = placeRectangularLabels(nodes);
+    const { visible } = placeRectangularLabels(nodes, 1);
     expect(visible.has("Actinomycetota")).toBe(true);
     expect(visible.has("Streptomyces")).toBe(false);
   });
@@ -1292,7 +1302,7 @@ describe("rectangular label placement", () => {
     // A name the reader is actively looking for is the last thing to drop,
     // never the first — otherwise searching hides its own answer.
     const nodes = [row("Actinomycetota", 0, 3, "phylum"), row("Streptomyces", 4, 3, "genus")];
-    const { visible } = placeRectangularLabels(nodes, {
+    const { visible } = placeRectangularLabels(nodes, 1, {
       boost: (n) => ((n as never as { data: { name: string } }).data.name === "Streptomyces" ? 5000 : 0),
     });
     expect(visible.has("Streptomyces")).toBe(true);
@@ -1300,18 +1310,15 @@ describe("rectangular label placement", () => {
 
   it("is stable across repeated calls so panning does not reshuffle labels", () => {
     const nodes = [row("a", 0, 3), row("b", 7, 3), row("c", 14, 3), row("d", 21, 3)];
-    const first = [...placeRectangularLabels(nodes).visible].sort();
-    const second = [...placeRectangularLabels(nodes).visible].sort();
+    const first = [...placeRectangularLabels(nodes, 1).visible].sort();
+    const second = [...placeRectangularLabels(nodes, 1).visible].sort();
     expect(first).toEqual(second);
   });
 
-  it("keeps at least one label per column while the text is legible", () => {
-    // However tightly packed a column is, the most important label in it
-    // still gets drawn — going blank at a readable zoom would trade an
-    // unreadable state for an empty one, which is not an improvement.
-    // (Below the legibility floor the whole set goes, which is a different
-    // rule and is covered above.)
+  it("keeps at least one label per column however tight it gets", () => {
+    // Going blank would trade an unreadable state for an empty one, which
+    // is not an improvement. Something is always labelled.
     const nodes = [row("a", 0, 3), row("b", 0.5, 3), row("c", 1, 3)];
-    expect(placeRectangularLabels(nodes).visible.size).toBe(1);
+    expect(placeRectangularLabels(nodes, 1).visible.size).toBe(1);
   });
 });
