@@ -146,7 +146,7 @@ export function FamilyRail({
   }, [families, familyIndex, query, sort]);
 
   return (
-    <div className="mt-6 border-t border-chrome-line pt-4">
+    <div>
       <div className="mb-2 flex items-center justify-between">
         <span className="flex items-center gap-1.5 text-xs uppercase tracking-wider text-chrome-ink-muted">
           <Layers size={12} />

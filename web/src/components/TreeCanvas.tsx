@@ -250,7 +250,11 @@ export function TreeCanvas({
    * of overlapping text. Search hits and the selected family's clades are
    * boosted so the names a reader is actively looking for are the last to
    * be dropped, never the first. */
-  const labelScale = 1 / Math.max(scale, 0.001);
+  /** Layout units per screen pixel. Anything whose job is to be COMPARED
+   * rather than measured against the tree's own geometry multiplies by this
+   * to hold a constant on-screen size. */
+  const screenScale = 1 / Math.max(scale, 0.001);
+  const labelScale = screenScale;
   const rectLabels = useMemo(() => {
     if (isRadial) return null;
     return placeRectangularLabels(horizontal.nodes, scale, {
@@ -942,9 +946,23 @@ export function TreeCanvas({
                   }
                   fill="none"
                   stroke={stroke}
-                  strokeWidth={onFamilyPath ? Math.max(width, 2.5) : width}
+                  // Branch weight already encodes subtree cluster count
+                  // (sqrt-scaled, 1-11). It was drawn in LAYOUT units, so at
+                  // the default fit-to-view zoom of ~0.2 the whole range
+                  // collapsed to 0.2-2.2px — the encoding was there and
+                  // invisible, a taper nobody could see.
+                  //
+                  // Stroke width is the right thing to hold constant, and
+                  // the glyph bars beside it are the right thing to leave
+                  // scaling. A bar's LENGTH is read against the tree's own
+                  // geometry, so it has to move with it; a stroke's WIDTH is
+                  // only ever read against other strokes, and that
+                  // comparison is preserved exactly by scaling them all
+                  // together.
+                  strokeWidth={(onFamilyPath ? Math.max(width, 2.5) : width) * screenScale}
                   strokeOpacity={onFamilyPath ? 0.85 : dominant ? 0.45 : 0.6}
                   strokeLinecap="round"
+                  strokeLinejoin="round"
                 />
               );
             })}

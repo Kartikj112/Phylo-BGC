@@ -11,7 +11,7 @@ interface LevelControlProps {
 
 export function LevelControl({ activeLevel, availableRanks, onSelectLevel }: LevelControlProps) {
   return (
-    <div className="mb-5">
+    <div>
       <div className="mb-2 flex items-center gap-1.5">
         <Layers3 size={12} className="text-chrome-ink-muted" />
         <span className="text-xs uppercase tracking-wider text-chrome-ink-muted">Show down to</span>

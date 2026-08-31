@@ -22,7 +22,7 @@ export function FilterPanel({ filters, onChange, matched, total, filteredEveryth
   const num = (v: string): number | null => (v.trim() === "" ? null : Number(v));
 
   return (
-    <div className="mb-5">
+    <div>
       <div className="mb-2 flex items-center justify-between">
         <span className="flex items-center gap-1.5 text-xs uppercase tracking-wider text-chrome-ink-muted">
           <SlidersHorizontal size={12} />

@@ -46,6 +46,21 @@ import {
   type TreeOrientation,
 } from "@/lib/tree-logic";
 
+/** One control group in the left rail.
+ *
+ * The divider and spacing live here rather than on each control, so the
+ * order can change without the rhythm breaking. Previously `LevelControl`
+ * carried a bottom margin, `FamilyRail` carried a top border and
+ * `ClassFilterRail` carried neither — a set of rules that only produced
+ * even spacing in the one arrangement they were written against. */
+function RailSection({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="border-t border-chrome-line pt-4 first:border-t-0 first:pt-0 [&:not(:last-child)]:pb-4">
+      {children}
+    </div>
+  );
+}
+
 export default function HomePage() {
   // Taxonomy and view are independent axes, and conflating them was a
   // labelling bug: the tabs read "Tree | Eukaryotes | Flows | Matrix", so one
@@ -566,7 +581,44 @@ export default function HomePage() {
             </button>
           </div>
 
-          <div className="mb-5">
+          {/* Own container so `first:` applies to the first SECTION rather
+              than to the rail header above it. */}
+          <div className="flex flex-col">
+          {/* Ordered by the question each control answers, coarsest first:
+              how much tree to show, then which family to trace across it,
+              then how to colour what is left, then which genomes belong in
+              it at all. Spacing is owned here rather than by each section,
+              so the rhythm survives a reorder — it previously lived on the
+              components as ad-hoc margins that only lined up in one
+              arrangement. */}
+          <RailSection>
+            <LevelControl
+              activeLevel={activeLevel}
+              availableRanks={availableRanks}
+              onSelectLevel={selectLevel}
+            />
+          </RailSection>
+
+          <RailSection>
+            <FamilyRail
+              selectedFamilyId={selectedFamilyId}
+              onSelectFamily={selectFamily}
+              familyIndex={familyIndex}
+              totalPhyla={totalPhyla}
+              onFamiliesLoaded={setFamiliesList}
+            />
+          </RailSection>
+
+          <RailSection>
+            <ClassFilterRail
+              activeClasses={activeClasses}
+              counts={classCounts}
+              onToggle={toggleClass}
+              onReset={() => setActiveClasses(new Set(CLASS_ORDER))}
+            />
+          </RailSection>
+
+          <RailSection>
             <label className="flex cursor-pointer items-start gap-2 py-1">
               <input
                 type="checkbox"
@@ -576,7 +628,7 @@ export default function HomePage() {
               />
               <span className="text-sm text-chrome-ink">Only genomes with BGCs</span>
             </label>
-            <p className="mt-1 pl-6 text-xs leading-relaxed text-chrome-ink-faint">
+            <p className="mb-4 mt-1 pl-6 text-xs leading-relaxed text-chrome-ink-faint">
               {pruned?.fellBackToFull ? (
                 <span className="text-amber-300">
                   No genome in this dataset has BGCs yet — showing all. Run{" "}
@@ -591,35 +643,15 @@ export default function HomePage() {
                 <>Showing every genome, including those antiSMASH has not been run on.</>
               )}
             </p>
+            <FilterPanel
+              filters={filters}
+              onChange={setFilters}
+              matched={filtered?.matched ?? 0}
+              total={pruned?.shownGenomes ?? 0}
+              filteredEverythingOut={filtered?.filteredEverythingOut ?? false}
+            />
+          </RailSection>
           </div>
-
-          <FilterPanel
-            filters={filters}
-            onChange={setFilters}
-            matched={filtered?.matched ?? 0}
-            total={pruned?.shownGenomes ?? 0}
-            filteredEverythingOut={filtered?.filteredEverythingOut ?? false}
-          />
-
-          <LevelControl
-            activeLevel={activeLevel}
-            availableRanks={availableRanks}
-            onSelectLevel={selectLevel}
-          />
-
-          <ClassFilterRail
-            activeClasses={activeClasses}
-            counts={classCounts}
-            onToggle={toggleClass}
-            onReset={() => setActiveClasses(new Set(CLASS_ORDER))}
-          />
-          <FamilyRail
-            selectedFamilyId={selectedFamilyId}
-            onSelectFamily={selectFamily}
-            familyIndex={familyIndex}
-            totalPhyla={totalPhyla}
-            onFamiliesLoaded={setFamiliesList}
-          />
         </aside>
 
         <div
