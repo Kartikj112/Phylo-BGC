@@ -18,21 +18,23 @@ export const COLORS = {
   inkFaint: "#9A9D95",
   line: "#DEDFDA",
   lineStrong: "#C4C6BF",
-  signal: "#2C5F52",
-  signalWash: "#E7EEEC",
+  /** Oxblood — the interface accent. See tailwind.config.ts for the
+   * contrast figures and for why the tree's `present` does NOT follow it. */
+  signal: "#7B1E2B",
+  signalWash: "#F4E7E9",
   /** Chrome — the top bar and the left filter rail. Deliberately dark:
    * see the comment in tailwind.config.ts. Kept here too because a few
    * SVG-rendered bits (the donut, inline legends) sit on chrome and need
    * the value at render time, not as a class name. */
-  chrome: "#1E2A26",
-  chromeSoft: "#2A3833",
-  chromeLine: "#3B4A45",
-  chromeLineStrong: "#56655F",
-  chromeInk: "#EDF0EE",
-  chromeInkMuted: "#A6B1AC",
-  chromeInkFaint: "#8B9691",
-  chromeAccent: "#7CD3B6",
-  chromeAccentWash: "#2F4F46",
+  chrome: "#191416",
+  chromeSoft: "#241D20",
+  chromeLine: "#3A2F33",
+  chromeLineStrong: "#574A4E",
+  chromeInk: "#F2EDEE",
+  chromeInkMuted: "#B4A8AB",
+  chromeInkFaint: "#93858A",
+  chromeAccent: "#EE95A3",
+  chromeAccentWash: "#4A1620",
   /** ---- Figure typography -------------------------------------------
    *
    * Label colour and its halo are their own tokens rather than reuses of
@@ -58,11 +60,15 @@ export const COLORS = {
    * job is to be found at a glance. */
   labelMatch: "#7A5E00",
 
-  /** Presence-track + selected-family highlight fills. `present` is the
-   * signal green at full weight; `presentSoft` backs bands and washes;
-   * `absent` is the hollow-cell stroke. Kept distinct from the BGC-class
-   * palette so "does this clade carry the selected family" never collides
-   * with "what class are its clusters". */
+  /** Presence-track + selected-family highlight fills. `presentSoft` backs
+   * bands and washes; `absent` is the hollow-cell stroke.
+   *
+   * `present` stays GREEN now that the interface accent is oxblood, and the
+   * divergence is deliberate. It is a data encoding, not a UI state, and it
+   * has to stay distinguishable from the BGC-class palette so "does this
+   * clade carry the selected family" never collides with "what class are
+   * its clusters" — oxblood sits right next to `alkaloid` (#8B4560), which
+   * is exactly the collision that constraint exists to prevent. */
   present: "#2C5F52",
   presentSoft: "#BFD6CF",
   absent: "#D8D9D3",

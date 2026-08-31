@@ -572,7 +572,7 @@ export default function HomePage() {
                 type="checkbox"
                 checked={onlyWithBgcs}
                 onChange={(e) => setOnlyWithBgcs(e.target.checked)}
-                className="mt-0.5 h-4 w-4 accent-[#7CD3B6]"
+                className="mt-0.5 h-4 w-4 accent-[#EE95A3]"
               />
               <span className="text-sm text-chrome-ink">Only genomes with BGCs</span>
             </label>

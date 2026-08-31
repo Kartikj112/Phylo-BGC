@@ -111,7 +111,7 @@ export function FilterPanel({ filters, onChange, matched, total, filteredEveryth
             type="checkbox"
             checked={filters.magOnly}
             onChange={(e) => set("magOnly", e.target.checked)}
-            className="h-4 w-4 accent-[#7CD3B6]"
+            className="h-4 w-4 accent-[#EE95A3]"
           />
           <span className="text-chrome-ink">MAGs only</span>
         </label>

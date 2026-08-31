@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { fetchBgc, fetchGenome } from "@/lib/api-client";
 import type { BGCDetail, GenomeDetail } from "@/lib/api-types";
 import { bareAccession, isAssemblyAccession } from "@/lib/accession";
-import { BGC_CLASS_LABELS, classColor } from "@/lib/colors";
+import { BGC_CLASS_LABELS, COLORS, classColor } from "@/lib/colors";
 
 export type Selection = { kind: "genome"; id: string } | { kind: "bgc"; id: string } | null;
 
@@ -90,7 +90,7 @@ function EvidenceBadge({ level }: { level: string }) {
   return (
     <div
       className="mt-1 text-xs uppercase tracking-wide"
-      style={{ color: curated ? "#2C5F52" : "#9A9D95" }}
+      style={{ color: curated ? COLORS.signal : COLORS.inkFaint }}
     >
       {curated ? "Curated reference" : "Predicted"}
     </div>
