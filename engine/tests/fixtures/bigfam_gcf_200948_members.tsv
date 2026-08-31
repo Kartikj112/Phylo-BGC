@@ -1,0 +1,6 @@
+#BGC_ID	BGC_NAME	RADIUS	MIBIG_URL	NCBI_URL	ASDB_URL
+456046	GCF_000156695.2/NZ_ABYX02000001.region019	430	n/a	https://www.ncbi.nlm.nih.gov/nuccore/NZ_ABYX02000001?from=6127931&to=6239903	n/a
+133494	GCA_000006745.1/NZ_KZ679082.1.region020	539	n/a	https://www.ncbi.nlm.nih.gov/nuccore/NZ_KZ679082.1?from=6087037&to=6196312	n/a
+57415	GCF_999999999.1/NZ_CP010833.1.region011	563	n/a	https://www.ncbi.nlm.nih.gov/nuccore/NZ_CP010833.1?from=1639242&to=1734667	n/a
+778535	BGC0001522.1	631	https://mibig.secondarymetabolites.org/repository/BGC0001522	n/a	n/a
+534609	GCF_000156695.2/NZ_KZ819154.1.region009	952	n/a	https://www.ncbi.nlm.nih.gov/nuccore/NZ_KZ819154.1?from=1451667&to=1560182	n/a

@@ -4,6 +4,7 @@ import { ExternalLink, MapPin, Share2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { fetchBgc, fetchGenome } from "@/lib/api-client";
 import type { BGCDetail, GenomeDetail } from "@/lib/api-types";
+import { bareAccession, isAssemblyAccession } from "@/lib/accession";
 import { BGC_CLASS_LABELS, classColor } from "@/lib/colors";
 
 export type Selection = { kind: "genome"; id: string } | { kind: "bgc"; id: string } | null;
@@ -103,8 +104,8 @@ type GenomeTab = "overview" | "bgcs" | "info" | "lineage";
  * genomes that happen to be in that database, and a link that 404s for
  * most genomes is worse than no link. */
 function externalLinks(accession: string) {
-  const bare = accession.replace(/^(RS_|GB_)/, "");
-  const isAssembly = /^GC[AF]_/.test(bare);
+  const bare = bareAccession(accession);
+  const isAssembly = isAssemblyAccession(accession);
   return [
     {
       label: "NCBI",

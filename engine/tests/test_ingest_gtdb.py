@@ -177,3 +177,69 @@ def test_ingest_gtdb_metadata_records_errors_without_aborting_batch(session, gtd
     assert report.created == 2
     assert len(report.errors) == 1
     assert session.query(Genome).count() == 2
+
+
+class TestTreeTipMapping:
+    """`Genome.gtdb_tip_accession` — the join to GTDB's reference tree.
+
+    The distinction this covers is the one that is easy to miss and silent
+    when missed: `bac120.tree` has 189,801 tips but the metadata describes
+    878,998 genomes, because GTDB builds the tree from species
+    representatives only. A genome that is not a representative has no tip
+    of its own and reaches the tree through `gtdb_genome_representative`.
+    """
+
+    def test_a_representative_is_its_own_tip(self, session, gtdb_source):
+        """Row 1 of the fixture names itself, which is what GTDB's metadata
+        does for every representative — so no is-representative branch is
+        needed anywhere."""
+        rows = list(read_gtdb_metadata_tsv(METADATA_TSV))
+        ingest_gtdb_metadata(session, gtdb_source, rows)
+
+        genome = session.query(Genome).filter_by(accession="GCF_TEST900001.1").one()
+        assert genome.gtdb_tip_accession == "RS_GCF_TEST900001.1"
+
+    def test_a_non_representative_reaches_another_genomes_tip(self, session, gtdb_source):
+        """Rows 2 and 3 are not representatives. Without this column they
+        would silently vanish from any tree-tip join — not error, just not
+        be there."""
+        rows = list(read_gtdb_metadata_tsv(METADATA_TSV))
+        ingest_gtdb_metadata(session, gtdb_source, rows)
+
+        for accession in ("GCF_TEST900002.1", "GCF_TEST900003.1"):
+            genome = session.query(Genome).filter_by(accession=accession).one()
+            assert genome.gtdb_tip_accession == "RS_GCF_TEST900001.1"
+            assert genome.gtdb_tip_accession != genome.accession
+
+    def test_the_tip_label_keeps_gtdbs_prefix(self, session, gtdb_source):
+        """`accession` is stored prefix-stripped because that is what a user
+        looks up at NCBI; the tip label is stored WITH the prefix because
+        that is verbatim how the Newick file spells it. Rewriting either to
+        match the other would mean rewriting it back at every use."""
+        rows = list(read_gtdb_metadata_tsv(METADATA_TSV))
+        ingest_gtdb_metadata(session, gtdb_source, rows)
+
+        genome = session.query(Genome).filter_by(accession="GCF_TEST900001.1").one()
+        assert genome.accession == "GCF_TEST900001.1"
+        assert genome.gtdb_tip_accession == "RS_GCF_TEST900001.1"
+
+    def test_a_release_without_the_column_leaves_no_tip_rather_than_a_wrong_one(
+        self, session, gtdb_source
+    ):
+        rows = list(read_gtdb_metadata_tsv(METADATA_TSV))
+        for row in rows:
+            del row["gtdb_genome_representative"]
+        ingest_gtdb_metadata(session, gtdb_source, rows)
+
+        assert session.query(Genome).filter_by(gtdb_tip_accession=None).count() == 3
+
+    def test_the_tip_label_normalizes_onto_the_accession_it_names(self):
+        """The join itself, asserted through the shared normalizer rather
+        than by string equality — a tip label off `bac120.tree` and the
+        accession a genome is stored under must reach the same key."""
+        from bgcscape.ingest.accession import normalize_accession
+
+        assert (
+            normalize_accession("RS_GCF_TEST900001.1").value
+            == normalize_accession("GCF_TEST900001.1").value
+        )

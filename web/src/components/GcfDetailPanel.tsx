@@ -7,8 +7,20 @@ import type { BGCFamilyDetail, BGCFamilySummary } from "@/lib/api-types";
 import type { FamilyDistribution } from "@/lib/tree-logic";
 import { BGC_CLASS_COLORS, BGC_CLASS_LABELS, COLORS } from "@/lib/colors";
 
-/** Matches CLUSTERING_METHOD in engine/src/bgcscape/ingest/compound_groups.py. */
-const COMPOUND_METHOD = "MIBiG shared compound";
+/** The two kinds of grouping, as typed by the API's `BGCFamily.kind`.
+ * Read from `kind` rather than string-matching `clustering_method`, which
+ * is what FamilyRail already does and for the same reason: the method is
+ * free text that changes with every new source (a BiG-FAM family reads
+ * "BiG-SLiCE (BiG-FAM 1.0)"), while `kind` is a CHECK-constrained enum the
+ * engine guarantees. */
+const COMPOUND_GROUP = "compound_group";
+
+/** Set by engine/src/bgcscape/ingest/bigfam.py. A BiG-FAM family's
+ * membership is published over 1.2M BGCs, of which this corpus holds a
+ * subset — so the members listed here are the ones on genomes present,
+ * not the whole family. Saying so is the difference between a partial
+ * distribution and a wrong one. */
+const BIGFAM_METHOD_PREFIX = "BiG-SLiCE (BiG-FAM";
 
 interface GcfDetailPanelProps {
   familyId: string;
@@ -62,6 +74,8 @@ export function GcfDetailPanel({
   const shownMembers = showAllMembers ? members : members.slice(0, 12);
 
   const curated = (family?.evidence_level ?? detail?.evidence_level) === "observed_curated";
+  const isCompoundGroup = (family?.kind ?? detail?.kind) === COMPOUND_GROUP;
+  const fromBigfam = (family?.clustering_method ?? "").startsWith(BIGFAM_METHOD_PREFIX);
 
   /* Bottom sheet below `lg`, side column above — see DetailPanel. */
   return (
@@ -69,7 +83,7 @@ export function GcfDetailPanel({
       <div className="flex flex-shrink-0 items-start justify-between border-b border-line p-4">
         <div className="min-w-0">
           <div className="text-xs uppercase tracking-wider text-ink-muted">
-            {family?.clustering_method === COMPOUND_METHOD ? "Compound group" : "Gene cluster family"}
+            {isCompoundGroup ? "Compound group" : "Gene cluster family"}
           </div>
           <div className="mt-0.5 truncate font-mono text-sm text-ink">
             {family?.label ?? familyId.slice(0, 12)}
@@ -97,14 +111,26 @@ export function GcfDetailPanel({
           className="mt-1.5 text-xs uppercase tracking-wide"
           style={{ color: curated ? COLORS.signal : COLORS.inkFaint }}
         >
-          {family?.clustering_method === COMPOUND_METHOD
+          {isCompoundGroup
             ? "Grouped by shared curated compound"
             : curated
               ? "Curated reference family"
-              : "Computed by sequence clustering"}
+              : "Grouped by sequence similarity"}
           {family?.clustering_method ? ` · ${family.clustering_method}` : ""}
           {family?.clustering_cutoff != null ? ` · cutoff ${family.clustering_cutoff}` : ""}
         </div>
+
+        {/* A BiG-FAM family is defined over BiG-FAM's 1.2M BGCs, not over
+         * this corpus. The tree can only highlight the members whose genome
+         * is present here, so the panel says that outright — a distribution
+         * drawn from part of a family looks exactly like one drawn from all
+         * of it, and only this line tells them apart. */}
+        {fromBigfam && (
+          <p className="mt-2 rounded border border-line bg-paper px-2 py-1.5 text-[11px] leading-relaxed text-ink-muted">
+            Membership as published by BiG-FAM. Only members whose genome is in this corpus
+            are listed and highlighted — the family is larger.
+          </p>
+        )}
 
         {/* Distribution shape */}
         {distribution && distribution.memberGenomeCount > 0 && (

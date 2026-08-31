@@ -10,7 +10,13 @@ tooling on GitHub (`Ecogenomics/GTDBTk`, and an nf-core pipeline that
 documents the exact metadata columns it expects) — see
 docs/DATA_SOURCES.md for the trail. Confirmed with reasonable confidence:
 `gtdb_taxonomy`, `gtdb_genome_representative`, `checkm_completeness`,
-`checkm_contamination`, `genome_size`. Lower confidence, flagged in code:
+`checkm_contamination`, `genome_size`. `gtdb_genome_representative` is
+additionally confirmed against the r232 files on disk: every one of the
+991 assembly accessions in this project's GTDB subset has a value there,
+and every one of those values is a tip label present in `bac120.tree` or
+`ar53.tree` (651 rows name themselves, 340 name another genome, 0 name
+something absent from both trees). That column is what makes the tree-tip
+join total — see `Genome.gtdb_tip_accession`. Lower confidence, flagged in code:
 the exact GC-content and NCBI-assembly-level column names — verify against
 the real downloaded header before a production run and adjust
 `_GC_COLUMNS`/`_ASSEMBLY_LEVEL_COLUMN` below if needed.
@@ -39,6 +45,7 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from bgcscape.ingest._util import IngestReport, get_or_create_or_update
+from bgcscape.ingest.accession import strip_gtdb_prefix
 from bgcscape.models import EvidenceLevel, Genome, Source, Taxon, TaxonRank
 from bgcscape.models.genome import AssemblyLevel
 from bgcscape.schemas import GenomeCreate, TaxonCreate
@@ -74,11 +81,13 @@ class GtdbParseError(ValueError):
 def normalize_gtdb_accession(raw_accession: str) -> str:
     """Strip GTDB's RS_/GB_ provenance prefix: "RS_GCF_000203835.1" ->
     "GCF_000203835.1", matching the bare NCBI assembly accession so it can
-    be cross-referenced against other NCBI-derived data later."""
-    for prefix in ("RS_", "GB_"):
-        if raw_accession.startswith(prefix):
-            return raw_accession[len(prefix) :]
-    return raw_accession
+    be cross-referenced against other NCBI-derived data later.
+
+    Delegates to `ingest/accession.py`, which owns every cross-source
+    accession rule in this project. Kept as a named re-export because this
+    is the spelling GTDB ingestion and its tests already use.
+    """
+    return strip_gtdb_prefix(raw_accession)
 
 
 def parse_gtdb_taxonomy_string(taxonomy_string: str) -> list[tuple[TaxonRank, str]]:
@@ -124,6 +133,10 @@ def _parse_int(value: str | None) -> int | None:
 @dataclass
 class ParsedGtdbGenome:
     accession: str
+    #: GTDB's `gtdb_genome_representative`, kept verbatim (prefix and all) —
+    #: it is a tip label in `bac120.tree`/`ar53.tree`, and those files spell
+    #: their tips `RS_GCF_...`. See `Genome.gtdb_tip_accession`.
+    tip_accession: str | None
     taxonomy_string: str
     taxonomy_chain: list[tuple[TaxonRank, str]]
     genome_size_bp: int | None
@@ -147,8 +160,15 @@ def parse_gtdb_metadata_row(row: dict[str, str]) -> ParsedGtdbGenome:
     # when the assembly-level column is absent/unrecognized.
     assembly_level = _NCBI_ASSEMBLY_LEVEL_MAP.get(ncbi_level_raw, AssemblyLevel.SCAFFOLD)
 
+    # A representative genome's own row names *itself* here, so the column
+    # is the answer for both cases and needs no is-representative branch.
+    # It is absent only from a release that predates the column, in which
+    # case the genome simply has no resolved tip rather than a wrong one.
+    tip_accession = _first_present(row, "gtdb_genome_representative")
+
     return ParsedGtdbGenome(
         accession=normalize_gtdb_accession(accession_raw),
+        tip_accession=tip_accession,
         taxonomy_string=taxonomy_string,
         taxonomy_chain=parse_gtdb_taxonomy_string(taxonomy_string),
         genome_size_bp=_parse_int(row.get("genome_size")),
@@ -195,6 +215,7 @@ def load_gtdb_genome(session: Session, parsed: ParsedGtdbGenome, source: Source)
 
     genome_create = GenomeCreate(
         accession=parsed.accession,
+        gtdb_tip_accession=parsed.tip_accession,
         taxon_id=leaf_taxon.id if leaf_taxon else None,
         assembly_level=parsed.assembly_level,
         is_mag=False,  # no verified MAG-detection column yet, see module docstring

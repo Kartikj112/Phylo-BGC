@@ -19,6 +19,7 @@ class GenomeBase(BaseModel):
     completeness_pct: float | None = None
     contamination_pct: float | None = None
     sample_metadata: dict | None = None
+    gtdb_tip_accession: str | None = None
     source_id: uuid.UUID
     evidence_level: EvidenceLevel
 

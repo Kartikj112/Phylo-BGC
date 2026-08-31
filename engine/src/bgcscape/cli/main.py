@@ -12,6 +12,13 @@ from bgcscape import __version__
 from bgcscape.db.session import get_engine, session_scope
 from bgcscape.ingest._util import IngestReport
 from bgcscape.ingest.antismash import ingest_antismash_result, read_antismash_result
+from bgcscape.ingest.bigfam import (
+    DEFAULT_CORE_RADIUS,
+    BigfamExportError,
+    infer_gcf_id_from_filename,
+    ingest_bigfam_gcf,
+    read_bigfam_export,
+)
 from bgcscape.ingest.bigscape import (
     ingest_bigscape_clustering,
     parse_cutoff_from_filename,
@@ -90,6 +97,14 @@ SOURCE_METADATA: dict[str, dict[str, str]] = {
         "citation": (
             "Schoch CL et al. NCBI Taxonomy: a comprehensive update on curation, "
             "resources and tools. Database (Oxford)."
+        ),
+    },
+    "BiG-FAM": {
+        "url": "https://bigfam.bioinformatics.nl/",
+        "license": "Open access; family assignments stored as derived output",
+        "citation": (
+            "Kautsar SA et al. BiG-FAM: the biosynthetic gene cluster families database. "
+            "Nucleic Acids Research."
         ),
     },
     "MIBiG shared compound": {
@@ -276,6 +291,110 @@ def ingest_bigscape_cmd(
             f"  ({report.skipped} row(s) referenced a BGC not in the database — expected if "
             "antiSMASH or MIBiG ingestion hasn't run for those records yet. MIBiG reference "
             "clusters DO match, via their accession.)"
+        )
+
+
+@ingest_app.command("bigfam")
+def ingest_bigfam_cmd(
+    path: Path = typer.Argument(
+        ...,
+        help=(
+            "A BiG-FAM per-GCF member export (the 'export BGC list' download on a GCF "
+            "detail page, i.e. /api/gcf/get_member_links?gcf_id=<id>). Plain or .gz."
+        ),
+    ),
+    gcf_id: str = typer.Option(
+        None,
+        help=(
+            "BiG-FAM's numeric GCF id. Inferred from the filename when omitted, since the "
+            "export itself does not carry it."
+        ),
+    ),
+    label: str = typer.Option(
+        None, help="Family label to store. Defaults to 'GCF_<gcf_id>'."
+    ),
+    include_putative: bool = typer.Option(
+        False,
+        help=(
+            f"Also ingest putative members (radius > {DEFAULT_CORE_RADIUS:.0f}). Off by "
+            "default: they are a materially weaker membership claim, and including them "
+            "silently would overstate the family's taxonomic distribution."
+        ),
+    ),
+    core_radius: float = typer.Option(
+        DEFAULT_CORE_RADIUS,
+        help="Radius at or below which a member is core. BiG-FAM's own GCF pages split at 900.",
+    ),
+    version: str = typer.Option("1.0", help="BiG-FAM release label to record on the Source row."),
+) -> None:
+    """Ingest one Gene Cluster Family's membership from a BiG-FAM export.
+
+    This is what puts a real (sequence-based) GCF in the database, as
+    opposed to the compound groups `group-by-compound` builds. Members
+    whose assembly is not already in this corpus are counted and reported
+    rather than created, because placing a genome would mean inventing the
+    taxonomy that puts it on the tree.
+    """
+    resolved_id = gcf_id or infer_gcf_id_from_filename(path)
+    if not resolved_id and not label:
+        typer.echo(
+            f"Couldn't infer a GCF id from filename '{path.name}' — pass --gcf-id "
+            "(or --label) explicitly. The export does not carry the id itself.",
+            err=True,
+        )
+        raise typer.Exit(1)
+    gcf_label = label or f"GCF_{resolved_id}"
+
+    try:
+        columns, rows = read_bigfam_export(path)
+    except BigfamExportError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    typer.echo(f"Read {len(rows)} member row(s) from {path} ({', '.join(columns)})")
+
+    with session_scope() as session:
+        source = _get_or_create_source(
+            session, name="BiG-FAM", source_type=SourceType.TOOL_RUN, version=version
+        )
+        report, coverage = ingest_bigfam_gcf(
+            session,
+            source,
+            rows,
+            gcf_label=gcf_label,
+            include_putative=include_putative,
+            core_radius=core_radius,
+            clustering_method=f"BiG-SLiCE (BiG-FAM {version})",
+        )
+
+    _echo_report(report)
+    # The coverage line is not optional output. A family rendered from a
+    # fortieth of its membership looks exactly like one rendered from all
+    # of it, so the number that distinguishes them is always printed.
+    typer.echo(coverage.describe())
+    if coverage.created_bgc:
+        typer.echo(
+            f"  {coverage.created_bgc} BGC row(s) created for regions BiG-FAM names on genomes "
+            "this corpus already holds (class 'other' — the export states none)."
+        )
+    if coverage.matched_existing_bgc:
+        typer.echo(f"  {coverage.matched_existing_bgc} member(s) matched a BGC already ingested.")
+    if coverage.members_putative_skipped:
+        typer.echo(
+            f"  {coverage.members_putative_skipped} putative member(s) "
+            f"(radius > {core_radius:.0f}) excluded — pass --include-putative to keep them."
+        )
+    if coverage.ambiguous_accession:
+        typer.echo(
+            f"  {coverage.ambiguous_accession} member accession(s) matched more than one genome "
+            "and were left unplaced rather than assigned to a guess."
+        )
+    if coverage.placed == 0:
+        typer.echo(
+            "Nothing was placed. Every member of this GCF sits on an assembly that is not in "
+            "this database. Ingest the relevant GTDB genomes first (bgcscape ingest gtdb), or "
+            "pick a GCF with members among the genomes you already have.",
+            err=True,
         )
 
 

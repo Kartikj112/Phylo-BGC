@@ -75,11 +75,12 @@ export function FamilyRail({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // What KIND of grouping is loaded. A BiG-SCAPE run produces sequence-based
-  // gene cluster families; `bgcscape group-by-compound` produces groups of
-  // clusters that make the same curated compound. They are different claims,
-  // so the rail names whichever it actually has rather than calling both
-  // "families". Mixed corpora get the neutral term.
+  // What KIND of grouping is loaded. A BiG-SCAPE run or a BiG-FAM export
+  // produces sequence-based gene cluster families; `bgcscape
+  // group-by-compound` produces groups of clusters that make the same
+  // curated compound. They are different claims, so the rail names whichever
+  // it actually has rather than calling both "families". Mixed corpora get
+  // the neutral term.
   const kind = useMemo(() => {
     const methods = new Set(families.map((f) => f.kind));
     if (methods.size === 1 && methods.has(COMPOUND_GROUP)) {
@@ -93,7 +94,11 @@ export function FamilyRail({
     if (methods.size > 0 && ![...methods].some((m) => m === COMPOUND_GROUP)) {
       return {
         title: "Gene cluster families",
-        blurb: "Sequence-similarity groupings from a BiG-SCAPE run.",
+        // Deliberately does not name the tool: sequence families reach this
+        // corpus from a local BiG-SCAPE run OR from a BiG-FAM export, and
+        // naming one when the other produced them would misattribute the
+        // grouping. The panel for a selected family shows its actual method.
+        blurb: "Clusters grouped by gene content and domain architecture.",
         unit: "family",
       };
     }
@@ -191,7 +196,8 @@ export function FamilyRail({
         <div className="text-xs leading-relaxed text-chrome-ink-faint">
           No groups yet. Run <span className="font-mono">bgcscape group-by-compound</span> to group
           clusters by their curated product, or{" "}
-          <span className="font-mono">bgcscape ingest bigscape</span> for sequence-based families.
+          <span className="font-mono">bgcscape ingest bigfam</span> to load a real gene cluster
+          family from a BiG-FAM export.
         </div>
       )}
       {!loading && !error && families.length > 0 && rows.length === 0 && (

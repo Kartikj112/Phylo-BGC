@@ -70,6 +70,31 @@ class Genome(Base, TimestampMixin, ProvenanceMixin):
     completeness_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
     contamination_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
     sample_metadata: Mapped[dict | None] = mapped_column(JSONVariant, nullable=True)
+    # Which tip of GTDB's reference tree (`bac120.tree` / `ar53.tree`) this
+    # genome maps to, stored WITH GTDB's `RS_`/`GB_` prefix because that is
+    # verbatim how the Newick file spells its tip labels — the value is a
+    # foreign identifier, and rewriting it here would mean rewriting it back
+    # at every use.
+    #
+    # This is NOT `accession` under another name, and the difference is the
+    # whole reason the column exists. The metadata TSV describes 878,998
+    # bacterial genomes but `bac120.tree` has only 189,801 tips: GTDB builds
+    # its reference tree from species representatives alone. A genome that
+    # is not a representative has no tip of its own and reaches the tree
+    # only through the representative of its species, which GTDB names in
+    # the metadata's `gtdb_genome_representative` column.
+    #
+    # Measured over the 991 assembly-accession genomes in the bundled
+    # corpus: 651 are representatives and are their own tip, 340 are not
+    # and reach a tip through this column, 0 reach neither. Without it a
+    # third of the corpus would silently vanish from any tree-tip join —
+    # not error, just quietly not be there, which is exactly the failure
+    # mode this project's accession handling exists to prevent.
+    #
+    # Null means "no tip was resolved": a MIBiG locus accession (551 of the
+    # 1,542 rows here) names a deposited sequence record, not an assembly,
+    # and GTDB's tree has nothing to join it to.
+    gtdb_tip_accession: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
 
     taxon: Mapped["Taxon | None"] = relationship(back_populates="genomes")
     bgcs: Mapped[list["BGC"]] = relationship(back_populates="genome", cascade="all, delete-orphan")

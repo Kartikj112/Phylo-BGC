@@ -261,11 +261,45 @@ they can never be mistaken for BiG-SCAPE output.
 groups clusters by gene content and domain architecture. That needs the
 sequences and a real clustering run.
 
-### Getting real GCFs (a few hours, one time)
+### Getting real GCFs, one family at a time (minutes)
+
+`bgcscape ingest bigfam` reads the per-GCF member export from a BiG-FAM GCF
+detail page — the "export BGC list" link, i.e.
+`/api/gcf/get_member_links?gcf_id=<id>`. BiG-FAM publishes BiG-SLiCE's
+precomputed families, so this needs no clustering run at all: pick a family,
+save its export into `data/bigslice/`, and ingest it.
+
+```bash
+# after saving the export as data/bigslice/gcf_200948.tsv
+bgcscape ingest bigfam data/bigslice/gcf_200948.tsv
+```
+
+The GCF id is inferred from the filename; pass `--gcf-id` if it isn't in
+there. Putative members (BiG-FAM radius > 900) are excluded by default —
+`--include-putative` keeps them.
+
+**Read the coverage line the command prints.** A BiG-FAM family is defined
+over 1.2M BGCs and this corpus holds ~1,500 genomes, so most families will
+have only a handful of members here:
+
+```
+GCF_200948: 3 of 6 member(s) are on genomes in this corpus (50%), spanning
+3 genome(s). 3 member(s) sit on assemblies this corpus does not hold and
+are not shown.
+```
+
+Members on assemblies this database doesn't have are counted, never
+invented — creating the genome would mean inventing the taxonomy that places
+it on the tree. If nothing places at all, the command says so and exits 1
+rather than leaving an empty family behind. The family panel in the UI
+repeats the caveat for any BiG-FAM family.
+
+### Getting real GCFs over the whole corpus (a few hours, one time)
 
 MIBiG's corpus is small enough that BiG-SCAPE over it is very tractable —
-roughly 2,400 clusters, not the 1.2 million in BiG-FAM (whose bulk download is
-a 189 GB tarball, so not a practical route).
+roughly 2,400 clusters, not the 1.2 million in BiG-FAM (whose *bulk* download
+is a 189 GB tarball; the per-GCF exports above are the practical route to
+individual families).
 
 1. Download **MIBiG 4.0 GenBank files** from the MIBiG download page (the
    GenBank bundle, not the JSON one you already have).
@@ -292,15 +326,17 @@ group and a GCF at the same time, which is why `family_ids` is a list.
 
 ## Going bigger: full GTDB + antiSMASH + BiG-SCAPE
 
-The bundled dataset has **279 compound groups and no sequence families.**
+The bundled dataset ships with **279 compound groups and no sequence
+families** — `bgcscape ingest bigfam` is what adds the latter.
 The distinction matters and is enforced by `BGCFamily.kind`:
 
 - a **compound group** (`kind = compound_group`) links clusters that MIBiG
   records as making the same named compound. A curated chemical fact; no
   sequences are compared.
 - a **sequence family** (`kind = sequence_family`) is a BiG-SCAPE/BiG-SLiCE
-  GCF, and needs a real clustering run over antiSMASH output — a compute
-  pipeline of hours to days, not a build step.
+  GCF: clusters grouped by gene content and domain architecture. Either read
+  from BiG-FAM's precomputed families (`bgcscape ingest bigfam`, minutes) or
+  produced by your own clustering run over antiSMASH output (hours to days).
 
 The family panel is therefore populated, but with compound groups, and the
 UI labels them as such. The prioritization scorer's three similarity

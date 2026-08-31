@@ -11,7 +11,9 @@ the same shape:
               filtering, and never lets one bad record abort the run — see
               ingest/_util.py's IngestReport.
 
-antismash.py and bigscape.py are linked by a real, verified join key
-(antiSMASH's own per-region GenBank filename convention, stored as
-`BGC.external_ref`) — see either module's docstring for the detail.
+antismash.py, bigscape.py and bigfam.py are linked by a real, verified
+join key (antiSMASH's own per-region GenBank filename convention, stored
+as `BGC.external_ref`) — see any of those modules' docstrings for the
+detail. accession.py owns every cross-source accession rule the three of
+them rely on; no other module may strip a prefix or a version inline.
 """

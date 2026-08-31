@@ -45,6 +45,10 @@ bgcscape ingest mibig tests/fixtures/mibig/
 bgcscape ingest antismash tests/fixtures/antismash_test_result.json \
     --genome-accession GCF_TEST900001.1
 bgcscape ingest bigscape tests/fixtures/mix_clustering_c0.3.tsv
+# Real Gene Cluster Families come from BiG-FAM's precomputed families, read
+# rather than clustered: `bgcscape ingest bigfam <a GCF's member export>`.
+# Its members must be on genomes you have ingested, so it is not part of
+# this fixture-only walkthrough — see DEPLOY.md, "Getting real GCFs".
 
 # 3. API
 uvicorn bgcscape.api.app:app --reload   # http://127.0.0.1:8000
@@ -56,8 +60,8 @@ cp .env.local.example .env.local
 npm run dev                              # http://localhost:3000
 
 # Tests
-cd ../engine && pytest -v          # 212 tests (4 skip without Cairo)
-cd ../web && npm test               # 114 tests
+cd ../engine && pytest -v          # 287 tests (4 skip without Cairo)
+cd ../web && npm test               # 122 tests
 
 # Browser-level end-to-end tests (real Chromium). These cover the paths unit
 # tests cannot reach — the export button's download, a real CORS preflight,
