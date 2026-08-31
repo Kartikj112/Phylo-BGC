@@ -11,7 +11,9 @@ import {
   estimateLabelWidth,
   hasRoomForLabel,
   placeRectangularLabels,
+  BGC_SIZE_TIERS,
   isAnchorRank,
+  isHighRank,
   isLeftHalf,
   rankAbbreviation,
   MAX_GLYPH_WIDTH,
@@ -1350,5 +1352,56 @@ describe("label clearance for the aligned glyph track", () => {
       estimateLabelWidth("Bacillus"),
     );
     expect(estimateLabelWidth("")).toBe(0);
+  });
+});
+
+describe("rank vocabulary spans both trees", () => {
+  it("treats kingdom as an anchor, so the eukaryote tree keeps its bearings", () => {
+    // GTDB never emits `kingdom`; NCBI does, and `Fungi` / `Viridiplantae`
+    // are the two labels that say which half of the eukaryote tree you are
+    // in — the job `Bacteria` and `Actinomycetota` do on the other tab.
+    // Omitting it gave one shared renderer two different behaviours: the
+    // eukaryote anchors took ordinary priority and were the FIRST labels
+    // dropped, on the tree least able to lose them.
+    expect(isAnchorRank("kingdom")).toBe(true);
+    expect(isAnchorRank("domain")).toBe(true);
+    expect(isAnchorRank("phylum")).toBe(true);
+    expect(isAnchorRank("species")).toBe(false);
+  });
+
+  it("draws kingdom at the same weight as the other top ranks", () => {
+    expect(isHighRank("kingdom")).toBe(true);
+    expect(isHighRank("domain")).toBe(true);
+    expect(isHighRank("phylum")).toBe(true);
+    expect(isHighRank("genus")).toBe(false);
+  });
+
+  it("keeps an anchor label ahead of an ordinary one on either tree", () => {
+    // The behaviour the two rules above exist to produce, asserted on the
+    // eukaryote lineage specifically.
+    const nodes = [
+      { x: 0, y: 300, depth: 2, data: { _kind: "taxon", id: "Aspergillus", name: "Aspergillus", rank: "genus", children: [], direct_genomes: [], bgcs: [] } },
+      { x: 4, y: 300, depth: 2, data: { _kind: "taxon", id: "Fungi", name: "Fungi", rank: "kingdom", children: [], direct_genomes: [], bgcs: [] } },
+    ] as never[];
+    const { visible } = placeRectangularLabels(nodes, 1);
+    expect(visible.has("Fungi")).toBe(true);
+    expect(visible.has("Aspergillus")).toBe(false);
+  });
+});
+
+describe("tip sizing", () => {
+  it("gives every tier a radius big enough to see once scaled", () => {
+    // Drawn in layout units these were 0.4-1.9px at the default 0.2x view.
+    for (const tier of BGC_SIZE_TIERS) {
+      expect(tier.radius).toBeGreaterThanOrEqual(2.5);
+    }
+  });
+
+  it("keeps the tiers strictly ordered, so size still encodes count", () => {
+    for (let i = 1; i < BGC_SIZE_TIERS.length; i++) {
+      expect(BGC_SIZE_TIERS[i]!.radius).toBeGreaterThan(BGC_SIZE_TIERS[i - 1]!.radius);
+    }
+    expect(bgcSizeTier(0).radius).toBeLessThan(bgcSizeTier(100).radius);
+    expect(bgcSizeTier(3).radius).toBeLessThan(bgcSizeTier(30).radius);
   });
 });

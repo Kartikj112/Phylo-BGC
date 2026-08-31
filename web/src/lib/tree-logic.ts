@@ -795,8 +795,26 @@ export function placeRectangularLabels(
   );
 }
 
+/** Ranks that orient a reader, and therefore get label priority.
+ *
+ * `kingdom` belongs here even though GTDB never emits it. It exists only in
+ * the NCBI eukaryote tree, where `Fungi` and `Viridiplantae` are exactly
+ * the labels that say which half of the tree you are looking at — the same
+ * job `Bacteria` and `Actinomycetota` do on the prokaryote side. Leaving it
+ * out gave the two trees different behaviour from one shared renderer:
+ * ordinary priority for the eukaryote anchors, so they were the FIRST
+ * labels dropped when space ran short, on the tree that can least afford
+ * to lose them.
+ */
 export function isAnchorRank(rank: string | null | undefined): boolean {
-  return rank === "domain" || rank === "phylum" || rank === "class";
+  return rank === "domain" || rank === "kingdom" || rank === "phylum" || rank === "class";
+}
+
+/** Ranks drawn larger and bolder — the tree's top structure. Carries
+ * `kingdom` for the same reason `isAnchorRank` does: without it `Fungi`
+ * rendered at ordinary weight beside a bold `Bacteria` on the other tab. */
+export function isHighRank(rank: string | null | undefined): boolean {
+  return rank === "domain" || rank === "kingdom" || rank === "phylum";
 }
 
 /**
@@ -1096,12 +1114,18 @@ export interface BgcSizeTier {
   muted: boolean;
 }
 
+/** Tip radii, in SCREEN pixels — the canvas divides them by the zoom so a
+ * node is the same size however far the tree is scaled (see `screenScale`
+ * in TreeCanvas). Like branch width, a node's size is only ever read
+ * against other nodes, never against the tree's geometry, so scaling them
+ * all together preserves the comparison exactly while keeping it visible.
+ * Drawn in layout units these were 0.4-1.9px at the default 0.2x view. */
 export const BGC_SIZE_TIERS: BgcSizeTier[] = [
-  { id: "none", label: "0", radius: 2, muted: true },
-  { id: "low", label: "1–5", radius: 3.5, muted: false },
-  { id: "medium", label: "6–20", radius: 5, muted: false },
-  { id: "high", label: "21–50", radius: 7, muted: false },
-  { id: "very-high", label: ">50", radius: 9.5, muted: false },
+  { id: "none", label: "0", radius: 2.5, muted: true },
+  { id: "low", label: "1–5", radius: 4.5, muted: false },
+  { id: "medium", label: "6–20", radius: 6.5, muted: false },
+  { id: "high", label: "21–50", radius: 9, muted: false },
+  { id: "very-high", label: ">50", radius: 12, muted: false },
 ];
 
 export function bgcSizeTier(bgcCount: number): BgcSizeTier {

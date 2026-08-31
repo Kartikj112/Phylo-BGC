@@ -20,6 +20,7 @@ import {
   hasRoomForLabel,
   hiddenChildrenCount,
   isAnchorRank,
+  isHighRank as isHighRankFn,
   isLeftHalf,
   matchesQuery,
   nodeHasFamily,
@@ -120,10 +121,18 @@ const H_MARGIN_RIGHT = 300;
  * view. Taxon labels hang leftward off their nodes, and the root's own
  * label needs somewhere to go. */
 const LABEL_GUTTER_LEFT_PX = 120;
-const PRESENCE_GUTTER = 150;
+/** Screen-space gap between the cluster glyphs and the family-presence
+ * column. Replaces PRESENCE_GUTTER, a 150-unit layout constant that was
+ * really "GLYPH_MAX_WIDTH plus a bit" written out as a number. */
+const PRESENCE_GAP_PX = 18;
 /** Gap between the deepest tip and the aligned glyph track. Enough that a
  * long taxon label clears the branch tips before the track begins. */
-const GLYPH_TRACK_GUTTER = 26;
+/** Breathing room between a tip's accession and its cluster bar, in SCREEN
+ * pixels — it is a visual gap beside a label that holds a screen size, so
+ * it is measured the same way. As a layout constant it collapsed to about
+ * 5px at the default zoom while the clearance beside it grew, which is the
+ * imbalance that made the bars look detached from their leaves. */
+const GLYPH_TRACK_GUTTER = 14;
 /** Per-cluster segment width in the aligned bar, and the cap beyond which
  * segments compress rather than the bar growing without bound (one genome in
  * the bundled corpus carries 53 clusters; unbounded, that is a 583px run
@@ -719,17 +728,37 @@ export function TreeCanvas({
   const glyphTrackAt = useMemo(() => {
     const tips = nodes.filter((n) => !n.children || n.children.length === 0);
     if (tips.length === 0) return 0;
-    // Past the deepest tip AND past the longest label hanging off one.
-    // The gutter alone left the bars drawn straight through the accessions:
-    // 26 units of clearance against a name ~104 units wide at 1x, and wider
-    // still as the reader zooms out, because labels hold a constant screen
-    // size and therefore cover more layout space the further out they go.
-    const clearance = Math.max(
-      ...tips.map((n) => estimateLabelWidth(nodeLabel(n.data), labelScale)),
-      0,
-    );
-    return Math.max(...tips.map((n) => n.y)) + clearance + GLYPH_TRACK_GUTTER;
-  }, [nodes, labelScale]);
+
+    // Clear the labels that are ACTUALLY IN THE WAY, which is a much
+    // smaller set than "every tip".
+    //
+    // Only a genome tip draws its accession rightward, into the space the
+    // track occupies. A taxon tip's name hangs LEFTWARD off its node
+    // (labelX is negative, anchored "end"), so it can never collide with
+    // the track — yet measuring it pushed the bars out by its full width
+    // anyway. With a collapsed clade like "Streptomyces coelicolor" among
+    // the tips, that was ~790 layout units of clearance bought for a label
+    // pointing the other way, which is why the bars floated far ahead of
+    // the leaves. A tree collapsed above genome level has no rightward
+    // label at all and needs no clearance whatsoever.
+    //
+    // A suppressed label is likewise not in the way, so only visible ones
+    // are measured — which is what lets the track close up as the reader
+    // zooms out and labels thin.
+    const clearance = tips.reduce((widest, n) => {
+      if (n.data._kind !== "genome") return widest;
+      const shown = isRadial
+        ? hasRoomForLabel(n.y, radial.angularStep, scale)
+        : (rectLabels?.visible.has(nodeKey(n.data)) ?? true);
+      if (!shown) return widest;
+      return Math.max(widest, estimateLabelWidth(nodeLabel(n.data), labelScale));
+    }, 0);
+
+    // The gutter is the visible BREATHING ROOM between a name and the bar
+    // it belongs to, so it is a screen measurement like the label it sits
+    // beside — in layout units it collapsed to 5px at the default zoom.
+    return Math.max(...tips.map((n) => n.y)) + clearance + GLYPH_TRACK_GUTTER * labelScale;
+  }, [nodes, labelScale, isRadial, radial.angularStep, scale, rectLabels]);
   /**
    * Subtle background regions showing the taxonomic nesting.
    *
@@ -823,15 +852,16 @@ export function TreeCanvas({
    * the glyph track and needs the same answer — it is placed past the
    * widest accession, not a constant, or the presence ticks land on top of
    * the names they are meant to annotate. */
-  const trackX = useMemo(
-    () =>
-      genomeLeaves.length
-        ? Math.max(...genomeLeaves.map((n) => n.y)) +
-          Math.max(...genomeLeaves.map((n) => estimateLabelWidth(nodeLabel(n.data), labelScale)), 0) +
-          PRESENCE_GUTTER
-        : 0,
-    [genomeLeaves, labelScale],
-  );
+  const trackX = useMemo(() => {
+    if (!genomeLeaves.length) return 0;
+    // Placed relative to the glyph track rather than recomputed from the
+    // tips, because the only thing it really has to clear is the glyphs.
+    // `PRESENCE_GUTTER` used to be a layout constant sized to step over
+    // GLYPH_MAX_WIDTH; deriving it instead keeps the two columns from
+    // colliding no matter how either one is scaled, and the glyph bars are
+    // a length encoding that deliberately does NOT hold a screen size.
+    return glyphTrackAt + GLYPH_MAX_WIDTH + PRESENCE_GAP_PX * labelScale;
+  }, [genomeLeaves, glyphTrackAt, labelScale]);
 
   return (
     <div ref={containerRef} className="relative h-full w-full">
@@ -1244,7 +1274,10 @@ function TaxonNode({
   onOpenMenu: (clientX: number, clientY: number) => void;
   trackOffset: number;
 }) {
-  const isHighRank = node.rank === "domain" || node.rank === "phylum";
+  const isHighRank = isHighRankFn(node.rank);
+  // Marks and labels share one scale: both are read against their own kind
+  // rather than against the tree's geometry, so both hold a screen size.
+  const ms = labelScale;
   const badge = rankAbbreviation(node.rank);
   const flip = isRadial && isLeftHalf(angle);
   const labelAnchor = isRadial ? (flip ? "end" : "start") : "end";
@@ -1264,7 +1297,9 @@ function TaxonNode({
       {/* The tightest clade wrapping the selected family gets a ring, so
           "the smallest group that contains this" is visible without reading
           the summary. */}
-      {isEnclosing && <circle r={9} fill="none" stroke={COLORS.present} strokeWidth={1.75} />}
+      {isEnclosing && (
+        <circle r={9 * ms} fill="none" stroke={COLORS.present} strokeWidth={1.75 * ms} />
+      )}
 
       {hiddenCount > 0 ? (
         <CladeGlyph
@@ -1279,12 +1314,12 @@ function TaxonNode({
         <g className="cursor-pointer" onClick={onToggleCollapse}>
           {/* Invisible halo: a 4.5px dot is a fine mouse target and an
               impossible finger one. */}
-          {touchMode && <circle r={14} fill="transparent" />}
+          {touchMode && <circle r={14 * ms} fill="transparent" />}
           <circle
-            r={4.5}
+            r={5.5 * ms}
             fill={COLORS.paper}
             stroke={inSelectedFamily ? COLORS.present : COLORS.ink}
-            strokeWidth={inSelectedFamily ? 1.75 : 1.25}
+            strokeWidth={(inSelectedFamily ? 1.75 : 1.25) * ms}
           />
         </g>
       )}
@@ -1599,13 +1634,20 @@ function GenomeNode({
         {/* Finger-sized hit area for the tip. A `tier.radius` of 2.5–6px is
             a comfortable mouse target and an unreachable touch one; the halo
             is transparent, so nothing about the drawn figure changes. */}
-        {touchMode && <circle r={Math.max(tier.radius + 8, 12)} fill="transparent" />}
-        {isEnclosing && <circle r={tier.radius + 4} fill="none" stroke={COLORS.present} strokeWidth={1.75} />}
+        {touchMode && <circle r={Math.max(tier.radius + 8, 12) * gls} fill="transparent" />}
+        {isEnclosing && (
+          <circle
+            r={(tier.radius + 4) * gls}
+            fill="none"
+            stroke={COLORS.present}
+            strokeWidth={1.75 * gls}
+          />
+        )}
         <circle
-          r={tier.radius}
+          r={tier.radius * gls}
           fill={tier.muted ? COLORS.line : dominantColor}
           stroke={tier.muted ? COLORS.lineStrong : COLORS.ink}
-          strokeWidth={tier.muted ? 0.75 : 1}
+          strokeWidth={(tier.muted ? 0.75 : 1) * gls}
           opacity={tier.muted ? 0.65 : 1}
         />
         {matched && showLabel && (
@@ -1622,7 +1664,7 @@ function GenomeNode({
         )}
         {showLabel && (
           <text
-            x={flip ? -(tier.radius + 6 * gls) : tier.radius + 6 * gls}
+            x={flip ? -(tier.radius + 6) * gls : (tier.radius + 6) * gls}
             textAnchor={flip ? "end" : "start"}
             dy="0.32em"
             fontSize={11.5 * gls}
@@ -1642,9 +1684,9 @@ function GenomeNode({
           x, so nothing cancelled — inside the circle. */}
       {/* Leader line joining the tip to its row on the track, so a bar can
           be traced back to the genome it belongs to. */}
-      {aligned && trackOffset > tier.radius + 2 && (
+      {aligned && trackOffset > (tier.radius + 2) * gls && (
         <line
-          x1={flip ? -(tier.radius + 2) : tier.radius + 2}
+          x1={flip ? -(tier.radius + 2) * gls : (tier.radius + 2) * gls}
           y1={0}
           x2={flip ? -trackOffset : trackOffset}
           y2={0}
