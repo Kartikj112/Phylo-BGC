@@ -137,20 +137,41 @@ def normalize_accession(raw: str) -> NormalizedAccession:
     text = str(raw).strip().upper()
 
     for prefix in _GTDB_PREFIXES:
-        if text.startswith(prefix):
+        if text.startswith(prefix) and len(text) > len(prefix):
             text = text[len(prefix) :]
             break
 
+    # Each strip below refuses to consume the whole string. Stripping into
+    # nothing is not normalization, it is deletion — and an empty `value`
+    # is the worst possible join key, because every other input that
+    # stripped to nothing lands on it and they all match each other.
+    #
+    # It also made the function non-idempotent: `".0.0"` -> `".0"` -> `""`,
+    # one suffix eaten per pass, so whether two accessions compared equal
+    # depended on how many times each had been through here. Found by a
+    # property test asserting idempotence, not by reading the code.
     region: int | None = None
     region_match = _REGION_RE.search(text)
-    if region_match:
+    if region_match and region_match.start() > 0:
         region = int(region_match.group(1))
         text = text[: region_match.start()]
 
+    # Looped, so the result is a FIXED POINT rather than merely one strip
+    # shorter. A single strip left `"0.0.0"` -> `"0.0"` -> `"0"`, one suffix
+    # eaten per pass, which meant two accessions could compare equal or not
+    # depending on how many times each had been through here. Real
+    # accessions carry at most one version, so this loop runs once for them
+    # and only engages on malformed input — which is exactly when a stable
+    # answer matters most, because that input is going into a join.
+    #
+    # `version` keeps the OUTERMOST value, which is the one a caller means.
     version: int | None = None
-    version_match = _VERSION_RE.search(text)
-    if version_match:
-        version = int(version_match.group(1))
+    while True:
+        version_match = _VERSION_RE.search(text)
+        if not version_match or version_match.start() == 0:
+            break
+        if version is None:
+            version = int(version_match.group(1))
         text = text[: version_match.start()]
 
     assembly = _ASSEMBLY_RE.match(text)
@@ -244,6 +265,11 @@ def build_genome_accession_index(rows: list[tuple[object, str]]) -> GenomeAccess
         try:
             normalized = normalize_accession(accession)
         except AccessionParseError:
+            continue
+        if not normalized.value:
+            # Unreachable via normalize_accession's own guards, kept because
+            # a shared empty key would silently join unrelated genomes and
+            # the cost of the check is one comparison per row.
             continue
         by_value.setdefault(normalized.value, []).append(genome_id)
         by_join_key.setdefault(normalized.join_key, []).append(genome_id)

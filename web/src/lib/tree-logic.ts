@@ -441,7 +441,14 @@ export function subtreeBgcCount(node: DisplayNode): number {
 
 export function branchWidth(node: DisplayNode, maxCount: number): number {
   const count = subtreeBgcCount(node);
-  if (count <= 0 || maxCount <= 0) return MIN_BRANCH_WIDTH;
+  // Negated comparisons rather than `<= 0`, because NaN fails EVERY
+  // comparison and would slip through: `NaN <= 0` is false, so a NaN
+  // maximum reached Math.sqrt and returned a NaN width, which SVG renders
+  // as no stroke at all. The clamp below already exists to defend this
+  // function against a caller passing a stale or wrongly-scoped maximum
+  // (see the note on it); a NaN maximum is the same class of caller error
+  // and was the one case the guard did not cover.
+  if (!(count > 0) || !(maxCount > 0)) return MIN_BRANCH_WIDTH;
   // Clamped, not merely scaled. Without this the width is unbounded
   // whenever a node's count exceeds `maxCount` — which happens if a
   // caller passes a stale or wrongly-scoped max, and produced a 27px
@@ -688,6 +695,89 @@ export interface LabelPlacement {
   suppressed: number;
 }
 
+/**
+ * For each node, the distance to the nearest HIGHER-priority label in its
+ * own column — the largest separation at which that label still survives.
+ *
+ * This replaces a greedy "place it if it clears everything placed so far"
+ * pass, which was not monotonic in zoom. Greedy packing can admit a nearer
+ * label at a finer threshold and thereby block a further one that a coarser
+ * threshold had kept:
+ *
+ *     x = [0, 10, 12]
+ *     separation 11 (zoomed out) -> {0, 12}
+ *     separation  9 (zoomed in)  -> {0, 10}
+ *
+ * The label at 12 is visible zoomed out and vanishes when the reader zooms
+ * IN, which is precisely backwards. Found by a property test asserting
+ * monotonicity, not by reading the code.
+ *
+ * Keying on "nearest higher-priority neighbour" fixes it by construction:
+ * the value does not depend on the threshold at all, so lowering the
+ * threshold can only ever add labels. It is still collision-free — if two
+ * labels are both shown and i outranks j, then i is one of j's
+ * higher-priority neighbours, so their distance is at least j's separation,
+ * which is at least the threshold.
+ *
+ * Being zoom-independent, it is also computed once per layout rather than
+ * once per zoom step.
+ */
+export function computeLabelSeparations(
+  nodes: d3.HierarchyPointNode<DisplayNode>[],
+  options: { boost?: (node: d3.HierarchyPointNode<DisplayNode>) => number } = {},
+): Map<string, number> {
+  const { boost } = options;
+  const ranked = nodes.map((n) => {
+    const node = n.data;
+    const rank = node._kind === "taxon" ? node.rank : null;
+    let priority = isAnchorRank(rank) ? 1000 : 500 - n.depth;
+    if (boost) priority += boost(n);
+    return { n, priority };
+  });
+  // Descending priority, then position — so everything already inserted
+  // when a node is processed outranks it, and ties break stably.
+  ranked.sort((a, b) => b.priority - a.priority || a.n.x - b.n.x);
+
+  const seen = new Map<number, number[]>(); // depth -> sorted x of higher-priority
+  const out = new Map<string, number>();
+
+  for (const { n } of ranked) {
+    const column = seen.get(n.depth) ?? [];
+    // Binary search for the insertion point, then the nearest neighbour is
+    // one of the two entries either side of it.
+    let lo = 0;
+    let hi = column.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if ((column[mid] as number) < n.x) lo = mid + 1;
+      else hi = mid;
+    }
+    let nearest = Infinity;
+    if (lo > 0) nearest = Math.min(nearest, n.x - (column[lo - 1] as number));
+    if (lo < column.length) nearest = Math.min(nearest, (column[lo] as number) - n.x);
+    out.set(nodeKey(n.data), nearest);
+    column.splice(lo, 0, n.x);
+    seen.set(n.depth, column);
+  }
+  return out;
+}
+
+/** Apply a zoom to precomputed separations. Cheap enough to run per frame. */
+export function selectLabels(
+  separations: Map<string, number>,
+  zoomScale: number,
+  minSeparationPx = MIN_LABEL_ROW_PX,
+): LabelPlacement {
+  const needed = minSeparationPx / Math.max(zoomScale, 0.001);
+  const visible = new Set<string>();
+  let suppressed = 0;
+  for (const [key, gap] of separations) {
+    if (gap >= needed) visible.add(key);
+    else suppressed += 1;
+  }
+  return { visible, suppressed };
+}
+
 export function placeRectangularLabels(
   nodes: d3.HierarchyPointNode<DisplayNode>[],
   zoomScale: number,
@@ -698,48 +788,11 @@ export function placeRectangularLabels(
     minSeparationPx?: number;
   } = {},
 ): LabelPlacement {
-  const { boost, minSeparationPx = MIN_LABEL_ROW_PX } = options;
-  // Layout units that buy `minSeparationPx` on screen at this zoom.
-  const minSeparation = minSeparationPx / Math.max(zoomScale, 0.001);
-
-  const ranked = nodes.map((n) => {
-    const node = n.data;
-    const rank = node._kind === "taxon" ? node.rank : null;
-    let priority = isAnchorRank(rank) ? 1000 : 500 - n.depth;
-    if (boost) priority += boost(n);
-    return { n, priority };
-  });
-
-  // Priority first, then position — a stable order, so panning never
-  // reshuffles which labels won.
-  ranked.sort((a, b) => b.priority - a.priority || a.n.x - b.n.x);
-
-  const placedByDepth = new Map<number, number[]>();
-  const visible = new Set<string>();
-  let suppressed = 0;
-
-  for (const { n } of ranked) {
-    const column = placedByDepth.get(n.depth) ?? [];
-    // Columns hold at most a few thousand entries and the common case
-    // rejects on the first neighbour, so a linear scan beats the
-    // bookkeeping of a sorted structure here.
-    let clear = true;
-    for (const x of column) {
-      if (Math.abs(x - n.x) < minSeparation) {
-        clear = false;
-        break;
-      }
-    }
-    if (clear) {
-      column.push(n.x);
-      placedByDepth.set(n.depth, column);
-      visible.add(nodeKey(n.data));
-    } else {
-      suppressed += 1;
-    }
-  }
-
-  return { visible, suppressed };
+  return selectLabels(
+    computeLabelSeparations(nodes, options),
+    zoomScale,
+    options.minSeparationPx ?? MIN_LABEL_ROW_PX,
+  );
 }
 
 export function isAnchorRank(rank: string | null | undefined): boolean {

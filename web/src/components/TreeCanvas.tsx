@@ -28,7 +28,8 @@ import {
   nodeMatchesOrContains,
   nodeLabel,
   nodeVisibleClasses,
-  placeRectangularLabels,
+  computeLabelSeparations,
+  selectLabels,
   rankAbbreviation,
   subtreeBgcCount,
   type FamilyMembershipSets,
@@ -255,9 +256,13 @@ export function TreeCanvas({
    * to hold a constant on-screen size. */
   const screenScale = 1 / Math.max(scale, 0.001);
   const labelScale = screenScale;
-  const rectLabels = useMemo(() => {
+  //
+  // Split in two on purpose: the separations do not depend on the zoom, so
+  // they survive panning and zooming untouched and only the cheap threshold
+  // comparison reruns per frame.
+  const labelSeparations = useMemo(() => {
     if (isRadial) return null;
-    return placeRectangularLabels(horizontal.nodes, scale, {
+    return computeLabelSeparations(horizontal.nodes, {
       boost: (n) => {
         const node = n.data;
         let extra = 0;
@@ -266,7 +271,12 @@ export function TreeCanvas({
         return extra;
       },
     });
-  }, [isRadial, horizontal.nodes, scale, searchQuery, familyMembership]);
+  }, [isRadial, horizontal.nodes, searchQuery, familyMembership]);
+
+  const rectLabels = useMemo(
+    () => (labelSeparations ? selectLabels(labelSeparations, scale) : null),
+    [labelSeparations, scale],
+  );
 
 
   // Keep the viewBox locked to the container's pixel size so 1 viewBox unit

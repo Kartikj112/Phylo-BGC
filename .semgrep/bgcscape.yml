@@ -1,0 +1,229 @@
+# BGC-scape scientific-invariant rules.
+#
+# These encode claims the codebase makes about itself in prose — in module
+# docstrings, ARCHITECTURE.md and commit messages — and turns them into
+# things a machine can check. A comment saying "nothing else may strip a
+# prefix inline" is only true until someone does.
+rules:
+  # ---------------------------------------------------------------- joins
+  - id: bgcscape-inline-gtdb-prefix-strip
+    languages: [python]
+    severity: ERROR
+    message: >-
+      GTDB's RS_/GB_ prefix is being stripped outside ingest/accession.py.
+      That module's docstring states it owns every cross-source accession
+      rule: "Nothing else may strip a prefix or a version inline." A second
+      copy of this logic is how two sides of a join silently disagree and a
+      GCF's members appear absent from the corpus.
+    paths:
+      include: ["*.py"]
+      exclude: ["accession.py", "test_accession.py"]
+    patterns:
+      - pattern-either:
+          - pattern: $S.startswith("RS_")
+          - pattern: $S.startswith("GB_")
+          - pattern: |
+              ("RS_", "GB_")
+          - pattern: |
+              ["RS_", "GB_"]
+
+  - id: bgcscape-inline-version-strip
+    languages: [python]
+    severity: ERROR
+    message: >-
+      An accession version suffix is being stripped with an inline regex or
+      split. Use ingest/accession.py: it distinguishes a version (".2") from
+      an antiSMASH region suffix (".region012"), and a naive strip reads the
+      region number as a version, normalising every region identifier to the
+      wrong thing while still looking plausible.
+    paths:
+      include: ["*.py"]
+      exclude: ["accession.py", "test_accession.py"]
+    patterns:
+      - pattern-either:
+          - pattern: re.sub(r"\.\d+$", ..., ...)
+          - pattern: re.sub("\.\d+$", ..., ...)
+          - pattern: $ACC.split(".")[0]
+
+  - id: bgcscape-inline-gtdb-prefix-strip-ts
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: >-
+      GTDB prefix handling inline in the frontend. lib/accession.ts owns the
+      display rules; the JOIN itself belongs to the engine (see that file's
+      docstring on separation of concerns) and must not be reimplemented here.
+    paths:
+      include: ["*.ts", "*.tsx"]
+      exclude: ["accession.ts", "accession.test.ts"]
+    pattern-either:
+      - pattern: /^(RS_|GB_)/
+      - pattern: $X.replace(/^(RS_|GB_)/, ...)
+
+  # ------------------------------------------------- the two taxonomies
+  - id: bgcscape-taxonomy-scopes-summed
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Prokaryote and eukaryote scopes look like they are being combined
+      arithmetically. GTDB is genome-based and rank-normalised; NCBI is
+      literature-based and is not. Summing them puts Ascomycota beside
+      Actinomycetota in one phylum column — the exact regression commit
+      301490d fixed. Report them side by side, never added.
+    patterns:
+      - pattern-either:
+          - pattern: |
+              taxon_ids_in_scope($S, "prokaryote") + taxon_ids_in_scope($S, "eukaryote")
+          - pattern: |
+              taxon_ids_in_scope($S, "eukaryote") + taxon_ids_in_scope($S, "prokaryote")
+
+  # ------------------------------------------- sequence vs compound family
+  - id: bgcscape-family-kind-unfiltered-in-scoring
+    languages: [python]
+    severity: ERROR
+    message: >-
+      A BGCFamily is being read in the scoring package without filtering on
+      `kind`. The prioritization scorer's `unclustered`, `family_rarity` and
+      `taxonomic_isolation` components are defined over SEQUENCE families
+      only. Fed compound groups they emit sequence-similarity claims about a
+      corpus on which no clustering was ever run — a regression that has
+      shipped once already (ARCHITECTURE.md, "Two kinds of grouping").
+    paths:
+      include: ["**/scoring/*.py"]
+    patterns:
+      - pattern: $SESSION.query(BGCFamily, ...)
+      - pattern-not-inside: |
+          $SESSION.query(...).filter(...)
+      - pattern-not-inside: |
+          $SESSION.query(...).filter_by(kind=..., ...)
+
+  # --------------------------------------------------------- design tokens
+  - id: bgcscape-hardcoded-colour
+    languages: [typescript, javascript]
+    severity: WARNING
+    message: >-
+      A hex colour literal in a component. Colours live in lib/colors.ts and
+      tailwind.config.ts, deliberately in step with each other; a literal
+      here survives a re-theme and leaves a fragment of the old palette
+      behind. The oxblood recolour found five of these.
+    paths:
+      include: ["**/web/src/components/*.tsx", "**/web/src/app/*.tsx"]
+      exclude: ["colors.ts"]
+    patterns:
+      - pattern-regex: '"#[0-9A-Fa-f]{6}"'
+
+  # ------------------------------------------------------- figure determinism
+  - id: bgcscape-nondeterministic-figure
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: >-
+      Math.random() or Date.now() inside the figure layer. An exported
+      figure has to be reproducible: the same view state must render the
+      same SVG, or a published figure cannot be regenerated from its
+      recorded ViewConfig.
+    paths:
+      include: ["**/TreeCanvas.tsx", "**/tree-logic.ts", "**/export.ts"]
+    pattern-either:
+      - pattern: Math.random()
+      - pattern: Date.now()
+
+  # ----------------------------------------------------------- float equality
+  - id: bgcscape-float-equality
+    languages: [python]
+    severity: WARNING
+    message: >-
+      Exact equality on a floating-point scientific value. Clustering
+      cutoffs, similarity scores, completeness and GC percentages all come
+      from external files as text and round-trip through float; `==` on them
+      is a silent no-match waiting to happen.
+    paths:
+      include: ["**/engine/src/**"]
+    pattern-either:
+      - pattern: $X.clustering_cutoff == $Y
+      - pattern: $X.similarity_score == $Y
+      - pattern: $X.gc_content_pct == $Y
+      - pattern: $X.completeness_pct == $Y
+
+  # ------------------------------------------------------- mutation of layout
+  - id: bgcscape-hierarchy-mutation
+    languages: [typescript, javascript]
+    severity: WARNING
+    message: >-
+      Assigning to a d3 hierarchy node's position. tree-logic.ts states the
+      hierarchy objects are never mutated ("Shallow copies only"); mutating
+      one makes the layout depend on render order and on how many times a
+      memo happened to run.
+    paths:
+      include: ["**/web/src/**"]
+    pattern-either:
+      - pattern: $N.x = $V
+      - pattern: $N.y = $V
+
+  # --------------------------------------------------------- ingest safety
+  - id: bgcscape-bulk-load-bare-except
+    languages: [python]
+    severity: WARNING
+    message: >-
+      A bare `except:` in an ingest path. These loaders deliberately catch
+      broadly so one bad row cannot abort a bulk load, but a bare except
+      also swallows KeyboardInterrupt and SystemExit — an ingest over
+      880k rows becomes uninterruptible.
+    paths:
+      include: ["**/ingest/*.py"]
+    pattern: |
+      try:
+        ...
+      except:
+        ...
+
+  - id: bgcscape-ingest-commit-without-rollback
+    languages: [python]
+    severity: WARNING
+    message: >-
+      A per-row commit with no rollback on the failure path. _util.py's
+      docstring is explicit that ingestion commits per record so one bad
+      record's rollback cannot discard the good records before it — which
+      only holds if the failure path actually rolls back.
+    paths:
+      include: ["**/ingest/*.py"]
+    patterns:
+      - pattern-either:
+          - pattern: |
+              try:
+                ...
+                $S.commit()
+              except $E as $V:
+                ...
+          - pattern: |
+              try:
+                ...
+                $S.commit()
+              except $E:
+                ...
+      - pattern-not: |
+          try:
+            ...
+            $S.commit()
+          except $E as $V:
+            ...
+            $S.rollback()
+            ...
+      - pattern-not: |
+          try:
+            ...
+            $S.commit()
+          except $E:
+            ...
+            $S.rollback()
+            ...
+
+# ---------------------------------------------------------------------------
+# Running these:
+#
+#     pip install semgrep
+#     semgrep scan --oss-only --config .semgrep/bgcscape.yml .
+#
+# Every rule here is validated against a canary file of deliberate
+# violations before being trusted. Two of them silently matched nothing on
+# the first run — a rule that cannot fire reports a clean codebase just as
+# convincingly as a clean codebase does, so "no findings" is only evidence
+# once the rule has been shown to fire on something.
