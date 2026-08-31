@@ -8,6 +8,7 @@ import {
   RANK_ABBREVIATIONS,
   RANK_DEPTH_ORDER,
   computeRadialTreeLayout,
+  estimateLabelWidth,
   hasRoomForLabel,
   placeRectangularLabels,
   isAnchorRank,
@@ -1320,5 +1321,34 @@ describe("rectangular label placement", () => {
     // is not an improvement. Something is always labelled.
     const nodes = [row("a", 0, 3), row("b", 0.5, 3), row("c", 1, 3)];
     expect(placeRectangularLabels(nodes, 1).visible.size).toBe(1);
+  });
+});
+
+describe("label clearance for the aligned glyph track", () => {
+  it("is wide enough that bars cannot land on an accession", () => {
+    // The bug: the track sat a flat GLYPH_TRACK_GUTTER of 26 layout units
+    // past the deepest tip, while a real accession is far wider than that
+    // — so the cluster bars were drawn straight through the names.
+    const accession = "GCF_000156695.2"; // 15 chars, a real one from the corpus
+    expect(estimateLabelWidth(accession)).toBeGreaterThan(26);
+  });
+
+  it("grows as the reader zooms out, because the label does not shrink", () => {
+    // Labels hold a constant SCREEN size, so the further out the tree is
+    // zoomed the more LAYOUT space a name covers. Clearance computed from a
+    // constant would be right at exactly one zoom level and wrong at every
+    // other, which is how the overlap got worse rather than better.
+    const accession = "GCF_000156695.2";
+    const atOne = estimateLabelWidth(accession, 1);
+    const atFit = estimateLabelWidth(accession, 5); // labelScale at k=0.2
+    expect(atFit).toBeCloseTo(atOne * 5);
+    expect(atFit).toBeGreaterThan(500);
+  });
+
+  it("scales with the name, so a long one is not clipped by a short one", () => {
+    expect(estimateLabelWidth("Streptomyces coelicolor")).toBeGreaterThan(
+      estimateLabelWidth("Bacillus"),
+    );
+    expect(estimateLabelWidth("")).toBe(0);
   });
 });

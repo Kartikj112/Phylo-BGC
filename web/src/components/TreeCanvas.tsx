@@ -23,8 +23,10 @@ import {
   isLeftHalf,
   matchesQuery,
   nodeHasFamily,
+  estimateLabelWidth,
   nodeKey,
   nodeMatchesOrContains,
+  nodeLabel,
   nodeVisibleClasses,
   placeRectangularLabels,
   rankAbbreviation,
@@ -113,6 +115,10 @@ const SEARCH_FIT_PADDING = 180;
 const SEARCH_ZOOM_MAX = 1.6;
 const H_MARGIN_LEFT = 210;
 const H_MARGIN_RIGHT = 300;
+/** Screen-space breathing room to the left of the root in the horizontal
+ * view. Taxon labels hang leftward off their nodes, and the root's own
+ * label needs somewhere to go. */
+const LABEL_GUTTER_LEFT_PX = 120;
 const PRESENCE_GUTTER = 150;
 /** Gap between the deepest tip and the aligned glyph track. Enough that a
  * long taxon label clears the branch tips before the track begins. */
@@ -278,11 +284,30 @@ export function TreeCanvas({
 
   // Current layout, read by fitView so it always frames what's on screen
   // without re-running on every collapse toggle.
-  const layoutRef = useRef<{ hNodes: typeof horizontal.nodes; rSize: number }>({
-    hNodes: [],
-    rSize: 0,
-  });
-  layoutRef.current = { hNodes: horizontal.nodes, rSize: radial.size };
+  /* The widest label on screen, in SCREEN pixels.
+   *
+   * Screen pixels because labels hold a constant screen size, so the room
+   * they need is the same however far the tree is zoomed. `fitView` reserves
+   * it out of the viewport before fitting the tree into what is left — the
+   * old layout-unit margins could not do that job, since 300 layout units
+   * is 300px at 1x and 60px at 0.2x while the name it has to clear is ~104px
+   * at both. */
+  const widestLabelPx = useMemo(() => {
+    const tips = nodes.filter((n) => !n.children || n.children.length === 0);
+    if (tips.length === 0) return 0;
+    return Math.max(...tips.map((n) => estimateLabelWidth(nodeLabel(n.data))));
+  }, [nodes]);
+
+  const layoutRef = useRef<{
+    hNodes: typeof horizontal.nodes;
+    rSize: number;
+    labelPadPx: number;
+  }>({ hNodes: [], rSize: 0, labelPadPx: 0 });
+  layoutRef.current = {
+    hNodes: horizontal.nodes,
+    rSize: radial.size,
+    labelPadPx: widestLabelPx + GLYPH_TRACK_GUTTER,
+  };
   const vbRef = useRef(vb);
   vbRef.current = vb;
 
@@ -312,13 +337,22 @@ export function TreeCanvas({
       const maxX = Math.max(...xs);
       const minY = Math.min(...ys);
       const maxY = Math.max(...ys);
-      bx = minY - H_MARGIN_LEFT;
+      bx = minY;
       by = minX - 30;
-      bw = maxY - minY + H_MARGIN_LEFT + H_MARGIN_RIGHT;
+      bw = maxY - minY;
       bh = maxX - minX + 60;
     }
-    const k = Math.max(0.12, Math.min(cw / bw, ch / bh, 1.3));
-    const tx = (cw - bw * k) / 2 - bx * k;
+    // Room for the labels and the aligned track, taken off the viewport
+    // rather than added to the tree's extent — see `widestLabelPx`. The
+    // tree's own span then fits whatever is left, which is what keeps the
+    // glyph bars on screen instead of clipped off the right edge.
+    const pad = layoutRef.current.labelPadPx;
+    const padL = isRadial ? pad : LABEL_GUTTER_LEFT_PX;
+    const padR = pad;
+    const availW = Math.max(cw - padL - padR, 60);
+    const availH = Math.max(isRadial ? ch - pad * 2 : ch, 60);
+    const k = Math.max(0.12, Math.min(availW / bw, availH / bh, 1.3));
+    const tx = padL + (availW - bw * k) / 2 - bx * k;
     const ty = (ch - bh * k) / 2 - by * k;
     d3.select(svgEl).call(behavior.transform, d3.zoomIdentity.translate(tx, ty).scale(k));
   }, [isRadial]);
@@ -671,8 +705,17 @@ export function TreeCanvas({
   const glyphTrackAt = useMemo(() => {
     const tips = nodes.filter((n) => !n.children || n.children.length === 0);
     if (tips.length === 0) return 0;
-    return Math.max(...tips.map((n) => n.y)) + GLYPH_TRACK_GUTTER;
-  }, [nodes]);
+    // Past the deepest tip AND past the longest label hanging off one.
+    // The gutter alone left the bars drawn straight through the accessions:
+    // 26 units of clearance against a name ~104 units wide at 1x, and wider
+    // still as the reader zooms out, because labels hold a constant screen
+    // size and therefore cover more layout space the further out they go.
+    const clearance = Math.max(
+      ...tips.map((n) => estimateLabelWidth(nodeLabel(n.data), labelScale)),
+      0,
+    );
+    return Math.max(...tips.map((n) => n.y)) + clearance + GLYPH_TRACK_GUTTER;
+  }, [nodes, labelScale]);
   /**
    * Subtle background regions showing the taxonomic nesting.
    *
@@ -762,9 +805,18 @@ export function TreeCanvas({
     [],
   );
 
+  /* The family-presence column, which has the same clearance problem as
+   * the glyph track and needs the same answer — it is placed past the
+   * widest accession, not a constant, or the presence ticks land on top of
+   * the names they are meant to annotate. */
   const trackX = useMemo(
-    () => (genomeLeaves.length ? Math.max(...genomeLeaves.map((n) => n.y)) + PRESENCE_GUTTER : 0),
-    [genomeLeaves],
+    () =>
+      genomeLeaves.length
+        ? Math.max(...genomeLeaves.map((n) => n.y)) +
+          Math.max(...genomeLeaves.map((n) => estimateLabelWidth(nodeLabel(n.data), labelScale)), 0) +
+          PRESENCE_GUTTER
+        : 0,
+    [genomeLeaves, labelScale],
   );
 
   return (
@@ -1281,7 +1333,14 @@ function TaxonNode({
               matched
                 ? COLORS.labelMatch
                 : inSelectedFamily || inComparison
-                  ? COLORS.signal
+                  // `present`, not `signal`: this is family/comparison
+                  // STATE on the figure, the same thing the node ring and
+                  // the presence track already mark. It used to read
+                  // `signal`, which was invisible only because the two were
+                  // the same green — now that the interface accent is
+                  // oxblood, sharing it here would put two different
+                  // colours on one state.
+                  ? COLORS.present
                   : COLORS.label
             }
             className="cursor-pointer"
@@ -1617,7 +1676,7 @@ function GenomeNode({
                 width={segWidth + 4}
                 height={15}
                 fill="none"
-                stroke={COLORS.signal}
+                stroke={COLORS.present}
                 strokeWidth={1.5}
                 rx={2}
               />

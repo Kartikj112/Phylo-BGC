@@ -622,6 +622,33 @@ export function hasRoomForLabel(
  */
 export const MIN_LABEL_ROW_PX = 15;
 
+/** Width of one character at the base label size, in layout units.
+ *
+ * An estimate, deliberately: the alternative is a `getBBox()` per node per
+ * render, and the tree routinely draws thousands. The same 6.6-6.9 figure
+ * the rank badge and hit boxes have always used, now shared so every
+ * consumer moves together instead of drifting apart.
+ */
+export const LABEL_CHAR_WIDTH = 6.9;
+
+/**
+ * How much horizontal room a label occupies, in LAYOUT units.
+ *
+ * Multiplied by `labelScale` (1/zoom) because labels are drawn at a
+ * constant screen size — so the further out a reader zooms, the MORE layout
+ * space a name covers. Anything that has to sit clear of a label therefore
+ * has to be positioned with this, not with a constant.
+ *
+ * That is the bug this exists to fix. The aligned glyph track sat a flat
+ * `GLYPH_TRACK_GUTTER` of 26 units past the deepest tip, while a 15-
+ * character accession is ~104 units wide at 1x — so the bars have always
+ * been drawn through the accessions, and holding labels at a constant
+ * screen size widened the overlap to ~517 units at the default 0.2x view.
+ */
+export function estimateLabelWidth(text: string, labelScale = 1): number {
+  return text.length * LABEL_CHAR_WIDTH * labelScale;
+}
+
 /**
  * Which labels can be drawn in the rectangular layout without colliding.
  *
