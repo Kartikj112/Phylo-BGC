@@ -1,7 +1,7 @@
 """Select the GTDB genomes that MIBiG entries actually map to.
 
 Full GTDB is ~880,000 genomes. Rendering that tree is neither possible nor
-useful: the question BGC-scape answers is "where do *characterized* clusters
+useful: the question Phylo-BGC answers is "where do *characterized* clusters
 sit on the tree of life", and a genome with no cluster contributes nothing
 but scaffolding. So this picks out only the genomes MIBiG entries resolve
 to, plus one representative per MIBiG genus that has no exact hit (so the

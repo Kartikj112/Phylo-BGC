@@ -1,4 +1,4 @@
-"""Read-only HTTP API over the BGC-scape engine.
+"""Read-only HTTP API over the Phylo-BGC engine.
 
 Deliberately separate from bgcscape.schemas (the engine's general data
 contracts, used by ingestion): these are UI-shaped aggregate views built

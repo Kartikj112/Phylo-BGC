@@ -1,6 +1,6 @@
 # Data sources: licensing and versioning notes
 
-BGC-scape's `Source` table (see `engine/src/bgcscape/models/source.py`) requires
+Phylo-BGC's `Source` table (see `engine/src/bgcscape/models/source.py`) requires
 every ingested row to name its origin, version, and license explicitly. This
 document is the human-readable companion to that table: the place to check
 *before* writing an ingestion pipeline against a new resource, and the place
@@ -21,13 +21,13 @@ of this repo.
   and SQL schema are published on GitHub under OSI-approved licenses. The
   MIBiG 4.0 paper itself (the description of the resource, not the dataset)
   is CC BY 4.0.
-- **Code license (if BGC-scape ever vendors MIBiG tooling):** the
+- **Code license (if Phylo-BGC ever vendors MIBiG tooling):** the
   `mibig-html` repo is AGPL-3.0; the `mibig-api` REST server is Apache-2.0.
   These are two different repos with two different licenses — check the
   specific one you're touching.
-- **Action for BGC-scape:** treat MIBiG data as safe to ingest and
+- **Action for Phylo-BGC:** treat MIBiG data as safe to ingest and
   redistribute in derived/transformed form (that is the resource's explicit
-  purpose), but do not vendor `mibig-html`/AGPL code into BGC-scape's own
+  purpose), but do not vendor `mibig-html`/AGPL code into Phylo-BGC's own
   codebase without separately satisfying AGPL's terms.
 - **URL:** https://mibig.secondarymetabolites.org/
 
@@ -39,21 +39,21 @@ of this repo.
   so always take the live site/download page as the source of truth for
   "current."
 - **Data license:** **CC BY-SA 4.0**, stated explicitly on GTDB's own
-  `/licenses` page. This is a ShareAlike license: any BGC-scape view or
+  `/licenses` page. This is a ShareAlike license: any Phylo-BGC view or
   derived dataset built from GTDB taxonomy must itself be redistributable
   under CC BY-SA 4.0 (or a compatible license) and must carry attribution.
-  This is a real constraint on BGC-scape's own output licensing for
+  This is a real constraint on Phylo-BGC's own output licensing for
   taxonomy-derived data, not just an ingestion footnote.
 - **Toolkit license (GTDB-Tk):** GPL-3.0 — separate from the data license
-  above, applies only if BGC-scape ever bundles GTDB-Tk itself rather than
+  above, applies only if Phylo-BGC ever bundles GTDB-Tk itself rather than
   shelling out to / calling a separately-installed copy.
 - **URL:** https://gtdb.ecogenomic.org/ · downloads at
   https://gtdb.ecogenomic.org/downloads
 
 ## antiSMASH / antiSMASH DB
 
-- **Code license:** AGPL-3.0. Per the original BGC-scape report (§9): if
-  BGC-scape ever incorporates antiSMASH *source code* directly, AGPL's
+- **Code license:** AGPL-3.0. Per the original Phylo-BGC report (§9): if
+  Phylo-BGC ever incorporates antiSMASH *source code* directly, AGPL's
   network-use copyleft terms apply. The safer, already-chosen architecture
   is to treat antiSMASH as an external analysis dependency invoked as a
   subprocess/service and to store only its *output* (predictions), not its
@@ -61,7 +61,7 @@ of this repo.
 - **Data (antiSMASH DB predictions):** predicted, not curated — every BGC
   row ingested from antiSMASH output carries
   `evidence_level = PREDICTED`, never `OBSERVED_CURATED`.
-- **BGC-scape does not vendor any antiSMASH code** —
+- **Phylo-BGC does not vendor any antiSMASH code** —
   `engine/src/bgcscape/ingest/antismash.py` is an independently-written
   parser for antiSMASH's *output format*, not a derivative of the
   AGPL-licensed program itself.
@@ -145,9 +145,9 @@ of this repo.
     antiSMASH's `{record_id}.region{NNN:03d}` convention above. This is
     the real cross-tool join key, stored on `BGC.external_ref` by
     antiSMASH ingestion and matched directly by BiG-SCAPE ingestion. No
-    transformation needed, and no convention invented by BGC-scape.
+    transformation needed, and no convention invented by Phylo-BGC.
   - A `Family` label is only meaningful **within one cutoff** — the same
-    label at a different cutoff is a different grouping. BGC-scape keys
+    label at a different cutoff is a different grouping. Phylo-BGC keys
     families on `(source_id, label, clustering_cutoff)` accordingly.
   - Real BiG-SCAPE runs commonly mix in MIBiG reference BGCs for
     comparison. These now match: MIBiG ships one GenBank per entry named

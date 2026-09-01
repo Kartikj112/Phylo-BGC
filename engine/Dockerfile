@@ -1,4 +1,4 @@
-# BGC-scape API image (FastAPI + the `api` and `export` extras).
+# Phylo-BGC API image (FastAPI + the `api` and `export` extras).
 #
 # Ships with a REAL read-only dataset baked in: the GTDB genus backbone for
 # the genera MIBiG covers, with all 2,526 active MIBiG reference clusters

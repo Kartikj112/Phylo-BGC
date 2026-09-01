@@ -194,10 +194,10 @@ export function serializeSvgForExport(source: SVGSVGElement): string {
 
 /** Filename stem for a figure, safe across filesystems. */
 export function figureFilename(title: string | null, format: "svg" | "pdf"): string {
-  const base = (title ?? "bgc-scape-figure")
+  const base = (title ?? "phylo-bgc-figure")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 60);
-  return `${base || "bgc-scape-figure"}.${format}`;
+  return `${base || "phylo-bgc-figure"}.${format}`;
 }

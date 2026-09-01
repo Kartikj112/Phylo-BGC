@@ -1,4 +1,4 @@
-# BGC-scape scientific-invariant rules.
+# Phylo-BGC scientific-invariant rules.
 #
 # These encode claims the codebase makes about itself in prose — in module
 # docstrings, ARCHITECTURE.md and commit messages — and turns them into

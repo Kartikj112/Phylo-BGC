@@ -1,6 +1,6 @@
 "use client";
 
-import { Dna, PanelLeft, Search, X } from "lucide-react";
+import { PanelLeft, Search, X } from "lucide-react";
 
 interface HeaderProps {
   query: string;
@@ -16,6 +16,10 @@ interface HeaderProps {
    * rail is a drawer, so the header carries its handle. */
   railOpen?: boolean;
   onToggleRail?: () => void;
+  /** Back to the landing choice (browse the tree / analyze antiSMASH
+   * results). The wordmark is the only affordance for it, which is the
+   * convention every site has trained readers on. */
+  onHome?: () => void;
   children?: React.ReactNode;
 }
 
@@ -28,6 +32,7 @@ export function Header({
   taxonomyLabel = "GTDB",
   railOpen = false,
   onToggleRail,
+  onHome,
   children,
 }: HeaderProps) {
   return (
@@ -47,12 +52,27 @@ export function Header({
           </button>
         )}
 
-        <div className="flex flex-shrink-0 items-center gap-2">
-          <Dna size={18} className="text-chrome-accent" />
-          <span className="whitespace-nowrap text-sm font-semibold tracking-wide text-chrome-ink">
-            BGC-scape
-          </span>
-        </div>
+        {/* The wordmark carries the name, so there is no text beside it —
+            a second "Phylo-BGC" in type would be the same word twice. The
+            alt text is what a screen reader gets instead. Plain <img>
+            rather than next/image: the file is a small static asset served
+            from /public, and the loader's srcset machinery buys nothing at
+            a fixed 28px height. */}
+        <button
+          type="button"
+          onClick={onHome}
+          disabled={!onHome}
+          title={onHome ? "Back to the start" : undefined}
+          className="flex flex-shrink-0 items-center rounded focus:outline-none focus-visible:ring-1 focus-visible:ring-chrome-accent enabled:hover:opacity-80"
+        >
+          <img
+            src="/logo.png"
+            alt="Phylo-BGC"
+            width={710}
+            height={218}
+            className="h-[22px] w-auto sm:h-[26px]"
+          />
+        </button>
 
         <div className="relative min-w-0 flex-1 lg:w-44 lg:flex-none xl:w-52 2xl:w-64">
           <Search

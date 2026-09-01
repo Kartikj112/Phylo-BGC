@@ -23,7 +23,7 @@ The distinction is kept visible rather than blurred:
   - `clustering_cutoff` is None, because there is no similarity threshold
     here -- membership is exact compound-name identity.
   - `evidence_level` is COMPUTED: MIBiG curated the compound links, but the
-    grouping is BGC-scape's derivation from them.
+    grouping is Phylo-BGC's derivation from them.
   - Groups are labelled `CMPD_<name>`, so a reader can never mistake one
     for BiG-SCAPE's `FAM_00001`.
 

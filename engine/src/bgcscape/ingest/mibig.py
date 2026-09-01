@@ -44,7 +44,7 @@ from bgcscape.models import BGC, BGCClass, BGCCompoundLink, Compound, EvidenceLe
 from bgcscape.models.genome import AssemblyLevel
 from bgcscape.schemas import BGCCompoundLinkCreate, BGCCreate, CompoundCreate, GenomeCreate, TaxonCreate
 
-# MIBiG 4.0's `biosynthesis.classes[].class` values -> BGC-scape's BGCClass.
+# MIBiG 4.0's `biosynthesis.classes[].class` values -> Phylo-BGC's BGCClass.
 # Notably, MIBiG has *no* direct "siderophore" or "alkaloid" biosynthesis
 # class — "Alkaloid" only appears as a *compound* class in MIBiG's schema,
 # and siderophores are typically classed under NRPS or "other" at this
@@ -84,7 +84,7 @@ logger = logging.getLogger(__name__)
 
 
 class MibigParseError(ValueError):
-    """The entry is structurally invalid — missing a field BGC-scape's
+    """The entry is structurally invalid — missing a field Phylo-BGC's
     model requires. Distinct from "should this be skipped" (e.g. a
     retired/pending entry parses fine; ingest_mibig_entries() decides
     whether to load it).

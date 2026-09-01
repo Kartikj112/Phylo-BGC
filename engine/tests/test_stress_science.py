@@ -1,4 +1,4 @@
-"""Property-based stress tests over BGC-scape's scientific core.
+"""Property-based stress tests over Phylo-BGC's scientific core.
 
 The existing suite asserts behaviour on cases taken from the real files.
 This asserts INVARIANTS over generated input — the things that must hold for

@@ -24,7 +24,7 @@ That is a real hazard in a scientific tool, so it's constrained hard:
   caption, and in `bgcscape inspect-figure` output. A figure made from
   this corpus advertises its own fakeness.
 - `evidence_level` is `HYPOTHESIZED` throughout — the level the model
-  reserves for things BGC-scape itself asserted rather than observed,
+  reserves for things Phylo-BGC itself asserted rather than observed,
   computed, or predicted by a real tool. Nothing here was.
 
 ## Deterministic

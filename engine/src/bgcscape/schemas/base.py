@@ -1,4 +1,4 @@
-"""Shared base for BGC-scape's Pydantic data contracts.
+"""Shared base for Phylo-BGC's Pydantic data contracts.
 
 Each entity gets three schema classes:
   XBase    fields common to creating and reading (everything except the

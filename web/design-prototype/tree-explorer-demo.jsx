@@ -560,7 +560,7 @@ export default function BGCScapeTreeExplorer() {
         <div className="flex items-center gap-2">
           <Dna size={18} style={{ color: COLORS.signal }} />
           <span className="text-sm font-semibold tracking-wide" style={{ color: COLORS.ink, fontFamily: "'IBM Plex Sans', sans-serif" }}>
-            BGC-scape
+            Phylo-BGC
           </span>
         </div>
         <div className="flex-1 max-w-xs relative">

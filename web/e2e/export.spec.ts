@@ -43,7 +43,7 @@ test("SVG export downloads a self-describing figure from the browser", async ({ 
   expect(text).toContain("<svg");
   expect(text).toContain("bgcscape-view-config");
   expect(text).toContain("Sources:");
-  expect(text).toContain("BGC-scape");
+  expect(text).toContain("Phylo-BGC");
 });
 
 test("PDF export either downloads or reports a usable error, never a bare 500", async ({ page }) => {

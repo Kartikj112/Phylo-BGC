@@ -1,4 +1,4 @@
-# BGC-scape web
+# Phylo-BGC web
 
 Next.js/TypeScript frontend for the taxonomy tree + BGC overlay explorer.
 Consumes the engine's read-only API (`engine/src/bgcscape/api`) — contains

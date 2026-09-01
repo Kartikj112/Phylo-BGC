@@ -477,6 +477,7 @@ export default function HomePage() {
         matchCount={matchCount}
         railOpen={railOpen}
         onToggleRail={() => setRailOpen((v) => !v)}
+        onHome={() => setGate("welcome")}
         taxonomyLabel={taxonomy === "eukaryote" ? "NCBI Taxonomy" : "GTDB"}>
         <div className="flex flex-shrink-0 overflow-hidden rounded border border-chrome-line">
           {(

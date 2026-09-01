@@ -14,7 +14,7 @@ from bgcscape.models.types import JSONVariant
 
 class BGCClass(str, enum.Enum):
     """High-level biosynthetic class, aligned to antiSMASH's rule categories
-    at the granularity BGC-scape needs for tree overlays. `subtype` on `BGC`
+    at the granularity Phylo-BGC needs for tree overlays. `subtype` on `BGC`
     carries finer detail (e.g. "type I PKS", "lanthipeptide") without
     forcing a combinatorial explosion of enum values here.
     """
@@ -66,12 +66,12 @@ class BGC(Base, TimestampMixin, ProvenanceMixin):
     predicted_by_tool: Mapped[str | None] = mapped_column(String(64), nullable=True)  # e.g. "antiSMASH 7.1.0"
     mibig_accession: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     # How an *external tool* refers to this exact BGC region, when that
-    # reference isn't something BGC-scape itself assigned. Populated by
+    # reference isn't something Phylo-BGC itself assigned. Populated by
     # antiSMASH ingestion with antiSMASH's own per-region GenBank filename
     # stem ("{record_id}.region{NNN:03d}", confirmed against antiSMASH's
     # own source — see ingest/antismash.py), because BiG-SCAPE's output
     # identifies regions by that same filename convention, not by any ID
-    # BGC-scape controls. Not DB-unique-constrained (see
+    # Phylo-BGC controls. Not DB-unique-constrained (see
     # ingest/bigscape.py's docstring for why), but is the real join key
     # BiG-SCAPE family ingestion looks BGCs up by.
     external_ref: Mapped[str | None] = mapped_column(String(256), nullable=True, index=True)

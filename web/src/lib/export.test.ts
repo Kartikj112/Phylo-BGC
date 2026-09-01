@@ -155,7 +155,7 @@ describe("figureFilename", () => {
   });
 
   it("falls back when there is no usable title", () => {
-    expect(figureFilename(null, "svg")).toBe("bgc-scape-figure.svg");
-    expect(figureFilename("!!!", "pdf")).toBe("bgc-scape-figure.pdf");
+    expect(figureFilename(null, "svg")).toBe("phylo-bgc-figure.svg");
+    expect(figureFilename("!!!", "pdf")).toBe("phylo-bgc-figure.pdf");
   });
 });

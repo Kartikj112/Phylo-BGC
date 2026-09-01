@@ -108,7 +108,7 @@ def test_provenance_caption_names_data_sources_not_just_the_tool():
     assert "antiSMASH 7.1.0" in caption
     assert "5 genomes" in caption
     assert "12 BGCs" in caption
-    assert "BGC-scape 0.1.0" in caption
+    assert "Phylo-BGC 0.1.0" in caption
 
 
 # --- SVG metadata embedding -------------------------------------------------------
@@ -181,7 +181,7 @@ def test_caption_text_is_present_and_positioned_below_the_figure():
     svg = add_provenance_caption(SAMPLE_SVG, _config())
     root = ET.fromstring(svg)
 
-    captions = [t for t in root.iter(f"{{{SVG_NS}}}text") if t.text and "BGC-scape" in t.text]
+    captions = [t for t in root.iter(f"{{{SVG_NS}}}text") if t.text and "Phylo-BGC" in t.text]
     assert len(captions) == 1
     group = root.findall(f"{{{SVG_NS}}}g")[-1]
     assert group.get("transform") == "translate(0,400.0)"
@@ -221,7 +221,7 @@ def test_export_figure_returns_both_svg_and_pdf():
     assert pdf.startswith(b"%PDF")
     # The returned SVG is the editable vector master, and must itself
     # carry both the caption and the recoverable config.
-    assert "BGC-scape" in svg
+    assert "Phylo-BGC" in svg
     assert extract_view_config(svg) is not None
 
 

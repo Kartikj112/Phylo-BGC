@@ -1,4 +1,4 @@
-"""BGC-scape ORM models.
+"""Phylo-BGC ORM models.
 
 Importing this package guarantees every mapped class is registered against
 `Base` before anything calls `Base.metadata.create_all(...)`, Alembic

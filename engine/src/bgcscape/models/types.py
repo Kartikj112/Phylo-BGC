@@ -1,6 +1,6 @@
 """Cross-dialect column type helpers.
 
-BGC-scape targets PostgreSQL in production but runs its automated test suite
+Phylo-BGC targets PostgreSQL in production but runs its automated test suite
 against in-memory SQLite for speed and zero-setup CI. These helpers pick the
 best native type per dialect while staying usable everywhere, so model code
 never has to branch on which database it's talking to.

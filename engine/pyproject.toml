@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "bgcscape"
 version = "0.1.0"
-description = "BGC-scape scientific engine: data model and analysis core for exploring biosynthetic gene cluster diversity across the tree of life."
+description = "Phylo-BGC scientific engine: data model and analysis core for exploring biosynthetic gene cluster diversity across the tree of life."
 requires-python = ">=3.11"
 license = { text = "MIT" }
 dependencies = [

@@ -33,7 +33,7 @@ const plexMono = localFont({
 });
 
 export const metadata: Metadata = {
-  title: "BGC-scape",
+  title: "Phylo-BGC",
   description: "Interactive exploration of biosynthetic diversity across the tree of life.",
 };
 

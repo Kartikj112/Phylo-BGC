@@ -86,7 +86,7 @@ test("initial load and interaction cost", async ({ page }) => {
     return { longTasks: w.__longTasks ?? 0, mutations: w.__mutations ?? 0 };
   });
 
-  console.log("\n  ---- BGC-scape frontend performance ----");
+  console.log("\n  ---- Phylo-BGC frontend performance ----");
   console.log(`  nodes rendered              ${nodes}`);
   console.log(`  initial load (nav -> tree)  ${loadMs} ms`);
   if (transfer) {

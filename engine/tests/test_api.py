@@ -464,7 +464,7 @@ def test_export_rejects_a_config_from_a_newer_version(api_client):
     response = api_client.post("/api/v1/export", json={"svg": _EXPORT_SVG, "view_config": config})
 
     assert response.status_code == 422
-    assert "newer BGC-scape" in response.json()["detail"]
+    assert "newer Phylo-BGC" in response.json()["detail"]
 
 
 def test_export_rejects_a_config_without_provenance(api_client):

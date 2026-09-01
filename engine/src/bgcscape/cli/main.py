@@ -1,4 +1,4 @@
-"""BGC-scape engine CLI."""
+"""Phylo-BGC engine CLI."""
 from __future__ import annotations
 
 import json
@@ -28,14 +28,14 @@ from bgcscape.ingest.gtdb import ingest_gtdb_metadata, read_gtdb_metadata_tsv
 from bgcscape.ingest.mibig import ingest_mibig_entries, read_mibig_entries_from_path
 from bgcscape.models import Source, SourceType
 
-app = typer.Typer(help="BGC-scape scientific engine CLI.")
+app = typer.Typer(help="Phylo-BGC scientific engine CLI.")
 ingest_app = typer.Typer(help="Ingest curated reference datasets (MIBiG, GTDB).")
 app.add_typer(ingest_app, name="ingest")
 
 
 @app.callback(invoke_without_command=True)
 def main(
-    version: bool = typer.Option(False, "--version", help="Show the BGC-scape engine version and exit."),
+    version: bool = typer.Option(False, "--version", help="Show the Phylo-BGC engine version and exit."),
 ) -> None:
     # invoke_without_command=True so `bgcscape --version` works standalone,
     # without also requiring a subcommand on the same invocation.
@@ -57,7 +57,7 @@ def init_db() -> None:
     typer.echo(f"Initialized schema at {engine.url}")
 
 
-#: Licensing/attribution metadata for the sources BGC-scape ingests, kept in
+#: Licensing/attribution metadata for the sources Phylo-BGC ingests, kept in
 #: lockstep with docs/DATA_SOURCES.md. This is not decoration: GTDB ships
 #: under CC BY-SA 4.0, a ShareAlike licence that obliges any derived view —
 #: including an exported figure — to carry attribution. Leaving these null
@@ -111,7 +111,7 @@ SOURCE_METADATA: dict[str, dict[str, str]] = {
         "url": "https://mibig.secondarymetabolites.org/",
         "license": "Derived from MIBiG compound annotations (open access)",
         "citation": (
-            "Derived by BGC-scape: clusters grouped by identical MIBiG compound name. "
+            "Derived by Phylo-BGC: clusters grouped by identical MIBiG compound name. "
             "Not a sequence clustering."
         ),
     },
@@ -421,7 +421,7 @@ def group_by_compound_cmd(
         source = _get_or_create_source(
             session,
             # TOOL_RUN, not REFERENCE_DATABASE: this grouping is DERIVED by
-            # BGC-scape from MIBiG's compound annotations. MIBiG is the
+            # Phylo-BGC from MIBiG's compound annotations. MIBiG is the
             # reference database; this is what we computed from it. The
             # distinction is the whole point of the provenance model, and it
             # travels into every exported figure.
@@ -660,7 +660,7 @@ def prioritize_cmd(
 
 @app.command("inspect-figure")
 def inspect_figure(
-    path: Path = typer.Argument(..., help="An SVG previously exported by BGC-scape."),
+    path: Path = typer.Argument(..., help="An SVG previously exported by Phylo-BGC."),
 ) -> None:
     """Report what produced a figure — the payoff for embedding the view
     config in exported SVGs. Given a figure attached to a paper, this
@@ -671,14 +671,14 @@ def inspect_figure(
 
     config = extract_view_config(path.read_text(encoding="utf-8"))
     if config is None:
-        typer.echo(f"{path.name} carries no BGC-scape view config (not exported by this tool).", err=True)
+        typer.echo(f"{path.name} carries no Phylo-BGC view config (not exported by this tool).", err=True)
         raise typer.Exit(1)
 
     typer.echo(f"Title:          {config.title or '(untitled)'}")
     typer.echo(f"View type:      {config.view_type}")
     typer.echo(f"Config version: {config.config_version}")
     typer.echo(f"Exported:       {config.dataset.exported_at.isoformat()}")
-    typer.echo(f"Engine:         BGC-scape {config.dataset.engine_version}")
+    typer.echo(f"Engine:         Phylo-BGC {config.dataset.engine_version}")
     typer.echo("Dataset:")
     typer.echo(f"    {config.dataset.genome_count} genomes, {config.dataset.bgc_count} BGCs, "
                f"{config.dataset.taxon_count} taxa, {config.dataset.family_count} families")
@@ -701,7 +701,7 @@ def inspect_figure(
 
 @app.command("render-figure")
 def render_figure(
-    svg_path: Path = typer.Argument(..., help="An SVG exported by BGC-scape (carrying its view config)."),
+    svg_path: Path = typer.Argument(..., help="An SVG exported by Phylo-BGC (carrying its view config)."),
     output: Path = typer.Option(Path("figure.pdf"), help="Where to write the PDF."),
 ) -> None:
     """Re-render an exported SVG to vector PDF, headlessly.
@@ -715,7 +715,7 @@ def render_figure(
     svg = svg_path.read_text(encoding="utf-8")
     config = extract_view_config(svg)
     if config is None:
-        typer.echo(f"{svg_path.name} carries no BGC-scape view config; rendering it as plain SVG.", err=True)
+        typer.echo(f"{svg_path.name} carries no Phylo-BGC view config; rendering it as plain SVG.", err=True)
 
     try:
         output.write_bytes(render_pdf(svg))

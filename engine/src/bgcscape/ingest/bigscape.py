@@ -10,7 +10,7 @@ assumed. Real, verified columns: `Record`, `GBK`, `Record_Type`,
 from — which is exactly antiSMASH's own per-region filename convention
 (`{record_id}.region{NNN:03d}`, confirmed in antiSMASH's source — see
 ingest/antismash.py). This is the real join key between the two tools'
-outputs, not a convention BGC-scape invented: `BGC.external_ref`
+outputs, not a convention Phylo-BGC invented: `BGC.external_ref`
 (populated by antiSMASH ingestion) is matched directly against this
 column, with no transformation needed.
 

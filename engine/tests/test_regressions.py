@@ -176,7 +176,7 @@ def test_compound_groups_are_written_with_the_compound_group_kind(session):
 
 
 def test_source_metadata_types_compound_groups_as_a_tool_run():
-    """The grouping is DERIVED by BGC-scape, so its Source is a TOOL_RUN.
+    """The grouping is DERIVED by Phylo-BGC, so its Source is a TOOL_RUN.
 
     Typing it `reference_database` claimed MIBiG had published the
     grouping, and that claim travelled into every exported figure's

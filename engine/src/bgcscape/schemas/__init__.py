@@ -1,4 +1,4 @@
-"""BGC-scape Pydantic data contracts.
+"""Phylo-BGC Pydantic data contracts.
 
 Each entity exposes Base/Create/Read variants — see schemas/base.py for the
 pattern. Ingestion parsers (bgcscape.ingest.*) target the *Create schemas;

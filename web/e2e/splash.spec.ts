@@ -69,7 +69,7 @@ test("leaves and uncovers the error when the tree cannot be fetched", async ({ p
   await expect(page.getByText("Couldn't reach the API", { exact: false })).toBeVisible();
 });
 
-test("falls back to the wordmark when the video is missing", async ({ page }) => {
+test("falls back to the still logo when the video is missing", async ({ page }) => {
   await page.route("**/logo-animation.mp4", (route) => route.fulfill({ status: 404, body: "" }));
   await slowTree(page);
   await page.goto("/");
@@ -78,16 +78,16 @@ test("falls back to the wordmark when the video is missing", async ({ page }) =>
   // video is also satisfied by an overlay that has already detached, so on
   // its own it would pass for the wrong reason — which is exactly how the
   // pre-hydration `onError` gap first hid behind a green test.
-  await expect(overlay(page).getByText("BGC-scape")).toBeVisible();
+  await expect(overlay(page).getByAltText("Phylo-BGC")).toBeVisible();
   await expect(overlay(page).locator("video")).toHaveCount(0);
   await overlay(page).waitFor({ state: "detached", timeout: 60_000 });
 });
 
-test("shows the still wordmark, not the animation, under reduced motion", async ({ page }) => {
+test("shows the still logo, not the animation, under reduced motion", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await slowTree(page);
   await page.goto("/");
 
-  await expect(overlay(page).getByText("BGC-scape")).toBeVisible();
+  await expect(overlay(page).getByAltText("Phylo-BGC")).toBeVisible();
   await expect(overlay(page).locator("video")).toHaveCount(0);
 });

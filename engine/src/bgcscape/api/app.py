@@ -1,4 +1,4 @@
-"""BGC-scape visualization API.
+"""Phylo-BGC visualization API.
 
 Read-only by design: this API exists to serve the tree/BGC-overlay
 frontend, not as a general CRUD interface — writes go through
@@ -133,9 +133,9 @@ FAMILY_KIND_NOTES = {
 MAX_PRIORITIZATION_LIMIT = 100_000
 
 app = FastAPI(
-    title="BGC-scape API",
+    title="Phylo-BGC API",
     description=(
-        "Read-only API over the BGC-scape engine's data model, serving the "
+        "Read-only API over the Phylo-BGC engine's data model, serving the "
         "taxonomy tree / BGC-overlay visualization."
     ),
     version="0.1.0",
@@ -989,7 +989,7 @@ def export_view(request: ExportRequest) -> Response:
             return Response(
                 content=svg_with_metadata,
                 media_type="image/svg+xml",
-                headers={"Content-Disposition": 'attachment; filename="bgc-scape-figure.svg"'},
+                headers={"Content-Disposition": 'attachment; filename="phylo-bgc-figure.svg"'},
             )
         pdf = render_pdf(svg_with_metadata)
     except PdfRendererUnavailable as exc:
@@ -1004,7 +1004,7 @@ def export_view(request: ExportRequest) -> Response:
     return Response(
         content=pdf,
         media_type="application/pdf",
-        headers={"Content-Disposition": 'attachment; filename="bgc-scape-figure.pdf"'},
+        headers={"Content-Disposition": 'attachment; filename="phylo-bgc-figure.pdf"'},
     )
 
 

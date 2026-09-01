@@ -1,6 +1,6 @@
 """Accession normalization: the one place cross-source joins are made.
 
-Every source BGC-scape reads names genomes differently, and joining them
+Every source Phylo-BGC reads names genomes differently, and joining them
 naively is the single easiest way to produce a silently wrong answer — a
 GCF whose members "aren't in the corpus" when in fact the accession was
 spelled another way. This module owns that normalization. Nothing else may

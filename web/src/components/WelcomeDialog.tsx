@@ -55,7 +55,7 @@ export function WelcomeDialog({
           What would you like to do?
         </h2>
         <p className="mt-1.5 text-sm text-chrome-ink-muted">
-          BGC-scape maps biosynthetic gene clusters across the tree of life. Read the
+          Phylo-BGC maps biosynthetic gene clusters across the tree of life. Read the
           reference corpus, or add your own genomes to it.
         </p>
 

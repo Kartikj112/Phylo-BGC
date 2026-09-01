@@ -1,4 +1,4 @@
-# BGC-scape — Build Progress
+# Phylo-BGC — Build Progress
 
 **Read this file first when resuming work in a new chunk.**
 
@@ -47,7 +47,7 @@ without its fix. Full write-ups in ARCHITECTURE.md.
 - **Provenance carried no licence.** GTDB is CC BY-SA 4.0 and requires
   attribution; every exported figure attributed nothing. Now populated.
 - **Compound groups were typed `reference_database`.** They are `TOOL_RUN` —
-  BGC-scape derives them.
+  Phylo-BGC derives them.
 - **Prioritization caveats described one row and were shown for all of them.**
   Corpus-level and per-cluster caveats are now separate.
 - **The Sankey's `hybrid_double_counted` under-reported** by one per 3-way

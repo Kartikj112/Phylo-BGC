@@ -26,10 +26,16 @@ import xml.etree.ElementTree as ET
 from bgcscape.export.view_config import ViewConfig
 
 SVG_NS = "http://www.w3.org/2000/svg"
+# Deliberately NOT renamed with the product (BGC-scape -> Phylo-BGC). This
+# URI and the element name below are how a figure's embedded config is found
+# again when it is read back: every SVG this tool has already exported
+# carries them, and changing them here would make those files unreadable
+# while looking like a harmless string edit. A namespace is an identifier,
+# not a label — it is supposed to be opaque and stable.
 BGCSCAPE_NS = "https://github.com/bgc-scape/view-config/v1"
 
 # The exact element name used to carry the config, so extraction can find
-# it again without guessing.
+# it again without guessing. Stable for the same reason as the namespace.
 CONFIG_ELEMENT = "bgcscape-view-config"
 
 
@@ -52,7 +58,7 @@ class PdfRendererUnavailable(SvgRenderError):
 def embed_view_config(svg: str, config: ViewConfig) -> str:
     """Return `svg` with `config` embedded in a `<metadata>` block.
 
-    Any existing BGC-scape config metadata is replaced rather than
+    Any existing Phylo-BGC config metadata is replaced rather than
     duplicated, so re-exporting an already-exported figure doesn't
     accumulate stale configs that later disagree with each other.
     """
@@ -86,7 +92,7 @@ def extract_view_config(svg: str) -> ViewConfig | None:
 
     This is the payoff for embedding it: an SVG found attached to a paper
     can be asked what produced it. Returns None if the SVG carries no
-    BGC-scape config (i.e. it wasn't exported by this tool).
+    Phylo-BGC config (i.e. it wasn't exported by this tool).
     """
     try:
         root = ET.fromstring(svg)

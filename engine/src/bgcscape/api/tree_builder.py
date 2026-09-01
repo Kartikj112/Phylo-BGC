@@ -9,7 +9,7 @@ see ARCHITECTURE.md.
 
 Note on what "tree" means here: this renders the GTDB **taxonomic**
 hierarchy (domain -> ... -> species, from Taxon.parent_id), not a
-literal inferred **phylogeny** with branch lengths. BGC-scape's data
+literal inferred **phylogeny** with branch lengths. Phylo-BGC's data
 model has a separate PhylogeneticTree/PhylogeneticNode pair for that
 (Phase 1a), but nothing populates it yet — MAFFT/IQ-TREE orchestration is
 still-future work. Taxonomy and phylogeny are highly correlated but not

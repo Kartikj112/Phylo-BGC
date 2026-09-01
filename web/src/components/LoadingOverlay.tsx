@@ -1,6 +1,5 @@
 "use client";
 
-import { Dna } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 /**
@@ -49,6 +48,7 @@ export function LoadingOverlay({
   // the effect below corrects it before the splash's minimum lifetime is up.
   const [reduceMotion, setReduceMotion] = useState(false);
   const [videoFailed, setVideoFailed] = useState(false);
+  const [logoFailed, setLogoFailed] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const mountedAt = useRef(Date.now());
   // Held in a ref so a caller passing an inline arrow cannot restart the
@@ -82,7 +82,7 @@ export function LoadingOverlay({
     // Muted inline autoplay is permitted everywhere that matters, but if a
     // policy or a battery-saver mode refuses it the element parks on its
     // first frame — which on this animation is nearly empty, so it reads as
-    // a broken rectangle. The wordmark is the better failure.
+    // a broken rectangle. The still logo is the better failure.
     const started = video.play();
     if (started) started.catch(() => setVideoFailed(true));
   }, [showVideo]);
@@ -142,8 +142,9 @@ export function LoadingOverlay({
     >
       {showVideo ? (
         <video
-          // Decoration: the wordmark and the status line below carry the
-          // meaning, so a reader that skips this loses nothing.
+          // Decoration: the status line below carries the meaning and the
+          // still-logo fallback carries the name, so a reader that skips
+          // this loses nothing.
           aria-hidden
           autoPlay
           muted
@@ -161,13 +162,24 @@ export function LoadingOverlay({
           className="h-auto w-[min(78vw,600px)] max-h-[72vh] object-contain"
           src="/logo-animation.mp4"
         />
+      ) : logoFailed ? (
+        // Last resort: even the still logo did not load. Type carries the
+        // identity rather than an empty gap where a mark should be.
+        <span className="text-2xl font-semibold tracking-wide text-chrome-ink">Phylo-BGC</span>
       ) : (
-        // Reduced motion, or the video could not be decoded/fetched. Same
-        // layout, same identity, no movement — not a broken black rectangle.
-        <div className="flex items-center gap-3">
-          <Dna size={40} className="text-chrome-accent" aria-hidden />
-          <span className="text-2xl font-semibold tracking-wide text-chrome-ink">BGC-scape</span>
-        </div>
+        // Reduced motion, or the video could not be decoded/fetched. The
+        // real mark, held still — same artwork as the animation's final
+        // frame, so the fallback is the brand rather than a stand-in for
+        // it. A PNG also survives everything the video does not: no codec,
+        // no autoplay policy, no decode.
+        <img
+          src="/logo.png"
+          alt="Phylo-BGC"
+          width={710}
+          height={218}
+          onError={() => setLogoFailed(true)}
+          className="h-auto w-[min(78vw,600px)] max-h-[72vh] object-contain"
+        />
       )}
 
       <p className="px-6 text-center font-mono text-xs text-chrome-ink-muted">

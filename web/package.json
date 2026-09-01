@@ -1,8 +1,8 @@
 {
-  "name": "bgc-scape-web",
+  "name": "phylo-bgc-web",
   "version": "0.1.0",
   "private": true,
-  "description": "BGC-scape frontend: taxonomy tree + BGC overlay explorer. Consumes the engine's read-only API (engine/src/bgcscape/api) \u2014 contains no biological logic of its own, per ARCHITECTURE.md's separation of concerns.",
+  "description": "Phylo-BGC frontend: taxonomy tree + BGC overlay explorer. Consumes the engine's read-only API (engine/src/bgcscape/api) \u2014 contains no biological logic of its own, per ARCHITECTURE.md's separation of concerns.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

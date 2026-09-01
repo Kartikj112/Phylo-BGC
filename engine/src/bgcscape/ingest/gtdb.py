@@ -74,7 +74,7 @@ _RANK_PREFIXES: dict[str, TaxonRank] = {
 
 
 class GtdbParseError(ValueError):
-    """The row is structurally invalid for BGC-scape's model (no usable
+    """The row is structurally invalid for Phylo-BGC's model (no usable
     accession, or no gtdb_taxonomy column at all)."""
 
 

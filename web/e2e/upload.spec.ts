@@ -122,6 +122,19 @@ test("the upload path is still reachable after choosing to browse", async ({ pag
   await expect(dialog(page)).toBeVisible();
 });
 
+test("the logo returns you to the landing choice", async ({ page }) => {
+  await landed(page);
+  await dismissWelcome(page);
+  await expect(welcome(page)).toHaveCount(0);
+
+  // The wordmark is the only affordance for getting back, and it carries no
+  // text of its own — so it is reachable by its alt text or not at all.
+  await page.getByRole("button", { name: "Phylo-BGC" }).click();
+  await expect(welcome(page)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Browse the tree" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Analyze my antiSMASH results/ })).toBeVisible();
+});
+
 // --- the form ---------------------------------------------------------------
 
 test("upload is refused until both files and an organism are given", async ({ page }) => {

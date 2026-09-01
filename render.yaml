@@ -1,4 +1,4 @@
-# Render Blueprint for the BGC-scape API (card-free free tier).
+# Render Blueprint for the Phylo-BGC API (card-free free tier).
 #
 # In the Render dashboard: New → Blueprint → connect this GitHub repo.
 # Render reads this file, builds engine/Dockerfile, and gives you
@@ -8,6 +8,10 @@
 # After the frontend is on Vercel, lock CORS by uncommenting the env var
 # below (or set it in the dashboard) and redeploying.
 
+# NOTE: the service name below deliberately keeps the old `bgc-scape-api`
+# spelling. It identifies a service that already exists; renaming it here
+# does not rename that service, it provisions a second one and leaves the
+# first serving the old URL.
 services:
   - type: web
     name: bgc-scape-api

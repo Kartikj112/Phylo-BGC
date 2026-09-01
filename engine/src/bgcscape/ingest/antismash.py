@@ -58,7 +58,7 @@ _ANTISMASH_CATEGORY_TO_BGC_CLASS: dict[str, BGCClass] = {
 
 
 class AntismashParseError(ValueError):
-    """The result is structurally invalid for BGC-scape's model."""
+    """The result is structurally invalid for Phylo-BGC's model."""
 
 
 def region_external_ref(record_id: str, region_number: int) -> str:
@@ -75,7 +75,7 @@ def _extract_categories(area: dict[str, Any]) -> list[str]:
     """A region's `products` list holds antiSMASH's *specific rule names*
     ("T1PKS", "NRPS-like", "lanthipeptide-class-i", ...) — dozens of
     possible values, not the 7-value categories.json vocabulary. The
-    broad category BGC-scape actually wants lives one level down, on each
+    broad category Phylo-BGC actually wants lives one level down, on each
     protocluster (`area["protoclusters"][i]["category"]`), which *is*
     guaranteed to be one of the 7 real category values. Falls back to
     `products` only if a region genuinely has no protoclusters carrying a

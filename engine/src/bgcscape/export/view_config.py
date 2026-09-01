@@ -43,7 +43,7 @@ CURRENT_CONFIG_VERSION = 1
 
 
 class ConfigVersionError(ValueError):
-    """The config was written by an incompatible version of BGC-scape."""
+    """The config was written by an incompatible version of Phylo-BGC."""
 
 
 class SourceRecord(BaseModel):
@@ -81,7 +81,7 @@ class TreeViewState(BaseModel):
 
 
 class ViewConfig(BaseModel):
-    """A complete, replayable description of one BGC-scape view."""
+    """A complete, replayable description of one Phylo-BGC view."""
 
     config_version: int = CURRENT_CONFIG_VERSION
     view_type: Literal["taxonomy_tree", "clade_comparison"] = "taxonomy_tree"
@@ -95,7 +95,7 @@ class ViewConfig(BaseModel):
     def _check_version(cls, value: int) -> int:
         if value > CURRENT_CONFIG_VERSION:
             raise ConfigVersionError(
-                f"This view config was written by a newer BGC-scape (config_version={value}; "
+                f"This view config was written by a newer Phylo-BGC (config_version={value}; "
                 f"this build understands up to {CURRENT_CONFIG_VERSION}). Refusing to load it "
                 "partially, since a filter this version doesn't understand would silently change "
                 "what the regenerated figure shows."
@@ -108,14 +108,14 @@ class ViewConfig(BaseModel):
         """A human-readable one-liner for the figure footer.
 
         Deliberately states the *data* provenance, not just the tool
-        version — 'made with BGC-scape 0.1.0' tells a reader nothing about
+        version — 'made with Phylo-BGC 0.1.0' tells a reader nothing about
         whether they'd get the same figure.
         """
         source_bits = [f"{s.name} {s.version}" if s.version else s.name for s in self.dataset.sources]
         sources = "; ".join(sorted(source_bits)) if source_bits else "no sources recorded"
         stamp = self.dataset.exported_at.strftime("%Y-%m-%d")
         return (
-            f"BGC-scape {self.dataset.engine_version} · {stamp} · "
+            f"Phylo-BGC {self.dataset.engine_version} · {stamp} · "
             f"{self.dataset.genome_count} genomes, {self.dataset.bgc_count} BGCs · "
             f"Sources: {sources}"
         )

@@ -1,1 +1,1 @@
-"""Command-line interface for the BGC-scape engine."""
+"""Command-line interface for the Phylo-BGC engine."""

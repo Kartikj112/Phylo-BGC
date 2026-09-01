@@ -1,8 +1,8 @@
-# BGC-scape
+# Phylo-BGC
 
 **Interactive exploration of biosynthetic diversity across the tree of life.**
 
-BGC-scape connects four layers that are normally analyzed in disconnected
+Phylo-BGC connects four layers that are normally analyzed in disconnected
 tools: organismal phylogeny → BGC repertoire → BGC families → known/putative
 products. It is not another BGC predictor or clustering algorithm — it's the
 exploration and interpretation layer over established tools and databases

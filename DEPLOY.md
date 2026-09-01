@@ -1,4 +1,4 @@
-# Deploying BGC-scape
+# Deploying Phylo-BGC
 
 Two independently deployed pieces:
 
@@ -72,12 +72,12 @@ takes ~30–60s while it restarts. Fine for a demo.
 
    ```yaml
    ---
-   title: BGC-scape API
+   title: Phylo-BGC API
    sdk: docker
    app_port: 7860
    pinned: false
    ---
-   Read-only visualization API for BGC-scape. MIBiG 4.0 mapped onto GTDB.
+   Read-only visualization API for Phylo-BGC. MIBiG 4.0 mapped onto GTDB.
    ```
 
 4. In the Space's **Settings → Variables and secrets**, add a variable

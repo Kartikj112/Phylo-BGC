@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2026 BGC-scape contributors
+Copyright (c) 2026 Phylo-BGC contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -22,7 +22,7 @@ SOFTWARE.
 
 ---
 NOTE: MIT was chosen as a permissive, low-friction default for research
-tooling. This governs BGC-scape's *own code only* — it says nothing about the
+tooling. This governs Phylo-BGC's *own code only* — it says nothing about the
 license terms of ingested datasets (MIBiG, GTDB, antiSMASH DB, etc.), which
 are tracked separately per-source in docs/DATA_SOURCES.md and in the `Source`
 table at runtime. Confirm this choice (or swap it) before any public release.

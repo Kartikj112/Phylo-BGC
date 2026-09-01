@@ -1,4 +1,4 @@
-"""The `Source` table is the root of BGC-scape's provenance graph.
+"""The `Source` table is the root of Phylo-BGC's provenance graph.
 
 Every row governed by `ProvenanceMixin` points back to exactly one `Source`,
 which records what produced it (a reference database, a specific tool run,
@@ -28,7 +28,7 @@ class SourceType(str, enum.Enum):
 
 
 class Source(Base, TimestampMixin):
-    """A single, versioned origin of data ingested into BGC-scape.
+    """A single, versioned origin of data ingested into Phylo-BGC.
 
     Examples::
 

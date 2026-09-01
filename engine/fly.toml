@@ -1,4 +1,4 @@
-# Fly.io config for the BGC-scape API.
+# Fly.io config for the Phylo-BGC API.
 #
 #   cd engine
 #   fly launch --no-deploy   # first time: creates the app, keeps this file
@@ -10,6 +10,10 @@
 #
 #   fly secrets set BGCSCAPE_CORS_ALLOW_ORIGINS=https://<your-app>.vercel.app
 
+# NOTE: the service name below deliberately keeps the old `bgc-scape-api`
+# spelling. It identifies a service that already exists; renaming it here
+# does not rename that service, it provisions a second one and leaves the
+# first serving the old URL.
 app = "bgc-scape-api"
 primary_region = "iad"
 
