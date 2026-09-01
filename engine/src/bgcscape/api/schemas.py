@@ -451,3 +451,32 @@ class LazyTreeResponse(BaseModel):
     than guessing."""
     total_genomes: int
     total_bgcs: int
+
+class UploadedGenomeOut(BaseModel):
+    """What became of one uploaded antiSMASH result file.
+
+    `placement` is the field that matters and the one the UI leads with.
+    Only "grafted" means the genome is visible in its real position on the
+    tree; "species_only" means it has an organism but no GTDB genus matched
+    (a fungus, an unrecognised name); "unplaced" means it is in the database
+    but not on the tree at all, because `tree_builder` skips genomes with no
+    taxon. Reporting a region count without this would tell the reader their
+    upload worked while they stare at an unchanged tree.
+    """
+
+    filename: str
+    accession: str
+    genome_id: uuid.UUID | None = None
+    regions_created: int = 0
+    regions_updated: int = 0
+    placement: Literal["grafted", "species_only", "unplaced"] = "unplaced"
+    organism: str | None = None
+    grafted_to: str | None = None
+    errors: list[str] = []
+
+
+class AntismashUploadResponse(BaseModel):
+    genomes: list[UploadedGenomeOut]
+    total_regions: int
+    #: Files that could not be read at all (not JSON, too large, empty).
+    rejected: list[str] = []

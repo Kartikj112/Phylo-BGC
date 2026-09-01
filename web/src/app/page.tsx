@@ -1,6 +1,6 @@
 "use client";
 
-import { X } from "lucide-react";
+import { FolderUp, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Breadcrumbs } from "@/components/Breadcrumbs";
 import { BgcTypeDonut } from "@/components/BgcTypeDonut";
@@ -17,7 +17,9 @@ import { SankeyView } from "@/components/SankeyView";
 import { DetailPanel, type Selection } from "@/components/DetailPanel";
 import { FamilyRail } from "@/components/FamilyRail";
 import { Header } from "@/components/Header";
+import { AntismashUploadDialog } from "@/components/AntismashUploadDialog";
 import { LoadingOverlay } from "@/components/LoadingOverlay";
+import { WelcomeDialog } from "@/components/WelcomeDialog";
 import { TreeCanvas } from "@/components/TreeCanvas";
 import { useTaxonomyTree } from "@/hooks/useTaxonomyTree";
 import type { BGCFamilySummary, TaxonTreeNode } from "@/lib/api-types";
@@ -76,7 +78,7 @@ export default function HomePage() {
   const [view, setView] = useState<"tree" | "flow" | "heatmap">("tree");
   const isTreeView = view === "tree";
   const treeScope = taxonomy;
-  const { tree, loading, error } = useTaxonomyTree(treeScope);
+  const { tree, loading, error, reload: reloadTree } = useTaxonomyTree(treeScope);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [activeClasses, setActiveClasses] = useState<Set<string>>(new Set(CLASS_ORDER));
   const [query, setQuery] = useState("");
@@ -126,6 +128,10 @@ export default function HomePage() {
   // and covering the whole screen for that would hide the very change the
   // click asked for.
   const [splashDone, setSplashDone] = useState(false);
+  // The welcome fork, shown once the splash clears. "welcome" until the
+  // reader picks a side; the upload dialog is reachable again afterwards
+  // from the toolbar, so choosing "browse" is not a one-way door.
+  const [gate, setGate] = useState<"welcome" | "upload" | "none">("welcome");
 
   /** Close the drawer after an action that changes the tree, so the result
    * is visible without a second tap. Desktop keeps the rail pinned open, so
@@ -239,6 +245,26 @@ export default function HomePage() {
     setCollapsed(collapseToLevel(root, level));
     setFitSignal((n) => n + 1);
   }, [root]);
+
+  /** An upload just added genomes to the corpus.
+   *
+   * Re-fetch, because the tree in memory is now the one from before the
+   * upload — reporting "placed on the tree" over a stale render is the
+   * failure this whole path exists to avoid. Then search for what landed:
+   * the search box already forces open every collapsed clade on the way to
+   * a match and frames the result, which is exactly "take me to my genome"
+   * and is code that is already proven rather than a second focus path. */
+  function handleIngested(accessions: string[]): void {
+    reloadTree();
+    if (accessions.length > 0) {
+      setQuery(accessions[0]!);
+      // A new genome carries antiSMASH regions, so the default
+      // only-genomes-with-BGCs filter keeps it — but a taxon filter or an
+      // active focus from earlier browsing would hide it.
+      setFocusKey(null);
+      setSelectedFamilyId(null);
+    }
+  }
 
   /** Record a purely visual drag. Accumulates so a drag reads as continuous
    * motion; the hierarchy is never consulted or changed. */
@@ -403,6 +429,17 @@ export default function HomePage() {
       {!splashDone && (
         <LoadingOverlay ready={!loading} onDone={() => setSplashDone(true)} />
       )}
+      {/* Only after the splash has fully gone: two stacked covers would put
+          the reader through a dialog they cannot see the consequences of. */}
+      {splashDone && gate === "welcome" && (
+        <WelcomeDialog onBrowse={() => setGate("none")} onUpload={() => setGate("upload")} />
+      )}
+      {gate === "upload" && (
+        <AntismashUploadDialog
+          onClose={() => setGate("none")}
+          onIngested={handleIngested}
+        />
+      )}
       <Header query={query} onQueryChange={setQuery} genomeCount={genomeCount}
         totalGenomes={pruned?.totalGenomes ?? 0}
         matchCount={matchCount}
@@ -526,6 +563,18 @@ export default function HomePage() {
             Auto arrange
           </button>
         )}
+
+        {/* The upload path's permanent door. Without it the only way back
+            to it would be a page reload, since the welcome fork is shown
+            once per visit. */}
+        <button
+          onClick={() => setGate("upload")}
+          title="Upload antiSMASH result JSON files and place those genomes on the tree"
+          className="flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap rounded border border-chrome-line px-2 py-1.5 text-xs text-chrome-ink-muted hover:bg-chrome-soft hover:text-chrome-ink"
+        >
+          <FolderUp size={13} aria-hidden />
+          antiSMASH
+        </button>
 
         <ExportButton
           svgRef={svgRef}

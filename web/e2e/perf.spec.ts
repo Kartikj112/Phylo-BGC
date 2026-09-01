@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { dismissWelcome } from "./support";
 
 /**
  * Measured, not asserted-by-feel.
@@ -13,6 +14,7 @@ async function load(page: Page) {
   const t0 = Date.now();
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.waitForSelector("svg [data-figure-root='true']", { timeout: 60_000 });
+  await dismissWelcome(page);
   await page.waitForFunction(
     () => document.querySelectorAll("svg [data-figure-root='true'] circle").length > 5,
     { timeout: 60_000 },

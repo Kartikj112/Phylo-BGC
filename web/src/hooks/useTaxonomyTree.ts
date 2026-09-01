@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { fetchTaxonomyTree, type TreeScope } from "@/lib/api-client";
 import type { TaxonTreeNode } from "@/lib/api-types";
 
@@ -8,12 +8,19 @@ interface UseTaxonomyTreeResult {
   tree: TaxonTreeNode | null;
   loading: boolean;
   error: Error | null;
+  /** Re-fetch the current scope. Needed because the corpus is no longer
+   * read-only: an antiSMASH upload adds a genome, and without this the
+   * reader would be told it succeeded while looking at the tree from
+   * before it. */
+  reload: () => void;
 }
 
 export function useTaxonomyTree(scope: TreeScope = "all"): UseTaxonomyTreeResult {
   const [tree, setTree] = useState<TaxonTreeNode | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+  const [reloadToken, setReloadToken] = useState(0);
+  const reload = useCallback(() => setReloadToken((n) => n + 1), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -36,7 +43,7 @@ export function useTaxonomyTree(scope: TreeScope = "all"): UseTaxonomyTreeResult
     return () => {
       cancelled = true;
     };
-  }, [scope]);
+  }, [scope, reloadToken]);
 
-  return { tree, loading, error };
+  return { tree, loading, error, reload };
 }

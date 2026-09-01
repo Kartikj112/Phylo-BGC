@@ -10,12 +10,14 @@ Requires the `api` extra: `pip install -e ".[api]"`.
 """
 from __future__ import annotations
 
+import json
 import os
 import uuid
+from dataclasses import asdict
 from collections.abc import Iterator
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 from pydantic import ValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,6 +28,7 @@ from sqlalchemy.orm import Session, selectinload
 from bgcscape import __version__
 from bgcscape.api.flows import build_taxonomy_class_flow
 from bgcscape.api.lazy_tree import LazyTreeError, build_lazy_tree
+from bgcscape.api.uploads import get_or_create_upload_source, ingest_uploaded_antismash
 from bgcscape.api.comparison import (
     all_family_labels,
     build_clade_profile,
@@ -33,6 +36,7 @@ from bgcscape.api.comparison import (
     partition_families,
 )
 from bgcscape.api.schemas import (
+    AntismashUploadResponse,
     BGCDetail,
     BGCFamilyDetail,
     BGCFamilyMember,
@@ -61,6 +65,7 @@ from bgcscape.api.schemas import (
     SearchResult,
     TaxonomyClassFlow,
     TaxonTreeNode,
+    UploadedGenomeOut,
 )
 from bgcscape.api.tree_builder import (
     TreeScope,
@@ -807,6 +812,115 @@ def get_provenance(
         corpus_genome_count=corpus_genomes,
         corpus_bgc_count=corpus_bgcs,
         corpus_taxon_count=corpus_taxa,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Upload: antiSMASH results from the browser
+# ---------------------------------------------------------------------------
+#
+# Off switch, because this is the only endpoint in the API that WRITES, and
+# it is unauthenticated. A public deployment that would rather stay a
+# read-only reference sets BGCSCAPE_ALLOW_UPLOADS=0 and the route reports 403
+# instead of silently accepting strangers' data into the shared corpus.
+_UPLOADS_ENABLED = os.getenv("BGCSCAPE_ALLOW_UPLOADS", "1").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+}
+# antiSMASH region JSON for one bacterial genome runs to tens of MB; the cap
+# is per file and generous, but it exists — an unbounded read on an
+# unauthenticated endpoint is a memory-exhaustion button.
+_MAX_UPLOAD_BYTES = int(os.getenv("BGCSCAPE_MAX_UPLOAD_MB", "128")) * 1024 * 1024
+_MAX_UPLOAD_FILES = 25
+
+
+def _accession_from_filename(filename: str) -> str:
+    """antiSMASH's JSON carries no assembly accession (see
+    ingest/antismash.py), so the filename is the only identifier an upload
+    comes with. `GCF_000203835.1_genomic.json` -> `GCF_000203835.1_genomic`.
+    """
+    stem = os.path.basename(filename or "").strip()
+    for suffix in (".json", ".gz"):
+        if stem.lower().endswith(suffix):
+            stem = stem[: -len(suffix)]
+    return stem or "uploaded-genome"
+
+
+@app.post("/api/v1/ingest/antismash", response_model=AntismashUploadResponse)
+async def ingest_antismash_upload(
+    files: list[UploadFile] = File(..., description="antiSMASH result JSON files, one per genome."),
+    organism: str | None = Form(
+        None,
+        description=(
+            "Organism name, e.g. 'Streptomyces coelicolor'. Without it the genome is "
+            "stored but cannot be drawn: the tree is built from taxa, and antiSMASH's "
+            "output contains no lineage."
+        ),
+    ),
+    is_mag: bool = Form(False),
+    label: str = Form("user upload"),
+    session: Session = Depends(get_session),
+) -> AntismashUploadResponse:
+    """Ingest one or more antiSMASH result JSONs and place them on the tree.
+
+    The whole chain in one request — parse, BGC rows, species taxon, graft
+    onto the GTDB genus — because the steps after parsing are not optional
+    extras here: a genome with no taxon is skipped by the tree builder, so
+    stopping at "regions ingested" would report success for something the
+    user cannot see. Each file's `placement` says which rung it reached.
+    """
+    if not _UPLOADS_ENABLED:
+        raise HTTPException(
+            status_code=403,
+            detail="This deployment is read-only (BGCSCAPE_ALLOW_UPLOADS is off).",
+        )
+    if len(files) > _MAX_UPLOAD_FILES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Too many files: {len(files)} (limit {_MAX_UPLOAD_FILES} per request).",
+        )
+
+    source = get_or_create_upload_source(session, label.strip() or "user upload")
+    results: list[UploadedGenomeOut] = []
+    rejected: list[str] = []
+
+    for upload in files:
+        name = upload.filename or "(unnamed)"
+        payload = await upload.read()
+        if not payload:
+            rejected.append(f"{name}: file is empty")
+            continue
+        if len(payload) > _MAX_UPLOAD_BYTES:
+            rejected.append(
+                f"{name}: {len(payload) // (1024 * 1024)} MB exceeds the "
+                f"{_MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit"
+            )
+            continue
+        try:
+            raw = json.loads(payload)
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            rejected.append(f"{name}: not valid JSON ({exc})")
+            continue
+        if not isinstance(raw, dict):
+            rejected.append(f"{name}: expected an antiSMASH result object, got {type(raw).__name__}")
+            continue
+
+        outcome = ingest_uploaded_antismash(
+            session,
+            source=source,
+            raw=raw,
+            filename=name,
+            genome_accession=_accession_from_filename(name),
+            organism=organism,
+            is_mag=is_mag,
+        )
+        results.append(UploadedGenomeOut(**asdict(outcome)))
+
+    return AntismashUploadResponse(
+        genomes=results,
+        total_regions=sum(g.regions_created + g.regions_updated for g in results),
+        rejected=rejected,
     )
 
 

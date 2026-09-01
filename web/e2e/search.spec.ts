@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { dismissWelcome } from "./support";
 
 /**
  * Searching by what a cluster MAKES.
@@ -14,6 +15,7 @@ const HIT_FILL = "#FFE94A";
 async function ready(page: Page) {
   await page.goto("/");
   await page.waitForSelector("svg [data-figure-root='true']", { timeout: 60_000 });
+  await dismissWelcome(page);
   await page.waitForTimeout(1200);
 }
 

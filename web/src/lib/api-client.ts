@@ -5,6 +5,7 @@
  * around, per the "avoid overengineering" principle.
  */
 import type {
+  AntismashUploadResponse,
   BGCDetail,
   BGCFamilyDetail,
   BGCFamilySummary,
@@ -48,6 +49,26 @@ async function getJson<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/** POST a FormData body. Never sets Content-Type by hand — the browser has
+ * to add the multipart boundary itself, and a hand-written header silently
+ * produces a body the server cannot parse. */
+async function postForm<T>(path: string, body: FormData): Promise<T> {
+  const res = await fetch(`${getBaseUrl()}${path}`, { method: "POST", body });
+  if (!res.ok) {
+    // FastAPI puts the useful part in `detail`; a bare status here would
+    // turn "this deployment is read-only" into "responded 403".
+    let detail = `${path} responded ${res.status}`;
+    try {
+      const payload = (await res.json()) as { detail?: unknown };
+      if (typeof payload.detail === "string") detail = payload.detail;
+    } catch {
+      /* not JSON — keep the status line */
+    }
+    throw new ApiError(res.status, detail);
+  }
+  return res.json() as Promise<T>;
+}
+
 /** Which taxonomy to draw.
  *
  * The corpus holds two — GTDB for prokaryotes, NCBI for the fungi and plants
@@ -85,6 +106,30 @@ export function fetchBgc(bgcId: string): Promise<BGCDetail> {
  * matches" from "the query was too short to run". The tree view does its
  * own client-side matching over the loaded tree instead — this is for
  * callers that don't hold the whole tree. */
+/**
+ * Upload antiSMASH result JSONs and place the genomes on the tree.
+ *
+ * The one write in this client. Sent as multipart rather than JSON because
+ * an antiSMASH region file for a single bacterial genome runs to tens of
+ * megabytes, and base64-in-JSON would inflate that by a third for nothing.
+ *
+ * `organism` is not optional in practice even though the API accepts its
+ * absence: the tree is built from taxa, so a genome with no organism is
+ * ingested and then not drawn. The dialog marks it required for that reason
+ * and the response's `placement` reports what actually happened.
+ */
+export function uploadAntismashResults(
+  files: File[],
+  options: { organism: string; isMag?: boolean; label?: string },
+): Promise<AntismashUploadResponse> {
+  const body = new FormData();
+  for (const file of files) body.append("files", file);
+  body.append("organism", options.organism);
+  body.append("is_mag", String(options.isMag ?? false));
+  if (options.label) body.append("label", options.label);
+  return postForm<AntismashUploadResponse>("/api/v1/ingest/antismash", body);
+}
+
 export function search(query: string, limit?: number): Promise<SearchResponse> {
   const params = new URLSearchParams({ q: query });
   if (limit != null) params.set("limit", String(limit));

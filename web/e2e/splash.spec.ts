@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { dismissWelcome } from "./support";
 
 /**
  * The landing splash (LoadingOverlay).
@@ -39,8 +40,11 @@ test("covers the landing, then leaves on its own with the tree behind it", async
 test("does not swallow the first click once it starts fading", async ({ page }) => {
   await page.goto("/");
   await overlay(page).waitFor({ state: "detached", timeout: 60_000 });
-  // The control nearest the splash's centre. If the cover were still
-  // hit-testable this would time out rather than take effect.
+  // The welcome fork sits where the splash was, dead centre. If the fading
+  // cover were still hit-testable, this click would land on it and time out
+  // rather than take effect.
+  await page.getByRole("button", { name: "Browse the tree" }).click();
+  await expect(page.locator("[data-welcome-dialog]")).toHaveCount(0);
   await page.getByTitle("Circular tree").click();
   await expect(page.getByTitle("Circular tree")).toHaveClass(/bg-chrome-accent-wash/);
 });
@@ -48,6 +52,7 @@ test("does not swallow the first click once it starts fading", async ({ page }) 
 test("stays gone when a later load reloads the tree", async ({ page }) => {
   await page.goto("/");
   await overlay(page).waitFor({ state: "detached", timeout: 60_000 });
+  await dismissWelcome(page);
 
   // Switching taxonomy re-fetches a whole tree. Covering the screen for that
   // would hide the exact change the click asked for.

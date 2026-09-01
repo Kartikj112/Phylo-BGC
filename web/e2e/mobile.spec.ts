@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { dismissWelcome } from "./support";
 
 /**
  * The phone build.
@@ -20,6 +21,7 @@ const FIGURE = "svg [data-figure-root='true']";
 async function ready(page: Page) {
   await page.goto("/");
   await page.waitForSelector(FIGURE, { timeout: 60_000 });
+  await dismissWelcome(page);
   await page.waitForTimeout(1500);
 }
 
@@ -149,6 +151,7 @@ test("the filter rail is a drawer that closes once it has been used", async ({ p
 test("the detail panel docks to the bottom edge instead of taking a column", async ({ page }) => {
   await page.goto("/?bgc=BGC0002153");
   await page.waitForSelector(FIGURE, { timeout: 60_000 });
+  await dismissWelcome(page);
   await expect(page.getByLabel("Close detail panel")).toBeVisible();
 
   const geom = await page.evaluate(() => {

@@ -115,6 +115,30 @@ The API defaults to `Access-Control-Allow-Origin: *`. To restrict it:
 
 Comma-separate to also allow Vercel preview URLs.
 
+## 4b. antiSMASH uploads (the one endpoint that writes)
+
+`POST /api/v1/ingest/antismash` takes result JSONs from the browser, ingests
+the regions, and grafts the genome onto the GTDB backbone. It is the only
+write in the API, and it is **unauthenticated** — anyone who can reach the
+deployment can add genomes to the shared corpus.
+
+Two knobs, both read at import time:
+
+| Variable | Default | Effect |
+|---|---|---|
+| `BGCSCAPE_ALLOW_UPLOADS` | `1` | Set to `0` for a read-only public deployment. The route then answers 403 and the dialog shows the reason. |
+| `BGCSCAPE_MAX_UPLOAD_MB` | `128` | Per-file cap. antiSMASH region JSON for one bacterial genome runs to tens of MB. |
+
+**Uploads do not survive a restart on Render or Hugging Face.** The image
+copies the bundled SQLite file to a container-local path (`/app/data/`), so
+writes go to an ephemeral filesystem: they work for the life of the
+container and are gone when the free tier spins down (~15 min idle) or
+redeploys. That is fine for trying the feature out, and wrong for anything
+you want to keep. For durable uploads, point `BGCSCAPE_DATABASE_URL` at a
+managed Postgres and run `bgcscape init-db` against it once.
+
+---
+
 ## 5. Redeploys
 
 - **Frontend**: push to `main` → Vercel auto-deploys.

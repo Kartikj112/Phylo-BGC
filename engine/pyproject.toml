@@ -32,6 +32,10 @@ dev = [
 api = [
     "fastapi>=0.111",
     "uvicorn[standard]>=0.30",
+    # Required by the antiSMASH upload endpoint: FastAPI raises at import
+    # time if a route declares File()/Form() without it, so a deployment
+    # that omitted this would fail to boot, not just fail to upload.
+    "python-multipart>=0.0.9",
 ]
 export = [
     # PDF rendering. Needs Cairo system libraries (libcairo2) present —

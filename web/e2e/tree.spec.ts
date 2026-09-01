@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { dismissWelcome } from "./support";
 
 /**
  * The interactions a unit test cannot reach.
@@ -17,6 +18,7 @@ async function waitForTree(page: Page) {
   // The canvas only mounts once the tree has loaded, so this doubles as the
   // "did the API round-trip succeed" assertion.
   await page.waitForSelector("svg [data-figure-root='true']", { timeout: 45_000 });
+  await dismissWelcome(page);
   // Scoped to the figure root on purpose. Unscoped, "the first svg shape on
   // the page" is whichever icon the header happens to render first, which
   // says nothing about whether the tree drew — and silently starts failing

@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { dismissWelcome } from "./support";
 
 /**
  * The export button's BROWSER path.
@@ -19,6 +20,7 @@ test("SVG export downloads a self-describing figure from the browser", async ({ 
 
   await page.goto("/");
   await page.waitForSelector("svg [data-figure-root='true']", { timeout: 45_000 });
+  await dismissWelcome(page);
 
   const svgButton = page.getByRole("button", { name: "svg", exact: true });
   await expect(svgButton).toBeVisible();
@@ -48,6 +50,7 @@ test("PDF export either downloads or reports a usable error, never a bare 500", 
   page.on("dialog", (d) => d.accept("E2E export"));
   await page.goto("/");
   await page.waitForSelector("svg [data-figure-root='true']", { timeout: 45_000 });
+  await dismissWelcome(page);
 
   const pdfButton = page.getByRole("button", { name: "pdf", exact: true });
   await expect(pdfButton).toBeVisible();
@@ -87,6 +90,7 @@ test("the export POST survives a real CORS preflight", async ({ page }) => {
   page.on("dialog", (d) => d.accept(""));
   await page.goto("/");
   await page.waitForSelector("svg [data-figure-root='true']", { timeout: 45_000 });
+  await dismissWelcome(page);
 
   const [response] = await Promise.all([
     page.waitForResponse((r) => r.url().includes("/api/v1/export"), { timeout: 45_000 }),

@@ -329,6 +329,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/ingest/antismash": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ingest Antismash Upload
+         * @description Ingest one or more antiSMASH result JSONs and place them on the tree.
+         *
+         *     The whole chain in one request — parse, BGC rows, species taxon, graft
+         *     onto the GTDB genus — because the steps after parsing are not optional
+         *     extras here: a genome with no taxon is skipped by the tree builder, so
+         *     stopping at "regions ingested" would report success for something the
+         *     user cannot see. Each file's `placement` says which rung it reached.
+         */
+        post: operations["ingest_antismash_upload_api_v1_ingest_antismash_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/export": {
         parameters: {
             query?: never;
@@ -384,6 +410,18 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AntismashUploadResponse */
+        AntismashUploadResponse: {
+            /** Genomes */
+            genomes: components["schemas"]["UploadedGenomeOut"][];
+            /** Total Regions */
+            total_regions: number;
+            /**
+             * Rejected
+             * @default []
+             */
+            rejected: string[];
+        };
         /**
          * AssemblyLevel
          * @enum {string}
@@ -581,6 +619,29 @@ export interface components {
             bgc_class: string;
             /** Count */
             count: number;
+        };
+        /** Body_ingest_antismash_upload_api_v1_ingest_antismash_post */
+        Body_ingest_antismash_upload_api_v1_ingest_antismash_post: {
+            /**
+             * Files
+             * @description antiSMASH result JSON files, one per genome.
+             */
+            files: string[];
+            /**
+             * Organism
+             * @description Organism name, e.g. 'Streptomyces coelicolor'. Without it the genome is stored but cannot be drawn: the tree is built from taxa, and antiSMASH's output contains no lineage.
+             */
+            organism?: string | null;
+            /**
+             * Is Mag
+             * @default false
+             */
+            is_mag: boolean;
+            /**
+             * Label
+             * @default user upload
+             */
+            label: string;
         };
         /** CladeComparison */
         CladeComparison: {
@@ -1106,6 +1167,51 @@ export interface components {
             /** Total Bgcs */
             total_bgcs: number;
         };
+        /**
+         * UploadedGenomeOut
+         * @description What became of one uploaded antiSMASH result file.
+         *
+         *     `placement` is the field that matters and the one the UI leads with.
+         *     Only "grafted" means the genome is visible in its real position on the
+         *     tree; "species_only" means it has an organism but no GTDB genus matched
+         *     (a fungus, an unrecognised name); "unplaced" means it is in the database
+         *     but not on the tree at all, because `tree_builder` skips genomes with no
+         *     taxon. Reporting a region count without this would tell the reader their
+         *     upload worked while they stare at an unchanged tree.
+         */
+        UploadedGenomeOut: {
+            /** Filename */
+            filename: string;
+            /** Accession */
+            accession: string;
+            /** Genome Id */
+            genome_id?: string | null;
+            /**
+             * Regions Created
+             * @default 0
+             */
+            regions_created: number;
+            /**
+             * Regions Updated
+             * @default 0
+             */
+            regions_updated: number;
+            /**
+             * Placement
+             * @default unplaced
+             * @enum {string}
+             */
+            placement: "grafted" | "species_only" | "unplaced";
+            /** Organism */
+            organism?: string | null;
+            /** Grafted To */
+            grafted_to?: string | null;
+            /**
+             * Errors
+             * @default []
+             */
+            errors: string[];
+        };
         /** ValidationError */
         ValidationError: {
             /** Location */
@@ -1521,6 +1627,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DatasetProvenanceResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ingest_antismash_upload_api_v1_ingest_antismash_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_ingest_antismash_upload_api_v1_ingest_antismash_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AntismashUploadResponse"];
                 };
             };
             /** @description Validation Error */

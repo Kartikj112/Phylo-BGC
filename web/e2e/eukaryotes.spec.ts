@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { dismissWelcome } from "./support";
 
 /**
  * The eukaryote tree.
@@ -14,6 +15,7 @@ import { expect, test, type Page } from "@playwright/test";
 async function ready(page: Page) {
   await page.goto("/");
   await page.waitForSelector("svg [data-figure-root='true']", { timeout: 60_000 });
+  await dismissWelcome(page);
   await page.waitForTimeout(1500);
 }
 
