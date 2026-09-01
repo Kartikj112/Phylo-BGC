@@ -184,6 +184,12 @@ describe("countBgcClasses", () => {
   });
 });
 
+/** The single genome hanging off a fixture species, as a display node. */
+function genomeIn(tree: ReturnType<typeof buildFixtureTree>, species: string): GenomeDisplayNode {
+  const taxon = findTaxonByName(tree, species)!;
+  return { ...taxon.direct_genomes[0]!, _kind: "genome" };
+}
+
 describe("matchesQuery", () => {
   it("matches case-insensitively on taxon name", () => {
     const tree = buildFixtureTree();
@@ -203,6 +209,55 @@ describe("matchesQuery", () => {
     const strep = findTaxonByName(tree, "Streptomyces")!;
     expect(matchesQuery({ ...strep, _kind: "taxon" }, "")).toBe(false);
     expect(matchesQuery({ ...strep, _kind: "taxon" }, "   ")).toBe(false);
+  });
+
+  it("matches a taxon on its rank, not only its name", () => {
+    const tree = buildFixtureTree();
+    const genus = findTaxonByName(tree, "Streptomyces")!;
+    const species = findTaxonByName(tree, "Streptomyces coelicolor")!;
+    expect(matchesQuery({ ...genus, _kind: "taxon" }, "genus")).toBe(true);
+    expect(matchesQuery({ ...species, _kind: "taxon" }, "genus")).toBe(false);
+    expect(matchesQuery({ ...species, _kind: "taxon" }, "SPECIES")).toBe(true);
+  });
+
+  it("matches a genome on its assembly level, spelled either way", () => {
+    const g = genomeIn(buildFixtureTree(), "Streptomyces coelicolor");
+    // The API spells it "complete_genome"; nobody types the underscore.
+    expect(matchesQuery(g, "complete_genome")).toBe(true);
+    expect(matchesQuery(g, "complete genome")).toBe(true);
+    expect(matchesQuery(g, "scaffold")).toBe(false);
+  });
+
+  it("matches a MAG on the whole word only", () => {
+    const mag = genomeIn(buildFixtureTree(), "Streptomyces venezuelae");
+    const notMag = genomeIn(buildFixtureTree(), "Streptomyces coelicolor");
+    expect(matchesQuery(mag, "mag")).toBe(true);
+    expect(matchesQuery(notMag, "mag")).toBe(false);
+    // A prefix must not light up every MAG in the corpus while the reader
+    // is still typing. ("m" alone would be a poor probe here: every fixture
+    // genome is a "complete_genome", which contains one.)
+    expect(matchesQuery(mag, "ma")).toBe(false);
+  });
+
+  it("matches a genome on its clusters' class, subtype and evidence", () => {
+    const tree = buildFixtureTree();
+    const coelicolor = genomeIn(tree, "Streptomyces coelicolor");
+    const venezuelae = genomeIn(tree, "Streptomyces venezuelae");
+
+    expect(matchesQuery(coelicolor, "nrps")).toBe(true);
+    expect(matchesQuery(coelicolor, "terpene")).toBe(false);
+    expect(matchesQuery(coelicolor, "type II")).toBe(true);
+    expect(matchesQuery(venezuelae, "lanthipeptide")).toBe(true);
+    expect(matchesQuery(venezuelae, "predicted")).toBe(true);
+  });
+
+  it("a hybrid answers a search for either component class", () => {
+    // The avermitilis genome's only NRPS activity is inside an nrps+pks
+    // hybrid — the same case bgcComponentClasses exists for on the filter
+    // side. Searching "nrps" must find it.
+    const avermitilis = genomeIn(buildFixtureTree(), "Streptomyces avermitilis");
+    expect(matchesQuery(avermitilis, "nrps")).toBe(true);
+    expect(matchesQuery(avermitilis, "ripp")).toBe(false);
   });
 });
 
@@ -1392,10 +1447,13 @@ describe("rank vocabulary spans both trees", () => {
 describe("tip sizing", () => {
   it("gives every tier a radius big enough to see once scaled", () => {
     // Drawn in layout units these were 0.4-1.9px at the default 0.2x view.
+    // The floor is a visibility floor, not the current size: these are
+    // screen pixels now, and a 2px radius is a 4px dot at every zoom.
     for (const tier of BGC_SIZE_TIERS) {
-      expect(tier.radius).toBeGreaterThanOrEqual(2.5);
+      expect(tier.radius).toBeGreaterThanOrEqual(2);
     }
   });
+
 
   it("keeps the tiers strictly ordered, so size still encodes count", () => {
     for (let i = 1; i < BGC_SIZE_TIERS.length; i++) {

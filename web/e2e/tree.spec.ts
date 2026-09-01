@@ -123,7 +123,7 @@ test.describe("tree canvas", () => {
 test.describe("search", () => {
   test("reports a live match count and distinguishes zero from broken", async ({ page }) => {
     await waitForTree(page);
-    const box = page.getByPlaceholder("Search organism or accession");
+    const box = page.getByPlaceholder("Search taxa, accessions, compounds");
 
     await box.fill("Streptomyces");
     await expect(page.locator("text=/^\\d+$/").first()).toBeVisible();
@@ -138,7 +138,7 @@ test.describe("search", () => {
 
   test("a term matching only a genome accession still matches", async ({ page }) => {
     await waitForTree(page);
-    const box = page.getByPlaceholder("Search organism or accession");
+    const box = page.getByPlaceholder("Search taxa, accessions, compounds");
     await box.fill("GCF_");
     await expect(page.getByText("no matches")).toHaveCount(0);
   });

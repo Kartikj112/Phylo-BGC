@@ -17,7 +17,7 @@ async function ready(page: Page) {
   await page.waitForTimeout(1200);
 }
 
-const search = (page: Page) => page.getByPlaceholder("Search organism or accession");
+const search = (page: Page) => page.getByPlaceholder("Search taxa, accessions, compounds");
 const hitMarks = (page: Page) => page.locator(`rect[fill="${HIT_FILL}"]`);
 
 test("a compound name finds and marks its cluster", async ({ page }) => {

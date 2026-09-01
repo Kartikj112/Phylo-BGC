@@ -93,30 +93,76 @@ export function hiddenChildrenCount(node: DisplayNode, collapsed: ReadonlySet<st
 }
 
 /**
+ * One searchable field against an already-lowercased needle.
+ *
+ * The second clause is for the enum tokens the API spells with underscores
+ * ("complete_genome", "observed_curated"): nobody types those, they type
+ * "complete genome", and a search that only knew the wire spelling would
+ * report "no matches" for a term the interface itself displays.
+ *
+ * Substring rather than whole-word throughout, so a half-typed query
+ * narrows as you go — the search box has no submit button.
+ */
+function fieldMatches(field: string | null | undefined, needle: string): boolean {
+  if (!field) return false;
+  const value = field.toLowerCase();
+  if (value.includes(needle)) return true;
+  return value.includes("_") && value.replace(/_/g, " ").includes(needle);
+}
+
+/** Shared by bgcMatchesQuery and matchesQuery, which would otherwise
+ * re-trim and re-lowercase the same query once per cluster per traversal —
+ * and there are several traversals per keystroke over thousands of nodes. */
+function bgcMatchesNeedle(bgc: BGCSummary, needle: string): boolean {
+  if (fieldMatches(bgc.mibig_accession, needle)) return true;
+  if ((bgc.compounds ?? []).some((name) => fieldMatches(name, needle))) return true;
+  if (fieldMatches(bgc.subtype, needle)) return true;
+  if (fieldMatches(bgc.evidence_level, needle)) return true;
+  // What KIND of cluster it is. Hybrids go through bgcComponentClasses, so
+  // "pks" answers an nrps+pks the same way the class filter does rather
+  // than matching only the literal string "hybrid".
+  if (fieldMatches(bgc.bgc_class, needle)) return true;
+  return bgcComponentClasses(bgc).some((cls) => fieldMatches(cls, needle));
+}
+
+/**
  * Does this cluster answer the query?
  *
- * Matches the compound names MIBiG records for it, and its MIBiG accession.
- * A product name ("kocurin") is how a researcher actually refers to a
+ * Matches the compound names MIBiG records for it, its MIBiG accession, and
+ * what kind of cluster it is (class, hybrid subtype, evidence level). A
+ * product name ("kocurin") is how a researcher actually refers to a
  * cluster — searching only taxa and genome accessions made the most natural
  * question you can ask this tool unanswerable.
  */
 export function bgcMatchesQuery(bgc: BGCSummary, query: string): boolean {
-  const trimmed = query.trim().toLowerCase();
-  if (!trimmed) return false;
-  if (bgc.mibig_accession && bgc.mibig_accession.toLowerCase().includes(trimmed)) return true;
-  return (bgc.compounds ?? []).some((name) => name.toLowerCase().includes(trimmed));
+  const needle = query.trim().toLowerCase();
+  if (!needle) return false;
+  return bgcMatchesNeedle(bgc, needle);
 }
 
+/**
+ * Does this node answer the query?
+ *
+ * Everything the node carries is searchable, not just its label: a taxon on
+ * its name and its rank, a genome on its accession, how it was assembled,
+ * and on every field of every cluster it holds. Routing all of it through
+ * this one function rather than parallel paths means the
+ * force-open-collapsed-clades logic, the dimming and the header match count
+ * pick up each new field for free — they already call this.
+ */
 export function matchesQuery(node: DisplayNode, query: string): boolean {
-  const trimmed = query.trim();
-  if (!trimmed) return false;
-  if (nodeLabel(node).toLowerCase().includes(trimmed.toLowerCase())) return true;
-  // A genome also matches on what its clusters MAKE. Routing this through
-  // matchesQuery rather than a parallel path means the force-open-collapsed
-  // -clades logic, the dimming and the header match count all pick compound
-  // hits up for free — they already call this.
-  if (node._kind === "genome") return node.bgcs.some((b) => bgcMatchesQuery(b, query));
-  return false;
+  const needle = query.trim().toLowerCase();
+  if (!needle) return false;
+  if (fieldMatches(nodeLabel(node), needle)) return true;
+  // Rank is searchable so "genus" or "phylum" can pick out one stratum of
+  // the hierarchy — the ranks are what the badges beside each taxon mean.
+  if (node._kind === "taxon") return fieldMatches(node.rank, needle);
+  if (fieldMatches(node.assembly_level, needle)) return true;
+  // Whole word only: `is_mag` is a flag, not a field of text, so there is no
+  // prefix of it to match against. Treating it as text would light up every
+  // MAG in the corpus at "m", before the reader has typed anything.
+  if (node.is_mag && needle === "mag") return true;
+  return node.bgcs.some((b) => bgcMatchesNeedle(b, needle));
 }
 
 /**
@@ -1119,13 +1165,20 @@ export interface BgcSizeTier {
  * in TreeCanvas). Like branch width, a node's size is only ever read
  * against other nodes, never against the tree's geometry, so scaling them
  * all together preserves the comparison exactly while keeping it visible.
- * Drawn in layout units these were 0.4-1.9px at the default 0.2x view. */
+ * Drawn in layout units these were 0.4-1.9px at the default 0.2x view.
+ *
+ * Sized down from 2.5-12: at the old radii a dense clade read as a string of
+ * touching beads, which hid the branch structure the tree exists to show.
+ * The tiers stay clearly ordered and the spread between the extremes is
+ * roughly preserved, so size still reads as count. The empty tier shrinks
+ * least (2.5 to 2, against 12 to 8.5) because BGC-negative genomes have to
+ * stay legibly present — they are context, not noise, as above. */
 export const BGC_SIZE_TIERS: BgcSizeTier[] = [
-  { id: "none", label: "0", radius: 2.5, muted: true },
-  { id: "low", label: "1–5", radius: 4.5, muted: false },
-  { id: "medium", label: "6–20", radius: 6.5, muted: false },
-  { id: "high", label: "21–50", radius: 9, muted: false },
-  { id: "very-high", label: ">50", radius: 12, muted: false },
+  { id: "none", label: "0", radius: 2, muted: true },
+  { id: "low", label: "1–5", radius: 3, muted: false },
+  { id: "medium", label: "6–20", radius: 4.5, muted: false },
+  { id: "high", label: "21–50", radius: 6.25, muted: false },
+  { id: "very-high", label: ">50", radius: 8.5, muted: false },
 ];
 
 export function bgcSizeTier(bgcCount: number): BgcSizeTier {

@@ -4,7 +4,7 @@ import { expect, test, type Page } from "@playwright/test";
  * The initial view, the layout controls, and node dragging.
  *
  * These assert the properties that make the first screen interpretable —
- * radial by default, collapsed to a readable level, spread across the
+ * horizontal by default, collapsed to a readable level, spread across the
  * viewport — and that a manual drag moves a node without touching the
  * hierarchy behind it.
  */
@@ -18,12 +18,22 @@ async function ready(page: Page) {
 const nodes = (page: Page) =>
   page.locator("svg [data-figure-root='true'] g[data-node-key]");
 
-test("opens radial, collapsed to a readable level", async ({ page }) => {
+/** The tree now opens horizontal, so the checks that measure radial geometry
+ * — distance and direction from the figure centre — have to ask for that
+ * view rather than assume the first paint is it. */
+async function readyRadial(page: Page) {
+  await ready(page);
+  await page.getByTitle("Circular tree").click();
+  await page.waitForTimeout(1200);
+}
+
+test("opens horizontal, collapsed to a readable level", async ({ page }) => {
   await ready(page);
 
-  // Radial is the default: its toggle is the active one.
-  const radialBtn = page.getByTitle("Circular tree");
-  await expect(radialBtn).toHaveClass(/bg-chrome-accent-wash/);
+  // Horizontal is the default: its toggle is the active one, and the
+  // circular toggle is not.
+  await expect(page.getByTitle("Horizontal tree")).toHaveClass(/bg-chrome-accent-wash/);
+  await expect(page.getByTitle("Circular tree")).not.toHaveClass(/bg-chrome-accent-wash/);
 
   // Far fewer than the fully-expanded 3,528 — the point is that the shape of
   // the corpus is readable before the user expands anything.
@@ -44,6 +54,10 @@ test("collapsed clades can still be expanded interactively", async ({ page }) =>
 
 test("horizontal view spreads across the viewport width", async ({ page }) => {
   await ready(page);
+  // Already the default view; the round trip proves the toggle still lands
+  // back on a correctly framed horizontal tree rather than the first paint.
+  await page.getByTitle("Circular tree").click();
+  await page.waitForTimeout(600);
   await page.getByTitle("Horizontal tree").click();
   await page.waitForTimeout(1200);
 
@@ -128,7 +142,7 @@ test("hierarchy regions render behind the tree and can be turned off", async ({ 
 });
 
 test("in radial view every label and BGC bar radiates outward", async ({ page }) => {
-  await ready(page);
+  await readyRadial(page);
 
   // The regression: `CladeGlyph` negated its x for the left hemisphere but,
   // unlike the labels, was not wrapped in the matching rotate(180) — so
@@ -206,7 +220,7 @@ async function glyphRadiusSpread(page: Page): Promise<number> {
 }
 
 test("aligned glyphs share one baseline; turning it off does not", async ({ page }) => {
-  await ready(page);
+  await readyRadial(page);
   await page.locator('button[title*="Collapse the tree to Family"]').click();
   await page.waitForTimeout(1200);
 

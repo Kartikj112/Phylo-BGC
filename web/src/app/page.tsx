@@ -17,6 +17,7 @@ import { SankeyView } from "@/components/SankeyView";
 import { DetailPanel, type Selection } from "@/components/DetailPanel";
 import { FamilyRail } from "@/components/FamilyRail";
 import { Header } from "@/components/Header";
+import { LoadingOverlay } from "@/components/LoadingOverlay";
 import { TreeCanvas } from "@/components/TreeCanvas";
 import { useTaxonomyTree } from "@/hooks/useTaxonomyTree";
 import type { BGCFamilySummary, TaxonTreeNode } from "@/lib/api-types";
@@ -83,11 +84,12 @@ export default function HomePage() {
   const [selectedFamilyId, setSelectedFamilyId] = useState<string | null>(null);
   const [comparisonTaxonIds, setComparisonTaxonIds] = useState<string[]>([]);
   const svgRef = useRef<SVGSVGElement | null>(null);
-  // Radial by default: it shows the shape of the whole corpus in one
-  // screen-filling form, which is the "where does this sit across the tree"
-  // question the tool exists to answer. Horizontal is better for reading
-  // exact lineages and stays one click away.
-  const [orientation, setOrientation] = useState<TreeOrientation>("radial");
+  // Horizontal by default: ranks read left-to-right down the depth axis and
+  // every label sits upright on the same baseline, so a lineage can be read
+  // off the first screen without rotating your head or the figure. The
+  // radial form — better for taking in the whole corpus at once — is one
+  // click away and keeps its own fit-to-view.
+  const [orientation, setOrientation] = useState<TreeOrientation>("horizontal");
   const [activeLevel, setActiveLevel] = useState<CollapseLevel | null>(null);
   // Defaults to on: a real GTDB ingest is mostly genomes antiSMASH has
   // never been run on, and showing them buries the signal.
@@ -119,6 +121,11 @@ export default function HomePage() {
   // anything. It is a plain overlay, not a separate route, so every filter
   // keeps the exact same component and state it has on the desktop layout.
   const [railOpen, setRailOpen] = useState(false);
+  // The landing splash (LoadingOverlay). Mounted once per visit and dropped
+  // for good when it finishes fading — switching taxonomy reloads the tree,
+  // and covering the whole screen for that would hide the very change the
+  // click asked for.
+  const [splashDone, setSplashDone] = useState(false);
 
   /** Close the drawer after an action that changes the tree, so the result
    * is visible without a second tap. Desktop keeps the rail pinned open, so
@@ -389,6 +396,13 @@ export default function HomePage() {
 
   return (
     <div className="flex h-[100dvh] w-full flex-col overflow-hidden bg-paper">
+      {/* Driven by `loading`, not by `root`: `loading` is guaranteed to
+          settle (the hook clears it in a `finally`, on success and on
+          failure alike), so the splash can never outlive a failed fetch and
+          strand the reader on a cover with the error hidden behind it. */}
+      {!splashDone && (
+        <LoadingOverlay ready={!loading} onDone={() => setSplashDone(true)} />
+      )}
       <Header query={query} onQueryChange={setQuery} genomeCount={genomeCount}
         totalGenomes={pruned?.totalGenomes ?? 0}
         matchCount={matchCount}

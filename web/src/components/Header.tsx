@@ -62,8 +62,13 @@ export function Header({
           <input
             value={query}
             onChange={(e) => onQueryChange(e.target.value)}
-            placeholder="Search organism or accession"
-            aria-label="Search organism or accession"
+            /* The box searches every field the tree carries — taxa and
+               their ranks, genome accessions and assembly level, and each
+               cluster's compounds, MIBiG accession and class. The
+               placeholder names the kinds a reader would not guess were
+               searchable; it cannot list them all. */
+            placeholder="Search taxa, accessions, compounds"
+            aria-label="Search taxa, accessions, compounds and BGC classes"
             /* 16px on touch: anything smaller makes iOS Safari zoom the
                whole page on focus, which then leaves the tree off-screen. */
             className="w-full rounded border border-chrome-line bg-chrome-soft py-2 pl-7 pr-16 text-base text-chrome-ink placeholder:text-chrome-ink-faint outline-none focus:border-chrome-accent sm:py-1.5 sm:text-sm"

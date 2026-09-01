@@ -1298,7 +1298,7 @@ function TaxonNode({
           "the smallest group that contains this" is visible without reading
           the summary. */}
       {isEnclosing && (
-        <circle r={9 * ms} fill="none" stroke={COLORS.present} strokeWidth={1.75 * ms} />
+        <circle r={7 * ms} fill="none" stroke={COLORS.present} strokeWidth={1.5 * ms} />
       )}
 
       {hiddenCount > 0 ? (
@@ -1316,10 +1316,10 @@ function TaxonNode({
               impossible finger one. */}
           {touchMode && <circle r={14 * ms} fill="transparent" />}
           <circle
-            r={5.5 * ms}
+            r={4 * ms}
             fill={COLORS.paper}
             stroke={inSelectedFamily ? COLORS.present : COLORS.ink}
-            strokeWidth={(inSelectedFamily ? 1.75 : 1.25) * ms}
+            strokeWidth={(inSelectedFamily ? 1.5 : 1) * ms}
           />
         </g>
       )}
@@ -1637,7 +1637,7 @@ function GenomeNode({
         {touchMode && <circle r={Math.max(tier.radius + 8, 12) * gls} fill="transparent" />}
         {isEnclosing && (
           <circle
-            r={(tier.radius + 4) * gls}
+            r={(tier.radius + 3) * gls}
             fill="none"
             stroke={COLORS.present}
             strokeWidth={1.75 * gls}
