@@ -56,7 +56,11 @@ def test_parse_hybrid_region_maps_to_hybrid_with_joined_subtype():
     parsed = parse_antismash_result(_load_fixture(), genome_accession="GCF_TEST900001.1")
     region = next(r for r in parsed.regions if r.external_ref == "NZ_TEST0000001.1.region002")
     assert region.bgc_class is BGCClass.HYBRID
-    assert region.subtype == "NRPS+PKS"
+    # BGCClass values, not antiSMASH's own category names: the frontend
+    # splits this on "+" against its lowercase class vocabulary, so
+    # "NRPS+PKS" here made an uploaded hybrid match no class filter at all
+    # and vanish from the tree. Same contract MIBiG ingestion follows.
+    assert region.subtype == "nrps+pks"
 
 
 def test_parse_terpene_region_on_second_record():
@@ -135,7 +139,7 @@ def test_bgc_external_ref_and_provenance(session, antismash_tool_source):
 
     bgc = session.query(BGC).filter_by(external_ref="NZ_TEST0000001.1.region002").one()
     assert bgc.bgc_class is BGCClass.HYBRID
-    assert bgc.subtype == "NRPS+PKS"
+    assert bgc.subtype == "nrps+pks"
     assert bgc.evidence_level is EvidenceLevel.PREDICTED
     assert bgc.predicted_by_tool == "antiSMASH 7.1.0-test"
     assert bgc.raw_annotation["region_number"] == 2

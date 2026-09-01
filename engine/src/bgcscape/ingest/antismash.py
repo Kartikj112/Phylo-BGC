@@ -32,7 +32,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from bgcscape.ingest._util import IngestReport, get_or_create_or_update
+from bgcscape.ingest._util import IngestReport, get_or_create_or_update, hybrid_subtype
 from bgcscape.models import BGC, BGCClass, EvidenceLevel, Genome, Source
 from bgcscape.models.genome import AssemblyLevel
 from bgcscape.schemas import BGCCreate, GenomeCreate
@@ -94,9 +94,17 @@ def _map_products(products: list[str]) -> tuple[BGCClass, str | None]:
         return BGCClass.OTHER, None
     mapped = [_ANTISMASH_CATEGORY_TO_BGC_CLASS.get(p, BGCClass.OTHER) for p in products]
     if len(set(mapped)) == 1:
+        # Not a hybrid. Several categories that all collapse to one class
+        # means unrecognised category names mapping to OTHER, so keep them
+        # verbatim — they are the only record of what antiSMASH actually
+        # said, and nothing splits a non-hybrid subtype into classes.
         subtype = "+".join(products) if len(products) > 1 else None
         return mapped[0], subtype
-    return BGCClass.HYBRID, "+".join(products)
+    # A real hybrid. Must be antiSMASH-agnostic BGCClass values, not
+    # antiSMASH's own category names: the frontend splits this on "+" to
+    # decide which class filters a hybrid answers to, so "NRPS+PKS" matched
+    # nothing in its lowercase vocabulary and dimmed the cluster away.
+    return BGCClass.HYBRID, hybrid_subtype(mapped)
 
 
 @dataclass

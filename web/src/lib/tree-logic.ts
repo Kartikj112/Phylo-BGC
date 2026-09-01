@@ -1346,17 +1346,52 @@ export function familyMembershipSets(
   root: TaxonDisplayNode,
   familyId: string | null,
 ): FamilyMembershipSets {
+  if (!familyId) return emptyMembership();
+  return membershipSets(root, (b) => b.family_ids.includes(familyId));
+}
+
+/**
+ * The same sets, for membership in ANY of several families at once.
+ *
+ * What an antiSMASH upload needs. A genome carries many clusters, each
+ * landing in its own BiG-SCAPE family, and the question the reader is
+ * asking — "where else does what I just found occur?" — is answered by the
+ * union, not by one family at a time. Counts are per BGC, so a node holding
+ * members of two of the families counts two.
+ */
+export function familyMembershipSetsForAny(
+  root: TaxonDisplayNode,
+  familyIds: readonly string[],
+): FamilyMembershipSets {
+  if (familyIds.length === 0) return emptyMembership();
+  const wanted = new Set(familyIds);
+  return membershipSets(root, (b) => b.family_ids.some((id) => wanted.has(id)));
+}
+
+function emptyMembership(): FamilyMembershipSets {
+  return {
+    nodeKeys: new Set<string>(),
+    genomeKeys: new Set<string>(),
+    memberGenomeCountByNode: new Map<string, number>(),
+    memberBgcCountByNode: new Map<string, number>(),
+  };
+}
+
+/** One walk, parameterised by what counts as a member — so the single-family
+ * and any-of-many cases cannot drift apart in how they aggregate. */
+function membershipSets(
+  root: TaxonDisplayNode,
+  isMember: (bgc: BGCSummary) => boolean,
+): FamilyMembershipSets {
   const nodeKeys = new Set<string>();
   const genomeKeys = new Set<string>();
   const memberGenomeCountByNode = new Map<string, number>();
   const memberBgcCountByNode = new Map<string, number>();
-  if (!familyId) return { nodeKeys, genomeKeys, memberGenomeCountByNode, memberBgcCountByNode };
-  const fid = familyId;
 
   function walk(node: DisplayNode): { genomes: number; bgcs: number } {
     const key = nodeKey(node);
     if (node._kind === "genome") {
-      const bgcs = node.bgcs.filter((b) => b.family_ids.includes(fid)).length;
+      const bgcs = node.bgcs.filter(isMember).length;
       if (bgcs > 0) {
         genomeKeys.add(key);
         nodeKeys.add(key);
@@ -1387,6 +1422,57 @@ export function familyMembershipSets(
 
   walk(root);
   return { nodeKeys, genomeKeys, memberGenomeCountByNode, memberBgcCountByNode };
+}
+
+export interface UploadLineage {
+  /** nodeKey() of every node on the path from the root down to and including
+   * each named genome. Drives the "here is where your genome sits" highlight
+   * in O(1) per node at render time, the same shape as
+   * FamilyMembershipSets.nodeKeys. */
+  lineageKeys: Set<string>;
+  /** nodeKey() of the named genomes themselves, so the tip can be marked
+   * differently from the branches leading to it. */
+  genomeKeys: Set<string>;
+}
+
+/**
+ * The root-to-tip path for freshly uploaded genomes, found by accession.
+ *
+ * Keyed on accession rather than id because that is what the upload
+ * response returns and what the reader typed into the filename; the genome's
+ * uuid is assigned server-side and is not otherwise interesting here.
+ *
+ * Every ancestor is included, so highlighting the set draws an unbroken
+ * branch from the root — which is the point. A partial path (say, only the
+ * genus and the species) reads as two disconnected marks rather than as a
+ * lineage.
+ */
+export function uploadLineage(
+  root: TaxonDisplayNode,
+  accessions: readonly string[],
+): UploadLineage {
+  const lineageKeys = new Set<string>();
+  const genomeKeys = new Set<string>();
+  if (accessions.length === 0) return { lineageKeys, genomeKeys };
+  const wanted = new Set(accessions);
+
+  function walk(node: DisplayNode, path: string[]): void {
+    const key = nodeKey(node);
+    if (node._kind === "genome") {
+      if (wanted.has(node.accession)) {
+        genomeKeys.add(key);
+        lineageKeys.add(key);
+        for (const ancestor of path) lineageKeys.add(ancestor);
+      }
+      return;
+    }
+    const nextPath = [...path, key];
+    for (const g of node.direct_genomes) walk({ ...g, _kind: "genome" }, nextPath);
+    for (const c of node.children) walk({ ...c, _kind: "taxon" }, nextPath);
+  }
+
+  walk(root, []);
+  return { lineageKeys, genomeKeys };
 }
 
 /** Occupancy of one taxonomic rank by a family: how many distinct taxa at

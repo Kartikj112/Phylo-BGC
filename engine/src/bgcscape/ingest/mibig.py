@@ -39,7 +39,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from bgcscape.ingest._util import IngestReport, get_or_create_or_update
+from bgcscape.ingest._util import IngestReport, get_or_create_or_update, hybrid_subtype
 from bgcscape.models import BGC, BGCClass, BGCCompoundLink, Compound, EvidenceLevel, Genome, Source, Taxon, TaxonRank
 from bgcscape.models.genome import AssemblyLevel
 from bgcscape.schemas import BGCCompoundLinkCreate, BGCCreate, CompoundCreate, GenomeCreate, TaxonCreate
@@ -124,18 +124,6 @@ class ParsedMibigEntry:
     raw: dict[str, Any] = field(repr=False)
 
 
-def _hybrid_subtype(mapped: list[BGCClass]) -> str:
-    """Canonical `nrps+pks`-style subtype for a hybrid — the frontend
-    splits `subtype` on `+` and expects BGCClass *values*, not MIBiG's
-    product vocabulary ("NRP", "Polyketide").
-
-    De-duped and **sorted**: MIBiG records the same hybrid in whichever
-    order the curator listed the classes, so the real 4.0 release contains
-    both `nrps+pks` (358 entries) and `pks+nrps` (36). Unsorted, those read
-    as two different subtypes in the class filter, the donut and the clade
-    comparison — the same cluster type counted twice under different names.
-    """
-    return "+".join(sorted({cls.value for cls in mapped}))
 
 
 def _map_bgc_class(class_names: list[str]) -> tuple[BGCClass, str | None]:
@@ -146,7 +134,7 @@ def _map_bgc_class(class_names: list[str]) -> tuple[BGCClass, str | None]:
         # Either a single class, or several MIBiG sub-blocks that all
         # collapse to the same BGCClass (not a real hybrid).
         return mapped[0], None
-    return BGCClass.HYBRID, _hybrid_subtype(mapped)
+    return BGCClass.HYBRID, hybrid_subtype(mapped)
 
 
 def detect_mibig_schema(raw: dict[str, Any]) -> str:
@@ -214,7 +202,7 @@ def parse_mibig_entry_v3(raw: dict[str, Any]) -> ParsedMibigEntry:
     else:
         # Canonical nrps+pks-style, not MIBiG 3.x's "NRP+Polyketide": the
         # frontend splits this on "+" and needs BGCClass values.
-        bgc_class, subtype = BGCClass.HYBRID, _hybrid_subtype(mapped)
+        bgc_class, subtype = BGCClass.HYBRID, hybrid_subtype(mapped)
 
     compounds: list[ParsedMibigCompound] = []
     for index, compound_raw in enumerate(cluster.get("compounds", [])):

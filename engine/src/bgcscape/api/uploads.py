@@ -20,6 +20,14 @@ So one call does the whole chain, and reports honestly which rung it reached:
 "unplaced" is a real outcome, not an error: a genome with no organism name,
 or one whose genus GTDB does not carry (a fungus, say), is kept and counted
 but honestly reported as absent from the tree rather than quietly dropped.
+
+An optional BiG-SCAPE clustering TSV can ride along. It is what turns "the
+same BGC, found elsewhere" from a guess into a fact: antiSMASH alone gives
+a biosynthetic class, and "every other PKS in the corpus" is a quarter of
+the tree, not an answer. A clustering file puts the uploaded regions into
+real families beside the MIBiG references in the same run, and those family
+ids are what the frontend highlights. Without the file, nothing is
+highlighted but the lineage — which is the honest amount to show.
 """
 from __future__ import annotations
 
@@ -30,11 +38,12 @@ from typing import Any, Literal
 from sqlalchemy.orm import Session
 
 from bgcscape.ingest.antismash import ingest_antismash_result
+from bgcscape.ingest.bigscape import ingest_bigscape_clustering, parse_cutoff_from_filename
 from bgcscape.ingest.graft import genus_token, normalize_genus
-from bgcscape.models import Genome, Source, SourceType, Taxon, TaxonRank
+from bgcscape.models import BGC, Genome, Source, SourceType, Taxon, TaxonRank
 from bgcscape.models.base import EvidenceLevel
 from bgcscape.schemas import TaxonCreate
-from bgcscape.ingest._util import get_or_create_or_update
+from bgcscape.ingest._util import IngestReport, get_or_create_or_update
 
 Placement = Literal["grafted", "species_only", "unplaced"]
 
@@ -195,3 +204,86 @@ def ingest_uploaded_antismash(
 
     session.commit()
     return result
+
+@dataclass
+class ClusteringOutcome:
+    """What became of an optional BiG-SCAPE clustering file."""
+
+    filename: str
+    cutoff: float | None = None
+    memberships_created: int = 0
+    memberships_updated: int = 0
+    #: Rows naming a region this database does not hold. Expected rather
+    #: than wrong: a real BiG-SCAPE run mixes in MIBiG reference clusters
+    #: and often other genomes besides the ones being uploaded.
+    unmatched_rows: int = 0
+    #: Families that at least one of the uploaded genomes' clusters landed
+    #: in. This is the whole point of accepting the file — it is what makes
+    #: "the same BGC, found elsewhere" answerable rather than guessed at
+    #: from biosynthetic class.
+    family_ids: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+
+
+def ingest_uploaded_clustering(
+    session: Session,
+    *,
+    source: Source,
+    rows: list[dict[str, str]],
+    filename: str,
+    genome_accessions: list[str],
+    cutoff: float | None = None,
+) -> ClusteringOutcome:
+    """Load a BiG-SCAPE clustering TSV and report which families the freshly
+    uploaded genomes' clusters joined.
+
+    The join needs no translation: `BGC.external_ref` is antiSMASH's own
+    per-region GenBank stem, which is exactly what BiG-SCAPE's `GBK` column
+    holds (see ingest/bigscape.py). MIBiG reference clusters in the same run
+    match too, by accession — and capturing those is the point, because a
+    family containing both a novel cluster and a characterized one is the
+    statement a reader actually wants.
+    """
+    outcome = ClusteringOutcome(filename=filename)
+    outcome.cutoff = cutoff if cutoff is not None else parse_cutoff_from_filename(filename)
+    if outcome.cutoff is None:
+        outcome.errors.append(
+            f"Could not read a similarity cutoff from '{filename}'. BiG-SCAPE names these "
+            "'..._clustering_c0.3.tsv'; a family label only means something within one cutoff, "
+            "so it cannot be guessed."
+        )
+        return outcome
+
+    report: IngestReport = ingest_bigscape_clustering(
+        session,
+        source,
+        rows,
+        cutoff=outcome.cutoff,
+        clustering_method=f"BiG-SCAPE (upload, c{outcome.cutoff})",
+    )
+    outcome.memberships_created = report.created
+    outcome.memberships_updated = report.updated
+    outcome.unmatched_rows = report.skipped
+    outcome.errors.extend(f"{identifier}: {message}" for identifier, message in report.errors)
+
+    # Which families did THIS upload's clusters end up in? Read back rather
+    # than tracked during ingestion, so the answer reflects what is actually
+    # in the database — including families the genome already belonged to
+    # from an earlier run.
+    if genome_accessions:
+        rows_ = (
+            session.query(BGC)
+            .join(Genome, Genome.id == BGC.genome_id)
+            .filter(Genome.accession.in_(genome_accessions))
+            .all()
+        )
+        seen: list[str] = []
+        for bgc in rows_:
+            for membership in bgc.family_memberships:
+                fid = str(membership.family_id)
+                if fid not in seen:
+                    seen.append(fid)
+        outcome.family_ids = seen
+
+    session.commit()
+    return outcome

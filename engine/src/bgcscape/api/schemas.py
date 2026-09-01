@@ -475,8 +475,30 @@ class UploadedGenomeOut(BaseModel):
     errors: list[str] = []
 
 
+class ClusteringOutcomeOut(BaseModel):
+    """What became of an optional BiG-SCAPE clustering file.
+
+    `family_ids` is the payload the tree actually uses: the families the
+    uploaded genomes' own clusters landed in. Highlighting those is the only
+    way to say "this same cluster occurs here too" — antiSMASH alone gives a
+    biosynthetic class, and every other PKS in the corpus is a quarter of the
+    tree rather than an answer.
+    """
+
+    filename: str
+    cutoff: float | None = None
+    memberships_created: int = 0
+    memberships_updated: int = 0
+    #: Rows naming a region this database does not hold — expected, since a
+    #: real run mixes in MIBiG references and other genomes.
+    unmatched_rows: int = 0
+    family_ids: list[str] = []
+    errors: list[str] = []
+
+
 class AntismashUploadResponse(BaseModel):
     genomes: list[UploadedGenomeOut]
     total_regions: int
     #: Files that could not be read at all (not JSON, too large, empty).
     rejected: list[str] = []
+    clustering: ClusteringOutcomeOut | None = None

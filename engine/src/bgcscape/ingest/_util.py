@@ -11,11 +11,36 @@ callers never know a row's UUID in advance).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from sqlalchemy.orm import Session
 
+if TYPE_CHECKING:  # pragma: no cover - import cycle only matters to type checkers
+    from bgcscape.models import BGCClass
+
 ModelT = TypeVar("ModelT")
+
+
+def hybrid_subtype(mapped: "list[BGCClass]") -> str:
+    """Canonical `nrps+pks`-style subtype for a hybrid — the frontend splits
+    `subtype` on `+` and expects BGCClass *values*, not a source's own
+    product vocabulary (MIBiG's "NRP"/"Polyketide", antiSMASH's
+    "NRPS"/"PKS").
+
+    De-duped and **sorted**: MIBiG records the same hybrid in whichever
+    order the curator listed the classes, so the real 4.0 release contains
+    both `nrps+pks` (358 entries) and `pks+nrps` (36). Unsorted, those read
+    as two different subtypes in the class filter, the donut and the clade
+    comparison — the same cluster type counted twice under different names.
+
+    Lives here rather than in one loader because it is a cross-source
+    contract, and the one time it was not shared it broke silently:
+    antiSMASH ingestion joined antiSMASH's OWN category names instead
+    ("NRPS+PKS"), so an uploaded hybrid matched no entry in the frontend's
+    lowercase class list and was dimmed out of the tree it had just been
+    added to.
+    """
+    return "+".join(sorted({cls.value for cls in mapped}))
 
 
 def get_or_create_or_update(

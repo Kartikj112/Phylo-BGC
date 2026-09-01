@@ -36,6 +36,7 @@ import {
   applyGenomeFilters,
   familyDistribution,
   familyMembershipSets,
+  familyMembershipSetsForAny,
   familyTreeIndex,
   findMibigEntry,
   findTaxonKeyByName,
@@ -46,6 +47,7 @@ import {
   type CollapseLevel,
   type FamilyIndexEntry,
   type GenomeFilters,
+  uploadLineage,
   type TreeOrientation,
 } from "@/lib/tree-logic";
 
@@ -132,6 +134,13 @@ export default function HomePage() {
   // reader picks a side; the upload dialog is reachable again afterwards
   // from the toolbar, so choosing "browse" is not a one-way door.
   const [gate, setGate] = useState<"welcome" | "upload" | "none">("welcome");
+  // What the last upload added, so the tree can show it. Accessions rather
+  // than ids because that is what the response carries and what survives the
+  // tree re-fetch; families come from the optional BiG-SCAPE file and are
+  // empty without it.
+  const [uploaded, setUploaded] = useState<{ accessions: string[]; familyIds: string[] } | null>(
+    null,
+  );
 
   /** Close the drawer after an action that changes the tree, so the result
    * is visible without a second tap. Desktop keeps the rail pinned open, so
@@ -165,6 +174,25 @@ export default function HomePage() {
     [filtered, focusKey],
   );
   const root = focused?.root ?? null;
+
+  /** The two upload highlights, over the FULL tree so they survive filtering.
+   *
+   * Recomputed from the tree rather than remembered from the upload
+   * response, because the response's ids describe the database and this has
+   * to describe what is on screen — after a re-fetch those are the same
+   * genomes, but only the tree knows where they sit. */
+  const uploadHighlight = useMemo(() => {
+    if (!fullRoot || !uploaded) return null;
+    const { lineageKeys, genomeKeys } = uploadLineage(fullRoot, uploaded.accessions);
+    if (genomeKeys.size === 0) return null;
+    const shared = familyMembershipSetsForAny(fullRoot, uploaded.familyIds);
+    // The upload's own genome is on its lineage already; leaving it in the
+    // shared set too would double-paint the tip in the wrong colour.
+    const sharedFamilyKeys = new Set(
+      [...shared.nodeKeys].filter((key) => !lineageKeys.has(key)),
+    );
+    return { lineageKeys, genomeKeys, sharedFamilyKeys };
+  }, [fullRoot, uploaded]);
 
   // ----- GCF distribution: the central question -----------------------------
   // All derived from `family_ids` already present on every BGC in the tree
@@ -254,16 +282,20 @@ export default function HomePage() {
    * the search box already forces open every collapsed clade on the way to
    * a match and frames the result, which is exactly "take me to my genome"
    * and is code that is already proven rather than a second focus path. */
-  function handleIngested(accessions: string[]): void {
+  function handleIngested(accessions: string[], familyIds: string[]): void {
     reloadTree();
-    if (accessions.length > 0) {
-      setQuery(accessions[0]!);
-      // A new genome carries antiSMASH regions, so the default
-      // only-genomes-with-BGCs filter keeps it — but a taxon filter or an
-      // active focus from earlier browsing would hide it.
-      setFocusKey(null);
-      setSelectedFamilyId(null);
-    }
+    if (accessions.length === 0) return;
+    setUploaded({ accessions, familyIds });
+    // A focus left over from earlier browsing would crop the tree to a clade
+    // the new genome may not be in, and a selected family would fight the
+    // upload's own highlight for the same green.
+    setFocusKey(null);
+    setSelectedFamilyId(null);
+    // Deliberately NOT setting the search query, which is what this used to
+    // do: searching dims every branch that does not match the accession —
+    // precisely the shared-family branches the highlight exists to show. The
+    // canvas frames itself on the highlight instead.
+    setQuery("");
   }
 
   /** Record a purely visual drag. Accumulates so a drag reads as continuous
@@ -732,6 +764,48 @@ export default function HomePage() {
               <BgcTypeDonut scope={treeScope} />
             </div>
           )}
+          {/* Legend for the upload highlight. Two colours on a tree mean
+              nothing without it, and the second line has to state what the
+              green is claiming — "shares a BiG-SCAPE family" is a much
+              narrower statement than "similar", and the difference is the
+              whole reason the clustering file is asked for. */}
+          {isTreeView && uploadHighlight && (
+            <div className="absolute left-4 top-4 z-10 max-w-xs rounded border border-line bg-card/95 px-3 py-2.5 shadow-sm">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-ink">Your upload</p>
+                  <div className="mt-1.5 space-y-1 text-[11px] text-ink-muted">
+                    <p className="flex items-center gap-1.5">
+                      <span className="inline-block h-0.5 w-4 flex-shrink-0 rounded bg-signal" />
+                      lineage to {uploaded?.accessions.length ?? 0} uploaded genome
+                      {(uploaded?.accessions.length ?? 0) === 1 ? "" : "s"}
+                    </p>
+                    {uploadHighlight.sharedFamilyKeys.size > 0 ? (
+                      <p className="flex items-start gap-1.5">
+                        <span className="mt-1.5 inline-block h-0.5 w-4 flex-shrink-0 rounded bg-[#2C5F52]" />
+                        <span>
+                          shares a BiG-SCAPE family with one of your clusters
+                        </span>
+                      </p>
+                    ) : (
+                      <p className="text-ink-faint">
+                        {uploaded?.familyIds.length
+                          ? "No other branch carries these families."
+                          : "Add a BiG-SCAPE clustering file to also mark where the same clusters occur."}
+                      </p>
+                    )}
+                  </div>
+                </div>
+                <button
+                  onClick={() => setUploaded(null)}
+                  aria-label="Clear the upload highlight"
+                  className="-mr-1 -mt-1 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded text-ink-faint hover:bg-paper hover:text-ink"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            </div>
+          )}
           {view === "flow" && <SankeyView scope={taxonomy} />}
           {view === "heatmap" && <HeatmapView scope={taxonomy} />}
           {isTreeView && loading && (
@@ -762,6 +836,7 @@ export default function HomePage() {
               svgRef={svgRef}
               orientation={orientation}
               familyMembership={familyMembership}
+              uploadHighlight={uploadHighlight}
               familyEnclosingKeys={familyEnclosingKeys}
               familyLabel={selectedFamily?.label ?? null}
               fitSignal={fitSignal}

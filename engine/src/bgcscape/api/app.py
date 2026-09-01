@@ -10,6 +10,8 @@ Requires the `api` extra: `pip install -e ".[api]"`.
 """
 from __future__ import annotations
 
+import csv
+import io
 import json
 import os
 import uuid
@@ -28,7 +30,11 @@ from sqlalchemy.orm import Session, selectinload
 from bgcscape import __version__
 from bgcscape.api.flows import build_taxonomy_class_flow
 from bgcscape.api.lazy_tree import LazyTreeError, build_lazy_tree
-from bgcscape.api.uploads import get_or_create_upload_source, ingest_uploaded_antismash
+from bgcscape.api.uploads import (
+    get_or_create_upload_source,
+    ingest_uploaded_antismash,
+    ingest_uploaded_clustering,
+)
 from bgcscape.api.comparison import (
     all_family_labels,
     build_clade_profile,
@@ -37,6 +43,7 @@ from bgcscape.api.comparison import (
 )
 from bgcscape.api.schemas import (
     AntismashUploadResponse,
+    ClusteringOutcomeOut,
     BGCDetail,
     BGCFamilyDetail,
     BGCFamilyMember,
@@ -858,6 +865,15 @@ async def ingest_antismash_upload(
             "output contains no lineage."
         ),
     ),
+    clustering: UploadFile | None = File(
+        None,
+        description=(
+            "Optional BiG-SCAPE '*_clustering_c{cutoff}.tsv'. Supplying it is what makes "
+            "'the same cluster, found elsewhere' answerable: it puts these regions into real "
+            "families alongside the MIBiG references in the same run."
+        ),
+    ),
+    cutoff: float | None = Form(None),
     is_mag: bool = Form(False),
     label: str = Form("user upload"),
     session: Session = Depends(get_session),
@@ -917,10 +933,36 @@ async def ingest_antismash_upload(
         )
         results.append(UploadedGenomeOut(**asdict(outcome)))
 
+    # The clustering file is loaded AFTER every region exists, because it
+    # joins on BGC.external_ref — rows for regions not yet ingested would
+    # count as unmatched and the families would come back empty.
+    clustering_out: ClusteringOutcomeOut | None = None
+    if clustering is not None and clustering.filename:
+        payload = await clustering.read()
+        if len(payload) > _MAX_UPLOAD_BYTES:
+            rejected.append(f"{clustering.filename}: exceeds the upload size limit")
+        else:
+            try:
+                text = payload.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                rejected.append(f"{clustering.filename}: not UTF-8 text ({exc})")
+            else:
+                rows = list(csv.DictReader(io.StringIO(text), delimiter="	"))
+                outcome = ingest_uploaded_clustering(
+                    session,
+                    source=source,
+                    rows=rows,
+                    filename=clustering.filename,
+                    genome_accessions=[g.accession for g in results],
+                    cutoff=cutoff,
+                )
+                clustering_out = ClusteringOutcomeOut(**asdict(outcome))
+
     return AntismashUploadResponse(
         genomes=results,
         total_regions=sum(g.regions_created + g.regions_updated for g in results),
         rejected=rejected,
+        clustering=clustering_out,
     )
 
 

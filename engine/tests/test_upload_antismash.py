@@ -12,6 +12,7 @@ actually gets the genome drawn.
 from __future__ import annotations
 
 import json
+import uuid
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -27,6 +28,7 @@ from bgcscape.models import Base, Genome, Source, SourceType, Taxon, TaxonRank
 FIXTURES = Path(__file__).parent / "fixtures"
 RESULT_PATH = FIXTURES / "antismash_test_result.json"
 GTDB_TSV = FIXTURES / "gtdb_metadata_test.tsv"
+CLUSTERING_TSV = FIXTURES / "mix_clustering_c0.3.tsv"
 
 
 @pytest.fixture()
@@ -253,3 +255,116 @@ def test_too_many_files_is_refused_before_any_are_read(upload_client):
         "/api/v1/ingest/antismash", files=files, data={"organism": "Streptomyces coelicolor"}
     )
     assert response.status_code == 413
+
+# --- the optional BiG-SCAPE half -------------------------------------------
+#
+# Without a clustering file the only honest highlight is the lineage: a
+# biosynthetic class is not a cluster, and "every other PKS" is a quarter of
+# the corpus. These check that supplying one produces real family ids, and
+# that a file which cannot be read fails loudly instead of silently
+# returning no families.
+
+
+def _upload_with_clustering(client, *, tsv: bytes | None = None, filename="mix_clustering_c0.3.tsv"):
+    files = [
+        ("files", ("GCF_UPLOAD001.1.json", RESULT_PATH.read_bytes(), "application/json")),
+    ]
+    if tsv is not None:
+        files.append(("clustering", (filename, tsv, "text/tab-separated-values")))
+    return client.post(
+        "/api/v1/ingest/antismash",
+        files=files,
+        data={"organism": "Streptomyces coelicolor"},
+    )
+
+
+def test_without_a_clustering_file_no_families_are_claimed(upload_client):
+    client, _ = upload_client
+    body = _upload(client, organism="Streptomyces coelicolor").json()
+    # Not an empty list of families — no clustering section at all, so the
+    # frontend cannot mistake "we did not look" for "there are none".
+    assert body["clustering"] is None
+
+
+def test_a_clustering_file_puts_the_uploaded_regions_into_real_families(upload_client):
+    client, session_local = upload_client
+    # The fixture clusters the same three regions this antiSMASH fixture
+    # produces, so the join is exercised for real rather than mocked.
+    body = _upload_with_clustering(client, tsv=CLUSTERING_TSV.read_bytes()).json()
+
+    clustering = body["clustering"]
+    assert clustering is not None
+    assert clustering["cutoff"] == 0.3  # read from BiG-SCAPE's own filename
+    assert clustering["memberships_created"] > 0
+    assert clustering["family_ids"], "the uploaded genome's clusters must land in a family"
+    assert clustering["errors"] == []
+
+    # And those ids have to be real families the tree can be matched against.
+    with session_local() as s:
+        from bgcscape.models import BGCFamily
+
+        for fid in clustering["family_ids"]:
+            assert s.query(BGCFamily).filter_by(id=uuid.UUID(fid)).count() == 1
+
+
+def test_family_ids_reach_the_tree_payload_so_the_highlight_has_something_to_match(upload_client):
+    client, _ = upload_client
+    body = _upload_with_clustering(client, tsv=CLUSTERING_TSV.read_bytes()).json()
+    families = set(body["clustering"]["family_ids"])
+
+    # The highlight is computed in the browser from the tree payload, so the
+    # ids are useless unless they also travel on the BGCs there.
+    tree = client.get("/api/v1/taxonomy-tree?scope=prokaryote").json()
+    seen: set[str] = set()
+
+    def walk(node):
+        for genome in node.get("direct_genomes", []):
+            for bgc in genome.get("bgcs", []):
+                seen.update(bgc.get("family_ids", []))
+        for child in node.get("children", []):
+            walk(child)
+
+    walk(tree)
+    assert families & seen, "no uploaded family id appears on any BGC in the tree payload"
+
+
+def test_a_cutoff_that_cannot_be_read_is_refused_rather_than_guessed(upload_client):
+    client, _ = upload_client
+    body = _upload_with_clustering(
+        client, tsv=CLUSTERING_TSV.read_bytes(), filename="clustering.tsv"
+    ).json()
+
+    clustering = body["clustering"]
+    # A family label only means something within one cutoff, so inventing
+    # one would silently merge unrelated groupings.
+    assert clustering["cutoff"] is None
+    assert clustering["family_ids"] == []
+    assert any("cutoff" in message for message in clustering["errors"])
+
+
+def test_rows_for_regions_we_do_not_hold_are_counted_not_errors(upload_client):
+    client, _ = upload_client
+    stray = "\t".join(
+        ["NOT_OURS.region001_region_1", "NOT_OURS.region001", "region", "1", "9", "FAM_09999"]
+    )
+    extra = CLUSTERING_TSV.read_text().rstrip("\n") + "\n" + stray + "\n"
+    body = _upload_with_clustering(client, tsv=extra.encode()).json()
+
+    clustering = body["clustering"]
+    # A real run mixes in MIBiG references and other genomes; those rows are
+    # expected company, not failures.
+    assert clustering["unmatched_rows"] >= 1
+    assert clustering["errors"] == []
+
+
+def test_the_antismash_files_are_ingested_before_the_clustering_is_joined(upload_client):
+    """Ordering, pinned deliberately.
+
+    The join is on BGC.external_ref, so a clustering file processed before
+    the regions exist would match nothing and quietly report zero families —
+    a green request with an empty highlight.
+    """
+    client, _ = upload_client
+    body = _upload_with_clustering(client, tsv=CLUSTERING_TSV.read_bytes()).json()
+    assert body["genomes"][0]["regions_created"] == 3
+    assert body["clustering"]["memberships_created"] > 0

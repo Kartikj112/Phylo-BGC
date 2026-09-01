@@ -421,6 +421,7 @@ export interface components {
              * @default []
              */
             rejected: string[];
+            clustering?: components["schemas"]["ClusteringOutcomeOut"] | null;
         };
         /**
          * AssemblyLevel
@@ -633,6 +634,13 @@ export interface components {
              */
             organism?: string | null;
             /**
+             * Clustering
+             * @description Optional BiG-SCAPE '*_clustering_c{cutoff}.tsv'. Supplying it is what makes 'the same cluster, found elsewhere' answerable: it puts these regions into real families alongside the MIBiG references in the same run.
+             */
+            clustering?: string | null;
+            /** Cutoff */
+            cutoff?: number | null;
+            /**
              * Is Mag
              * @default false
              */
@@ -693,6 +701,47 @@ export interface components {
             count: number;
             /** Per Genome */
             per_genome?: number | null;
+        };
+        /**
+         * ClusteringOutcomeOut
+         * @description What became of an optional BiG-SCAPE clustering file.
+         *
+         *     `family_ids` is the payload the tree actually uses: the families the
+         *     uploaded genomes' own clusters landed in. Highlighting those is the only
+         *     way to say "this same cluster occurs here too" — antiSMASH alone gives a
+         *     biosynthetic class, and every other PKS in the corpus is a quarter of the
+         *     tree rather than an answer.
+         */
+        ClusteringOutcomeOut: {
+            /** Filename */
+            filename: string;
+            /** Cutoff */
+            cutoff?: number | null;
+            /**
+             * Memberships Created
+             * @default 0
+             */
+            memberships_created: number;
+            /**
+             * Memberships Updated
+             * @default 0
+             */
+            memberships_updated: number;
+            /**
+             * Unmatched Rows
+             * @default 0
+             */
+            unmatched_rows: number;
+            /**
+             * Family Ids
+             * @default []
+             */
+            family_ids: string[];
+            /**
+             * Errors
+             * @default []
+             */
+            errors: string[];
         };
         /** ComponentScoreOut */
         ComponentScoreOut: {

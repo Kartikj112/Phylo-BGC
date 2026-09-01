@@ -120,13 +120,17 @@ export function fetchBgc(bgcId: string): Promise<BGCDetail> {
  */
 export function uploadAntismashResults(
   files: File[],
-  options: { organism: string; isMag?: boolean; label?: string },
+  options: { organism: string; isMag?: boolean; label?: string; clustering?: File | null },
 ): Promise<AntismashUploadResponse> {
   const body = new FormData();
   for (const file of files) body.append("files", file);
   body.append("organism", options.organism);
   body.append("is_mag", String(options.isMag ?? false));
   if (options.label) body.append("label", options.label);
+  // Optional, and the difference between "here is your genome" and "here is
+  // your genome and everywhere else this same cluster occurs": antiSMASH
+  // alone can only say two clusters share a biosynthetic class.
+  if (options.clustering) body.append("clustering", options.clustering);
   return postForm<AntismashUploadResponse>("/api/v1/ingest/antismash", body);
 }
 

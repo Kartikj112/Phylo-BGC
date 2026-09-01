@@ -48,8 +48,11 @@ const RESULT_JSON = JSON.stringify({
 });
 
 async function attach(page: Page, name = "GCF_E2E00001.1.json") {
+  // `.first()`: the dialog now carries two file inputs, the antiSMASH JSONs
+  // and the optional BiG-SCAPE clustering TSV.
   await dialog(page)
     .locator('input[type="file"]')
+    .first()
     .setInputFiles({ name, mimeType: "application/json", buffer: Buffer.from(RESULT_JSON) });
 }
 
@@ -171,12 +174,20 @@ test("a grafted genome is reported as on the tree, and the tree is re-fetched", 
   // tree from before the upload.
   await expect.poll(() => treeFetches, { timeout: 15_000 }).toBeGreaterThan(0);
 
-  // And it takes the reader to what they just added.
+  // And it takes the reader to what they just added — via the highlight,
+  // not by filling the search box. Searching dimmed every branch that did
+  // not match the accession, which is exactly the set of shared-family
+  // branches the highlight exists to show, so the box is left alone.
   await page.getByRole("button", { name: "View the tree" }).click();
   await expect(dialog(page)).toHaveCount(0);
-  await expect(page.getByPlaceholder("Search taxa, accessions, compounds")).toHaveValue(
-    "GCF_E2E00001.1",
-  );
+  await expect(page.getByPlaceholder("Search taxa, accessions, compounds")).toHaveValue("");
+
+  // No highlight here, and that is correct: the POST is stubbed, so the real
+  // corpus behind this test does not actually contain GCF_E2E00001.1. The
+  // highlight is computed from the tree on screen rather than from the
+  // response, so it cannot draw a lineage to a genome that is not there.
+  // e2e/highlight.spec.ts plants the genome and covers the drawing.
+  await expect(page.getByText("Your upload", { exact: true })).toHaveCount(0);
 });
 
 test("a genome that could not be placed says so instead of claiming success", async ({ page }) => {

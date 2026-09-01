@@ -43,6 +43,7 @@ import {
   genomeHasFamily,
   nodeHasFamily,
   familyMembershipSets,
+  familyMembershipSetsForAny,
   familyEnclosingClades,
   familyDistribution,
   familyTreeIndex,
@@ -59,6 +60,7 @@ import {
   hiddenChildrenCount,
   makeChildrenAccessor,
   matchesQuery,
+  uploadLineage,
   nodeKey,
   nodeVisibleClasses,
   toDisplayChildren,
@@ -1461,5 +1463,107 @@ describe("tip sizing", () => {
     }
     expect(bgcSizeTier(0).radius).toBeLessThan(bgcSizeTier(100).radius);
     expect(bgcSizeTier(3).radius).toBeLessThan(bgcSizeTier(30).radius);
+  });
+});
+
+describe("uploadLineage", () => {
+  it("returns the unbroken path from the root down to the named genome", () => {
+    const tree = buildFixtureTree();
+    const root = toRootDisplayNode(tree);
+    const { lineageKeys, genomeKeys } = uploadLineage(root, ["GCF_TEST_SETAE.1"]);
+
+    // The genome itself, plus every ancestor. A partial path would draw as
+    // two disconnected marks rather than as a lineage.
+    const names = new Set<string>();
+    const walk = (node: TaxonTreeNode) => {
+      if (lineageKeys.has(node.id ?? "__root__")) names.add(node.name);
+      node.children.forEach(walk);
+    };
+    walk(tree);
+
+    expect(names).toContain("Bacteria");
+    expect(names).toContain("Actinomycetota");
+    expect(names).toContain("Streptomycetaceae");
+    expect(names).toContain("Kitasatospora");
+    expect(names).toContain("Kitasatospora setae");
+    expect(genomeKeys.size).toBe(1);
+  });
+
+  it("does not mark the sibling branches hanging off that path", () => {
+    const tree = buildFixtureTree();
+    const root = toRootDisplayNode(tree);
+    const { lineageKeys } = uploadLineage(root, ["GCF_TEST_SETAE.1"]);
+
+    // Streptomyces is a sibling of Kitasatospora under the same family. It
+    // shares ancestors with the upload but is not on its lineage.
+    const strep = findTaxonByName(tree, "Streptomyces")!;
+    expect(lineageKeys.has(strep.id!)).toBe(false);
+  });
+
+  it("covers every named genome when several were uploaded at once", () => {
+    const root = toRootDisplayNode(buildFixtureTree());
+    const { genomeKeys } = uploadLineage(root, [
+      "GCF_TEST_SETAE.1",
+      "GCF_TEST_COELICOLOR.1",
+    ]);
+    expect(genomeKeys.size).toBe(2);
+  });
+
+  it("is empty for an accession the tree does not carry", () => {
+    const root = toRootDisplayNode(buildFixtureTree());
+    const { lineageKeys, genomeKeys } = uploadLineage(root, ["GCF_NOT_HERE.1"]);
+    expect(lineageKeys.size).toBe(0);
+    expect(genomeKeys.size).toBe(0);
+  });
+
+  it("is empty when nothing was uploaded", () => {
+    const root = toRootDisplayNode(buildFixtureTree());
+    expect(uploadLineage(root, []).lineageKeys.size).toBe(0);
+  });
+});
+
+describe("familyMembershipSetsForAny", () => {
+  it("is the union over several families, not one of them", () => {
+    const root = toRootDisplayNode(buildFixtureTree());
+    const shared = familyMembershipSets(root, FAM_SHARED);
+    const local = familyMembershipSets(root, FAM_LOCAL);
+    const both = familyMembershipSetsForAny(root, [FAM_SHARED, FAM_LOCAL]);
+
+    for (const key of shared.nodeKeys) expect(both.nodeKeys.has(key)).toBe(true);
+    for (const key of local.nodeKeys) expect(both.nodeKeys.has(key)).toBe(true);
+    // The two fixture families sit in different genera, so the union is
+    // strictly bigger than either — otherwise this would pass trivially.
+    expect(both.nodeKeys.size).toBeGreaterThan(shared.nodeKeys.size);
+  });
+
+  it("agrees exactly with the single-family form when given one id", () => {
+    const root = toRootDisplayNode(buildFixtureTree());
+    const one = familyMembershipSets(root, FAM_SHARED);
+    const viaAny = familyMembershipSetsForAny(root, [FAM_SHARED]);
+
+    expect([...viaAny.nodeKeys].sort()).toEqual([...one.nodeKeys].sort());
+    expect([...viaAny.genomeKeys].sort()).toEqual([...one.genomeKeys].sort());
+    expect([...viaAny.memberBgcCountByNode.entries()].sort()).toEqual(
+      [...one.memberBgcCountByNode.entries()].sort(),
+    );
+  });
+
+  it("aggregates both families' members at their common ancestor", () => {
+    const tree = buildFixtureTree();
+    const root = toRootDisplayNode(tree);
+    // The avermitilis genome carries FAM_LOCAL; coelicolor carries
+    // FAM_SHARED. Their common ancestor must count both, which is what
+    // makes the union a single answerable "where does any of this occur".
+    const both = familyMembershipSetsForAny(root, [FAM_SHARED, FAM_LOCAL]);
+    const strep = findTaxonByName(tree, "Streptomyces")!;
+    expect(both.memberGenomeCountByNode.get(strep.id!)).toBe(2);
+    expect(both.memberBgcCountByNode.get(strep.id!)).toBe(2);
+  });
+
+  it("is empty for no families, so an upload without clustering claims nothing", () => {
+    const root = toRootDisplayNode(buildFixtureTree());
+    const none = familyMembershipSetsForAny(root, []);
+    expect(none.nodeKeys.size).toBe(0);
+    expect(none.genomeKeys.size).toBe(0);
   });
 });

@@ -37,6 +37,17 @@ import {
   type TreeOrientation,
 } from "@/lib/tree-logic";
 
+export interface UploadHighlight {
+  /** nodeKey() of every node from the root down to each uploaded genome. */
+  lineageKeys: ReadonlySet<string>;
+  /** nodeKey() of the uploaded genomes themselves. */
+  genomeKeys: ReadonlySet<string>;
+  /** Nodes carrying a cluster in the same BiG-SCAPE family as one of the
+   * upload's. Empty when no clustering file was supplied — antiSMASH alone
+   * cannot say two clusters are the same, only that they share a class. */
+  sharedFamilyKeys: ReadonlySet<string>;
+}
+
 interface TreeCanvasProps {
   root: TaxonDisplayNode;
   collapsed: Set<string>;
@@ -60,6 +71,13 @@ interface TreeCanvasProps {
    * a ring so "the smallest clade that contains this" reads at a glance. */
   familyEnclosingKeys?: ReadonlySet<string>;
   familyLabel?: string | null;
+  /** Highlight for a just-completed antiSMASH upload: the lineage down to
+   * each new genome, plus every branch sharing a BiG-SCAPE family with one
+   * of its clusters. Two separate sets because they answer two different
+   * questions and must not read as one mark — "where my genome sits" is a
+   * fact about the upload, "where this same cluster also occurs" is a claim
+   * about the corpus. */
+  uploadHighlight?: UploadHighlight | null;
   /** Bump to ask the canvas to recentre (family select, frame toggle …). */
   fitSignal?: number;
   /** Purely visual per-node nudges from dragging, keyed by nodeKey(). Never
@@ -162,6 +180,7 @@ export function TreeCanvas({
   svgRef,
   orientation,
   familyMembership,
+  uploadHighlight,
   familyEnclosingKeys,
   familyLabel,
   fitSignal,
@@ -174,8 +193,20 @@ export function TreeCanvas({
   // collapsed clade would otherwise never render, which made search look
   // broken rather than filtered.
   const openCollapsed = useMemo(
-    () => effectiveCollapsed(root, collapsed, searchQuery),
-    [root, collapsed, searchQuery],
+    () => {
+      const open = effectiveCollapsed(root, collapsed, searchQuery);
+      // Force the upload's lineage open too, for the same reason search
+      // does: the tree opens collapsed to a readable level, so the new
+      // genome is almost always inside a closed clade. Without this the
+      // highlight drew a branch that stopped at whatever depth the reader
+      // happened to be at — "the path to your genome", ending nowhere near
+      // it. Only the lineage, never the shared-family set: expanding every
+      // clade that happens to carry a related cluster would blow the tree
+      // open across the whole corpus.
+      if (uploadHighlight) for (const key of uploadHighlight.lineageKeys) open.delete(key);
+      return open;
+    },
+    [root, collapsed, searchQuery, uploadHighlight],
   );
   const containerRef = useRef<HTMLDivElement | null>(null);
   const zoomLayerRef = useRef<SVGGElement | null>(null);
@@ -449,6 +480,46 @@ export function TreeCanvas({
              Math.max(...ys) - Math.min(...ys) + pad * 2, SEARCH_ZOOM_MAX);
     return true;
   }, [searchQuery, nodes, isRadial, nodeOffsets, radial.size, fitToBox]);
+
+  /**
+   * Frame the tree on a just-uploaded genome and everything sharing a
+   * cluster family with it.
+   *
+   * Its own effect rather than a reuse of the search framing, because the
+   * upload deliberately does NOT set a search query any more: doing so
+   * dimmed every branch that did not match the accession, which is exactly
+   * the set of shared-family branches the highlight exists to show. So the
+   * highlight navigates on its own.
+   */
+  const fitToUpload = useCallback(() => {
+    if (!uploadHighlight || uploadHighlight.genomeKeys.size === 0) return;
+    const wanted = new Set([...uploadHighlight.genomeKeys, ...uploadHighlight.sharedFamilyKeys]);
+    const hits = nodes.filter((n) => wanted.has(nodeKey(n.data)));
+    if (hits.length === 0) return;
+
+    const pts = hits.map((n) => {
+      const p = drawnPos(n, isRadial, nodeOffsets);
+      if (!isRadial) return { x: p.y, y: p.x };
+      const a = p.x - Math.PI / 2;
+      return { x: p.y * Math.cos(a) + radial.size / 2, y: p.y * Math.sin(a) + radial.size / 2 };
+    });
+    const xs = pts.map((p) => p.x);
+    const ys = pts.map((p) => p.y);
+    const pad = SEARCH_FIT_PADDING;
+    fitToBox(
+      Math.min(...xs) - pad,
+      Math.min(...ys) - pad,
+      Math.max(...xs) - Math.min(...xs) + pad * 2,
+      Math.max(...ys) - Math.min(...ys) + pad * 2,
+      SEARCH_ZOOM_MAX,
+    );
+  }, [uploadHighlight, nodes, isRadial, nodeOffsets, radial.size, fitToBox]);
+
+  useEffect(() => {
+    if (!uploadHighlight || uploadHighlight.genomeKeys.size === 0) return;
+    const id = requestAnimationFrame(() => fitToUpload());
+    return () => cancelAnimationFrame(id);
+  }, [uploadHighlight, fitToUpload]);
 
   // Re-frame when the query changes. Depends on `nodes` too, because a hit
   // inside a collapsed clade only gets a position once the search has forced
@@ -971,11 +1042,26 @@ export function TreeCanvas({
               const width = branchWidth(target, maxSubtreeCount);
               const dominant = dominantBgcClass(target);
               const onFamilyPath = familyActive && isFamilyMember(target);
-              const stroke = onFamilyPath
-                ? COLORS.present
-                : dominant
-                  ? (BGC_CLASS_COLORS[dominant] ?? COLORS.lineStrong)
-                  : COLORS.lineStrong;
+              // A link belongs to the lineage when its TARGET does: the set
+              // holds every ancestor, so the target being on the path means
+              // the whole segment leading to it is too. Checking the source
+              // instead would light up every sibling branch hanging off the
+              // path.
+              const targetKey = nodeKey(target);
+              const onUploadPath = uploadHighlight?.lineageKeys.has(targetKey) ?? false;
+              const onSharedFamily = uploadHighlight?.sharedFamilyKeys.has(targetKey) ?? false;
+              // Lineage wins over the shared-family wash where they cross.
+              // The reader's own genome is the anchor of the whole view; a
+              // branch that is both must read as "yours" first.
+              const stroke = onUploadPath
+                ? COLORS.signal
+                : onSharedFamily
+                  ? COLORS.present
+                  : onFamilyPath
+                    ? COLORS.present
+                    : dominant
+                      ? (BGC_CLASS_COLORS[dominant] ?? COLORS.lineStrong)
+                      : COLORS.lineStrong;
               return (
                 <path
                   key={i}
@@ -999,8 +1085,20 @@ export function TreeCanvas({
                   // only ever read against other strokes, and that
                   // comparison is preserved exactly by scaling them all
                   // together.
-                  strokeWidth={(onFamilyPath ? Math.max(width, 2.5) : width) * screenScale}
-                  strokeOpacity={onFamilyPath ? 0.85 : dominant ? 0.45 : 0.6}
+                  // The lineage is drawn heaviest and fully opaque: it is a
+                  // single path through a tree of thousands of branches, and
+                  // at the default framing a 2.5px line at 0.85 opacity is
+                  // lost among the class-coloured ones around it.
+                  strokeWidth={
+                    (onUploadPath
+                      ? Math.max(width, 3.5)
+                      : onSharedFamily || onFamilyPath
+                        ? Math.max(width, 2.5)
+                        : width) * screenScale
+                  }
+                  strokeOpacity={
+                    onUploadPath ? 1 : onSharedFamily || onFamilyPath ? 0.85 : dominant ? 0.45 : 0.6
+                  }
                   strokeLinecap="round"
                   strokeLinejoin="round"
                 />
@@ -1021,14 +1119,28 @@ export function TreeCanvas({
 
               const memberHere = isFamilyMember(node);
               const familyDimmed = familyActive && !memberHere;
+              // Exempt from every recede: an upload highlight is the answer
+              // to the question just asked, so a class filter left on from
+              // earlier browsing must not fade out the branch it is pointing
+              // at. The highlight is transient and dismissible, so this
+              // cannot mask a filter permanently.
+              const uploadHere =
+                (uploadHighlight?.lineageKeys.has(key) ||
+                  uploadHighlight?.sharedFamilyKeys.has(key)) ??
+                false;
+              const isUploadedGenome = uploadHighlight?.genomeKeys.has(key) ?? false;
               const inSelectedFamily = memberHere;
               const isEnclosing = memberHere && !!familyEnclosingKeys?.has(key);
 
               const searchDimmed =
                 searchQuery.trim() !== "" && !nodeMatchesOrContains(node, searchQuery);
 
-              const hardDimmed = dimmed || genomeDimmed || searchDimmed;
-              const opacity = hardDimmed ? 0.15 : familyDimmed ? COLORS.recedeOpacity : 1;
+              const hardDimmed = !uploadHere && (dimmed || genomeDimmed || searchDimmed);
+              const opacity = hardDimmed
+                ? 0.15
+                : familyDimmed && !uploadHere
+                  ? COLORS.recedeOpacity
+                  : 1;
 
               return (
                 <g
@@ -1041,6 +1153,20 @@ export function TreeCanvas({
                   }
                   opacity={opacity}
                 >
+                  {/* The upload's own tip. A ring rather than a recolour,
+                      because the fill already encodes the genome's dominant
+                      biosynthetic class and overwriting it would trade one
+                      fact for another. Drawn here rather than inside
+                      GenomeNode so it needs no new prop threaded through,
+                      and a circle needs no radial flip. */}
+                  {isUploadedGenome && (
+                    <circle
+                      r={12 * labelScale}
+                      fill="none"
+                      stroke={COLORS.signal}
+                      strokeWidth={2 * labelScale}
+                    />
+                  )}
                   {!isGenome && (
                     <TaxonNode
                       node={node}

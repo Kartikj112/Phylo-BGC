@@ -28,6 +28,7 @@ export type DatasetProvenanceResponse = components["schemas"]["DatasetProvenance
 export type TaxonomyClassFlow = components["schemas"]["TaxonomyClassFlow"];
 export type AntismashUploadResponse = components["schemas"]["AntismashUploadResponse"];
 export type UploadedGenome = components["schemas"]["UploadedGenomeOut"];
+export type ClusteringOutcome = components["schemas"]["ClusteringOutcomeOut"];
 export type PresenceHeatmap = components["schemas"]["PresenceHeatmap"];
 export type LineageStep = components["schemas"]["LineageStep"];
 export type BGCTypeCount = components["schemas"]["BGCTypeCount"];

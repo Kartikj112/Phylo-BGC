@@ -3,7 +3,7 @@
 import { AlertTriangle, CheckCircle2, FileJson, Loader2, Upload, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, uploadAntismashResults } from "@/lib/api-client";
-import type { UploadedGenome } from "@/lib/api-types";
+import type { ClusteringOutcome, UploadedGenome } from "@/lib/api-types";
 
 /**
  * Upload antiSMASH result JSONs and report, per file, where each genome
@@ -47,17 +47,20 @@ export function AntismashUploadDialog({
   onClose: () => void;
   /** Fired after a successful upload with the accessions that landed, so the
    * page can re-fetch the tree and take the reader to them. */
-  onIngested: (accessions: string[]) => void;
+  onIngested: (accessions: string[], familyIds: string[]) => void;
 }) {
   const [files, setFiles] = useState<File[]>([]);
+  const [clustering, setClustering] = useState<File | null>(null);
   const [organism, setOrganism] = useState("");
   const [isMag, setIsMag] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [results, setResults] = useState<UploadedGenome[] | null>(null);
   const [rejected, setRejected] = useState<string[]>([]);
+  const [clusteringResult, setClusteringResult] = useState<ClusteringOutcome | null>(null);
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const clusteringRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -88,11 +91,18 @@ export function AntismashUploadDialog({
       const response = await uploadAntismashResults(files, {
         organism: organism.trim(),
         isMag,
+        clustering,
       });
       setResults(response.genomes);
       setRejected(response.rejected);
+      setClusteringResult(response.clustering ?? null);
       const landed = response.genomes.filter((g) => g.placement === "grafted");
-      if (landed.length > 0) onIngested(landed.map((g) => g.accession));
+      if (landed.length > 0) {
+        onIngested(
+          landed.map((g) => g.accession),
+          response.clustering?.family_ids ?? [],
+        );
+      }
     } catch (err) {
       setError(
         err instanceof ApiError
@@ -139,7 +149,7 @@ export function AntismashUploadDialog({
 
         <div className="min-h-0 flex-1 overflow-y-auto chrome-scroll px-6 py-5">
           {results ? (
-            <ResultPanel results={results} rejected={rejected} />
+            <ResultPanel results={results} rejected={rejected} clustering={clusteringResult} />
           ) : (
             <>
               {/* File drop zone */}
@@ -242,6 +252,52 @@ export function AntismashUploadDialog({
                 These are metagenome-assembled genomes (MAGs)
               </label>
 
+              <div className="mt-5 border-t border-chrome-line pt-4">
+                <label className="block text-xs font-semibold uppercase tracking-wide text-chrome-ink-muted">
+                  BiG-SCAPE clustering <span className="normal-case text-chrome-ink-faint">(optional)</span>
+                </label>
+                <p className="mt-1.5 text-[11px] leading-relaxed text-chrome-ink-faint">
+                  Add the <code className="font-mono">*_clustering_c0.3.tsv</code> from a BiG-SCAPE
+                  run over these same regions and the tree will also highlight every branch
+                  carrying a cluster in the <em>same family</em> as yours. Without it only your
+                  genome&apos;s lineage is highlighted — antiSMASH alone can say two clusters share
+                  a biosynthetic class, which is not the same as being the same cluster.
+                </p>
+                {clustering ? (
+                  <div className="mt-2 flex items-center gap-2 rounded bg-chrome-soft px-3 py-2 text-xs">
+                    <FileJson size={14} className="flex-shrink-0 text-chrome-ink-faint" aria-hidden />
+                    <span className="min-w-0 flex-1 truncate font-mono text-chrome-ink">
+                      {clustering.name}
+                    </span>
+                    <button
+                      onClick={() => setClustering(null)}
+                      aria-label={`Remove ${clustering.name}`}
+                      className="flex-shrink-0 text-chrome-ink-faint hover:text-chrome-ink"
+                    >
+                      <X size={13} />
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => clusteringRef.current?.click()}
+                    className="mt-2 flex w-full items-center justify-center gap-2 rounded border border-dashed border-chrome-line bg-chrome-soft px-3 py-2.5 text-xs text-chrome-ink-muted hover:border-chrome-line-strong hover:text-chrome-ink"
+                  >
+                    <Upload size={13} aria-hidden />
+                    Choose a clustering .tsv
+                  </button>
+                )}
+                <input
+                  ref={clusteringRef}
+                  type="file"
+                  accept=".tsv,text/tab-separated-values,text/plain"
+                  className="hidden"
+                  onChange={(e) => {
+                    setClustering(e.target.files?.[0] ?? null);
+                    e.target.value = "";
+                  }}
+                />
+              </div>
+
               <p className="mt-4 border-t border-chrome-line pt-3 text-[11px] leading-relaxed text-chrome-ink-faint">
                 The genome accession comes from each filename —{" "}
                 <code className="font-mono">GCF_000203835.1.json</code> becomes{" "}
@@ -265,7 +321,7 @@ export function AntismashUploadDialog({
             {results
               ? `${results.length} file${results.length === 1 ? "" : "s"} processed`
               : files.length > 0
-                ? `${files.length} file${files.length === 1 ? "" : "s"} · ${(totalBytes / (1024 * 1024)).toFixed(1)} MB`
+                ? `${files.length} file${files.length === 1 ? "" : "s"} · ${(totalBytes / (1024 * 1024)).toFixed(1)} MB${clustering ? " · + clustering" : ""}`
                 : ""}
           </span>
           <div className="flex items-center gap-2">
@@ -302,9 +358,18 @@ export function AntismashUploadDialog({
   );
 }
 
-function ResultPanel({ results, rejected }: { results: UploadedGenome[]; rejected: string[] }) {
+function ResultPanel({
+  results,
+  rejected,
+  clustering,
+}: {
+  results: UploadedGenome[];
+  rejected: string[];
+  clustering: ClusteringOutcome | null;
+}) {
   return (
     <div className="space-y-3">
+      <ClusteringSummary clustering={clustering} />
       {results.map((genome) => {
         const copy = PLACEMENT_COPY[genome.placement];
         const good = genome.placement === "grafted";
@@ -357,6 +422,58 @@ function ResultPanel({ results, rejected }: { results: UploadedGenome[]; rejecte
 
       {results.length === 0 && rejected.length === 0 && (
         <p className="text-sm text-chrome-ink-muted">Nothing was uploaded.</p>
+      )}
+    </div>
+  );
+}
+
+/** What the optional clustering file bought — or, when it is absent, what is
+ * consequently NOT being claimed. Saying nothing in that case would leave a
+ * reader to assume the lineage highlight was the whole answer. */
+function ClusteringSummary({ clustering }: { clustering: ClusteringOutcome | null }) {
+  if (!clustering) {
+    return (
+      <div className="rounded border border-chrome-line bg-chrome-soft px-4 py-3">
+        <p className="text-xs font-semibold text-chrome-ink-muted">Lineage highlighted only</p>
+        <p className="mt-1 text-[11px] leading-relaxed text-chrome-ink-faint">
+          No BiG-SCAPE clustering file was supplied, so the tree marks where your genome sits and
+          nothing more. Two clusters sharing a biosynthetic class are not the same cluster, and
+          this will not pretend otherwise.
+        </p>
+      </div>
+    );
+  }
+
+  const failed = clustering.errors.length > 0 || clustering.cutoff === null;
+  return (
+    <div
+      className={`rounded border px-4 py-3 ${
+        failed ? "border-amber-900/60 bg-amber-950/25" : "border-chrome-line bg-chrome-soft"
+      }`}
+    >
+      <p className="font-mono text-sm text-chrome-ink">{clustering.filename}</p>
+      {failed ? (
+        <ul className="mt-1.5 space-y-0.5 text-[11px] leading-relaxed text-amber-300">
+          {clustering.errors.map((message) => (
+            <li key={message}>{message}</li>
+          ))}
+        </ul>
+      ) : (
+        <>
+          <p className="mt-0.5 text-xs font-semibold text-chrome-ink-muted">
+            {clustering.family_ids.length} cluster{clustering.family_ids.length === 1 ? "" : "s"}{" "}
+            of yours matched to a family
+          </p>
+          <p className="mt-0.5 text-[11px] leading-relaxed text-chrome-ink-faint">
+            Every branch carrying one of those families is highlighted alongside your lineage, at
+            a {clustering.cutoff} similarity cutoff.
+          </p>
+          <p className="mt-1.5 font-mono text-[11px] text-chrome-ink-faint">
+            {clustering.memberships_created} new · {clustering.memberships_updated} updated ·{" "}
+            {clustering.unmatched_rows} row{clustering.unmatched_rows === 1 ? "" : "s"} for regions
+            not in this database
+          </p>
+        </>
       )}
     </div>
   );
