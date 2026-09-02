@@ -20,6 +20,7 @@ import { FamilyRail } from "@/components/FamilyRail";
 import { Header } from "@/components/Header";
 import { AntismashUploadDialog } from "@/components/AntismashUploadDialog";
 import { LoadingOverlay } from "@/components/LoadingOverlay";
+import { LoadingQuestions } from "@/components/LoadingQuestions";
 import { WelcomeDialog } from "@/components/WelcomeDialog";
 import { TreeCanvas } from "@/components/TreeCanvas";
 import { useTaxonomyTree } from "@/hooks/useTaxonomyTree";
@@ -867,8 +868,11 @@ export default function HomePage() {
           {view === "flow" && <SankeyView scope={taxonomy} />}
           {view === "heatmap" && <HeatmapView scope={taxonomy} />}
           {isTreeView && loading && (
-            <div className="flex h-full items-center justify-center text-sm text-ink-muted">
-              Loading taxonomy tree…
+            // Sitting slightly above centre rather than dead-centre: the
+            // optical middle of a mostly-empty stage is a little high, and
+            // the provenance line hangs below the questions.
+            <div className="flex h-full items-center justify-center pb-[8vh]">
+              <LoadingQuestions />
             </div>
           )}
           {isTreeView && error && (

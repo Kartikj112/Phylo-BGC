@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { LoadingQuestions } from "@/components/LoadingQuestions";
 
 /**
  * The splash shown from the moment the page lands until the tree is drawn.
@@ -159,7 +160,16 @@ export function LoadingOverlay({
           // to about half the size it should be. The empty margin above and
           // below the artwork is the same near-black as this overlay's
           // ground, so letting the element stay tall costs nothing visually.
-          className="h-auto w-[min(78vw,600px)] max-h-[72vh] object-contain"
+          //
+          // The cap came down from 72vh, and `-mb-[9vh]` reclaims the empty
+          // band below the artwork, both to make room for the questions
+          // underneath. Nothing is cropped — `object-contain` letterboxes —
+          // and without the two the group overflowed a 768px-tall laptop and
+          // opened a ~230px void between the mark and the first question.
+          // The margin belongs to the VIDEO only: the still below is a
+          // landscape 710x218 with no empty band to give back, and applying
+          // it there ran the question straight through the logo.
+          className="-mb-[9vh] h-auto w-[min(78vw,600px)] max-h-[50vh] object-contain"
           src="/logo-animation.mp4"
         />
       ) : logoFailed ? (
@@ -178,13 +188,17 @@ export function LoadingOverlay({
           width={710}
           height={218}
           onError={() => setLogoFailed(true)}
-          className="h-auto w-[min(78vw,600px)] max-h-[72vh] object-contain"
+          className="h-auto w-[min(78vw,600px)] max-h-[50vh] object-contain"
         />
       )}
 
-      <p className="px-6 text-center font-mono text-xs text-chrome-ink-muted">
-        Loading taxonomy tree…
-      </p>
+      {/* Below the mark: the questions this app exists to answer. They
+          replace the bare "Loading taxonomy tree…" status line rather than
+          joining it — two pieces of copy saying "we are working" is one too
+          many, and the component keeps that sentence for screen readers.
+          Nothing here gates the overlay's exit: the rotation is cut off
+          mid-question when the tree lands, which is the correct behaviour. */}
+      <LoadingQuestions tone="chrome" />
     </div>
   );
 }
