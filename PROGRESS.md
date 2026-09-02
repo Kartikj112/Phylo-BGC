@@ -3,7 +3,8 @@
 **Read this file first when resuming work in a new chunk.**
 
 _Last updated: the analysis-coverage pass — modelling what was EXAMINED, not
-just what was found, and correcting every denominator that depended on it._
+just what was found — followed by a pass closing the reachable gaps in the
+standing to-do list._
 
 ## Status at a glance
 
@@ -17,9 +18,9 @@ just what was found, and correcting every denominator that depended on it._
 | 4 | Publication-grade export | ✅ Done |
 | 5 | User uploads + BGC prioritization scoring | ✅ Done |
 
-**Tests:** 359 engine tests (SQLite) / 358 (real Postgres 16) / **363 in the
-production image**, where Cairo exists and the PDF tests actually run ·
-168 frontend unit tests · 63 Playwright browser tests (62 passing; see
+**Tests:** 364 engine tests (SQLite) / 363 (real Postgres 16) / 368 in the
+production image, where Cairo exists and the PDF tests actually run ·
+174 frontend unit tests · 69 Playwright browser tests (68 passing; see
 "still unverified" item 6).
 
 Real data is ingested and shipped: `engine/gtdb_mibig_bundled.db` holds all
@@ -97,6 +98,46 @@ The interface states this **once**, in the stats bar, rather than greying out
 every glyph — on a corpus with no coverage, that would read as a broken app
 rather than an honest one.
 
+## Closing the reachable to-do items
+
+A standing list tracked 16 known gaps. Twelve were actionable; the rest were
+recorded facts (an upstream vocabulary has no siderophore category; a class
+absent from this corpus; a deliberate MVP simplification). Seven are now
+closed.
+
+**`is_mag` had no source.** Every loader wrote False without grounds, and the
+UI read it as "Isolate genome assembly" for all 1,542 genomes. Now tri-state
+— see ARCHITECTURE.md.
+
+**Prioritization had no interface.** The scorer, API and CLI all worked and
+nothing called them. The new rail panel treats refusals as first-class,
+which after the denominator work is the entire result on this corpus.
+
+**The class filter rail could omit a class.** It iterated the hardcoded
+palette, so a class in the corpus but not in `colors.ts` was counted and
+then never rendered — unfilterable and invisible. It now asks the API.
+
+**`contamination_pct` was ingested for 991 genomes and had no way out.**
+Carried in the tree payload and paired with completeness in the filter,
+because the two are read together.
+
+**Search could report "no matches" over a filtered view.** The client-side
+search stays primary; when it finds nothing, the header now says how many
+records the database holds.
+
+**Uploads vanish on redeploy without saying so.** The result panel now
+leads with it.
+
+**`?taxon=` and `?class=` deep links were untested.** Six specs, each
+against a control that loads the same page without the parameter.
+
+Left undone, deliberately: phylogeny (needs MAFFT/IQ-TREE orchestration),
+ingesting antiSMASH and BiG-SCAPE output (data acquisition, not a build
+task — and the single highest-value thing to do next), the lazy-tree
+switchover (a scaling path with no current need; the eager endpoint answers
+in 0.149 s over this corpus), and per-field provenance (a schema change of
+its own).
+
 ## What is verified, and how
 
 - Engine suite on **SQLite and real Postgres 16** (359 / 358).
@@ -119,8 +160,14 @@ rather than an honest one.
   as unverified.
 - Round trip: `bgcscape inspect-figure` on an exported SVG **with
   `BGCSCAPE_DATABASE_URL` unset**.
-- **The suite inside the production image** (362 passed, 1 skipped), which is
-  what finally exercises PDF rendering — see item 1 below.
+- **The suite inside the production image**, which is what finally exercises
+  PDF rendering — see item 1 below.
+- The `is_mag` migration against the real bundle: 1,542 unverified `False`
+  values became NULL, and the round trip holds on both dialects with the
+  same 18 CHECK constraints.
+- **The prioritization panel in a real browser**, which is how its
+  `loading`-in-the-dependency-array bug was found: the panel hung on
+  "Scoring the corpus…" against an endpoint answering in 0.9 s.
 - The coverage flip end to end: `record-analysis-run` over five cluster-free
   genomes moves them from `unexamined` to `examined`, and the CLI reports the
   five as examined-and-empty.
@@ -153,7 +200,7 @@ rather than an honest one.
    change this — and both now record their own coverage when ingested.
 5. **E2E tests are not in CI.** They need a workflow that starts both servers
    and a database.
-6. **One browser test fails, and predates this pass.** `mobile.spec.ts ›
+6. **One browser test fails, and predates both passes.** `mobile.spec.ts ›
    pinch zooms the canvas` — the CDP multi-touch gesture produces no scale
    change. Confirmed pre-existing by reverting `TreeCanvas.tsx` to its
    committed state and watching it fail identically; 62 of 63 pass either

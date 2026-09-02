@@ -411,7 +411,10 @@ def load_mibig_entry(session: Session, parsed: ParsedMibigEntry, source: Source)
             accession=parsed.locus_accession,
             taxon_id=taxon.id if taxon else None,
             assembly_level=AssemblyLevel.LOCUS,
-            is_mag=False,
+            # A deposited locus is not an assembly, so it is neither a MAG
+            # nor an isolate genome — the question does not apply, which is
+            # what None records.
+            is_mag=None,
             genome_size_bp=locus_length,
             source_id=source.id,
             evidence_level=EvidenceLevel.OBSERVED_CURATED,

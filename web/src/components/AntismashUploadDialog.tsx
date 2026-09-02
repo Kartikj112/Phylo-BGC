@@ -369,6 +369,19 @@ function ResultPanel({
 }) {
   return (
     <div className="space-y-3">
+      {/* Said on the way OUT, where it changes what the reader does next.
+          A hosted deployment writes to a container filesystem that is
+          replaced on every restart and redeploy, so an upload that reports
+          "grafted" in full detail can be gone within the hour — and nothing
+          anywhere told the reader that. A success panel that omits this is
+          not neutral about it; it implies persistence by saying nothing. */}
+      <p className="rounded border border-amber-900/60 bg-amber-950/25 px-4 py-2.5 text-[11px] leading-relaxed text-amber-200">
+        <strong>This upload is not saved permanently.</strong> Hosted deployments store the
+        database on a container filesystem that is replaced on restart and on every redeploy, so
+        these genomes will disappear without warning. Keep your antiSMASH JSON — re-uploading
+        restores them — or run the engine locally against your own database
+        (<span className="font-mono">BGCSCAPE_DATABASE_URL</span>) if you need them to persist.
+      </p>
       <ClusteringSummary clustering={clustering} />
       {results.map((genome) => {
         const copy = PLACEMENT_COPY[genome.placement];

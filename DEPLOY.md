@@ -238,6 +238,19 @@ bgcscape coverage      # examined / curated-only / unexamined, and the runs
 bgcscape placements    # strong / moderate / weak, and by method
 ```
 
+### `is_mag` becomes tri-state
+
+Migration `c9f1a4d83b57` makes `genome.is_mag` nullable and sets every
+unverified `False` to NULL. Nothing in this project ever had a source for
+that False — GTDB's loader said so in its own comment — so the interface was
+reporting "Isolate genome assembly" for genomes nothing had established
+anything about. Rows already at `assembly_level = 'mag'` are promoted to
+True, since that level does come from GTDB's metadata.
+
+Expect the genome panel to read "MAG status not established" for most of a
+GTDB-derived corpus, and "MAGs only" in the filter rail to match only
+genomes something actually asserted.
+
 ### After upgrading: what the tool will now say about your data
 
 Two changes are visible immediately and are *not* faults:

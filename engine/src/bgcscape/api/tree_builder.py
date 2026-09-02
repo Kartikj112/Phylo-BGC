@@ -94,6 +94,7 @@ def _load_genome_summaries(session: Session) -> dict[uuid.UUID, list[GenomeSumma
         genome_size_bp,
         gc_content_pct,
         completeness_pct,
+        contamination_pct,
     ) in session.query(
         Genome.id,
         Genome.taxon_id,
@@ -103,6 +104,7 @@ def _load_genome_summaries(session: Session) -> dict[uuid.UUID, list[GenomeSumma
         Genome.genome_size_bp,
         Genome.gc_content_pct,
         Genome.completeness_pct,
+        Genome.contamination_pct,
     ):
         if taxon_id is None:
             continue
@@ -115,6 +117,7 @@ def _load_genome_summaries(session: Session) -> dict[uuid.UUID, list[GenomeSumma
                 genome_size_bp=genome_size_bp,
                 gc_content_pct=gc_content_pct,
                 completeness_pct=completeness_pct,
+                contamination_pct=contamination_pct,
                 bgcs=bgcs_by_genome.get(genome_id, []),
                 coverage=coverage_state(genome_id, examined, with_bgcs),
             )

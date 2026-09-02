@@ -204,13 +204,11 @@ def load_antismash_result(
     genome_create = GenomeCreate(
         accession=parsed.genome_accession,
         assembly_level=AssemblyLevel.UNKNOWN,
-        # Not knowable from antiSMASH's JSON alone if this genome doesn't
-        # already exist from another source — False is a *default*, not a
-        # verified fact. See AssemblyLevel.UNKNOWN's docstring for the
-        # same reasoning applied to assembly_level; is_mag doesn't have an
-        # equivalent tri-state option in the current schema (a documented
-        # gap, not silently ignored — see ARCHITECTURE.md).
-        is_mag=False,
+        # None, matching AssemblyLevel.UNKNOWN beside it: antiSMASH's JSON
+        # carries no assembly metadata at all, so neither answer is
+        # available. This used to be False — the documented gap that
+        # `is_mag`'s nullability closed.
+        is_mag=None,
         source_id=source.id,
         evidence_level=EvidenceLevel.PREDICTED,
     )

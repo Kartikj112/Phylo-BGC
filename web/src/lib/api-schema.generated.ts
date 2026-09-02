@@ -993,7 +993,7 @@ export interface components {
             accession: string;
             assembly_level: components["schemas"]["AssemblyLevel"];
             /** Is Mag */
-            is_mag: boolean;
+            is_mag: boolean | null;
             /** Taxon Name */
             taxon_name?: string | null;
             taxon_rank?: components["schemas"]["TaxonRank"] | null;
@@ -1036,7 +1036,7 @@ export interface components {
             accession: string;
             assembly_level: components["schemas"]["AssemblyLevel"];
             /** Is Mag */
-            is_mag: boolean;
+            is_mag: boolean | null;
             /** Bgcs */
             bgcs: components["schemas"]["BGCSummary"][];
             /** @default unexamined */
@@ -1047,6 +1047,8 @@ export interface components {
             gc_content_pct?: number | null;
             /** Completeness Pct */
             completeness_pct?: number | null;
+            /** Contamination Pct */
+            contamination_pct?: number | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {

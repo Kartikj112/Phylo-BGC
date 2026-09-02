@@ -224,7 +224,11 @@ function GenomeDetailView({ genome, onSelectBgc }: { genome: GenomeDetail; onSel
         <div className="mb-4 flex items-center gap-2">
           <MapPin size={14} className="text-ink-faint" />
           <span className="text-xs text-ink-muted">
-            {genome.is_mag ? "Metagenome-assembled genome" : "Isolate genome assembly"}
+            {genome.is_mag === true
+              ? "Metagenome-assembled genome"
+              : genome.is_mag === false
+                ? "Isolate genome assembly"
+                : "MAG status not established"}
           </span>
         </div>
       )}

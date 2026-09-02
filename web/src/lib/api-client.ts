@@ -9,6 +9,7 @@ import type {
   BGCDetail,
   BGCFamilyDetail,
   BGCFamilySummary,
+  PrioritizationResponse,
   CladeComparison,
   DatasetProvenanceResponse,
   BGCTypeCount,
@@ -138,6 +139,18 @@ export function search(query: string, limit?: number): Promise<SearchResponse> {
   const params = new URLSearchParams({ q: query });
   if (limit != null) params.set("limit", String(limit));
   return getJson<SearchResponse>(`/api/v1/search?${params}`);
+}
+
+/** Rank clusters as candidates for follow-up.
+ *
+ * `caveats` is part of the contract, not garnish, and a row whose `score`
+ * is null is a refusal to rank rather than a zero — the scorer declines
+ * when fewer than two components can be computed. A client that renders
+ * only the scored rows hides the more important half of what the engine
+ * said. See engine/src/bgcscape/scoring/prioritization.py.
+ */
+export function fetchPrioritization(limit = 25): Promise<PrioritizationResponse> {
+  return getJson<PrioritizationResponse>(`/api/v1/prioritization?limit=${limit}`);
 }
 
 export function fetchFamilies(): Promise<BGCFamilySummary[]> {

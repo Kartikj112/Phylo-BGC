@@ -48,7 +48,11 @@ class GenomeSummary(BaseModel):
     id: uuid.UUID
     accession: str
     assembly_level: AssemblyLevel
-    is_mag: bool
+    is_mag: bool | None
+    """None means nobody has established whether this is a metagenome-assembled
+    genome — not that it isn't one. No ingest path in this project has a
+    verified source for the answer (see `Genome.is_mag`), so a client must not
+    render None as "isolate genome"."""
     bgcs: list[BGCSummary]
     coverage: CoverageState = CoverageState.UNEXAMINED
     """Whether this genome has actually been examined for clusters.
@@ -69,6 +73,11 @@ class GenomeSummary(BaseModel):
     genome_size_bp: int | None = None
     gc_content_pct: float | None = None
     completeness_pct: float | None = None
+    contamination_pct: float | None = None
+    """Carried alongside completeness because the two are read together:
+    a 95%-complete bin at 12% contamination is not a good genome, and a
+    filter offering only one half of the pair invites exactly that reading.
+    Populated for 991 of 1,542 genomes in the shipped corpus."""
 
 
 class TaxonTreeNode(BaseModel):
@@ -143,7 +152,8 @@ class GenomeDetail(BaseModel):
     id: uuid.UUID
     accession: str
     assembly_level: AssemblyLevel
-    is_mag: bool
+    is_mag: bool | None
+    """See `GenomeSummary.is_mag`: None is "not established", not "no"."""
     taxon_name: str | None = None
     taxon_rank: TaxonRank | None = None
     genome_size_bp: int | None = None

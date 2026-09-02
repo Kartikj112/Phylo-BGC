@@ -167,7 +167,7 @@ export function matchesQuery(node: DisplayNode, query: string): boolean {
   // Whole word only: `is_mag` is a flag, not a field of text, so there is no
   // prefix of it to match against. Treating it as text would light up every
   // MAG in the corpus at "m", before the reader has typed anything.
-  if (node.is_mag && needle === "mag") return true;
+  if (node.is_mag === true && needle === "mag") return true;
   return node.bgcs.some((b) => bgcMatchesNeedle(b, needle));
 }
 
@@ -1235,6 +1235,11 @@ export interface GenomeFilters {
   minGcPct: number | null;
   maxGcPct: number | null;
   minCompletenessPct: number | null;
+  /** Upper bound, not lower: contamination is the one QC number where less
+   * is better, and pairing it with completeness is the point. A 95%-complete
+   * bin at 12% contamination is not a good genome, and a panel offering only
+   * completeness invited exactly that reading. */
+  maxContaminationPct: number | null;
   magOnly: boolean;
 }
 
@@ -1247,6 +1252,7 @@ export const EMPTY_FILTERS: GenomeFilters = {
   minGcPct: null,
   maxGcPct: null,
   minCompletenessPct: null,
+  maxContaminationPct: null,
   magOnly: false,
 };
 
@@ -1260,6 +1266,7 @@ export function filtersAreActive(f: GenomeFilters): boolean {
     f.minGcPct !== null ||
     f.maxGcPct !== null ||
     f.minCompletenessPct !== null ||
+    f.maxContaminationPct !== null ||
     f.magOnly
   );
 }
@@ -1290,7 +1297,18 @@ export function genomePassesFilters(genome: GenomeDisplayNode, f: GenomeFilters)
   if (genome.completeness_pct != null && f.minCompletenessPct !== null) {
     if (genome.completeness_pct < f.minCompletenessPct) return false;
   }
-  if (f.magOnly && !genome.is_mag) return false;
+  // Same "a missing measurement is not a failed one" rule as the filters
+  // above: 551 of the 1,542 genomes in the shipped corpus are MIBiG loci
+  // with no contamination figure at all, and dropping them would make the
+  // filter look far more selective than it is.
+  if (genome.contamination_pct != null && f.maxContaminationPct !== null) {
+    if (genome.contamination_pct > f.maxContaminationPct) return false;
+  }
+  // `is_mag` is tri-state. A genome whose MAG status was never established
+  // is not a MAG *as far as anything here knows*, so "MAGs only" excludes
+  // it — but it is excluded for want of an answer, not because the answer
+  // was no, and the panel says so rather than letting the count imply it.
+  if (f.magOnly && genome.is_mag !== true) return false;
   return true;
 }
 

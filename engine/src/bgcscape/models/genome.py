@@ -64,7 +64,23 @@ class Genome(Base, TimestampMixin, ProvenanceMixin):
         ),
         nullable=False,
     )
-    is_mag: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Tri-state, and nullable for the same reason `AssemblyLevel.UNKNOWN`
+    # exists: NULL is an explicit "nobody has established this", not an
+    # accidental omission.
+    #
+    # It was `NOT NULL DEFAULT False`, and every ingest path in this project
+    # wrote False without a source that says so — GTDB's loader says as much
+    # in its own comment ("no verified MAG-detection column yet"), MIBiG's
+    # locus stubs are not assemblies at all, and antiSMASH's JSON carries no
+    # assembly metadata. So the interface told a reader "Isolate genome
+    # assembly" about all 1,542 genomes in the shipped corpus on no evidence
+    # whatever. False here now means "established as not a MAG"; None means
+    # the question has never been answered.
+    #
+    # `assembly_level` is genuinely known for GTDB genomes and stays the
+    # better signal — a row at AssemblyLevel.MAG is a MAG, and the migration
+    # uses exactly that to keep the facts it could establish.
+    is_mag: Mapped[bool | None] = mapped_column(Boolean, default=None, nullable=True)
     genome_size_bp: Mapped[int | None] = mapped_column(Integer, nullable=True)
     gc_content_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
     completeness_pct: Mapped[float | None] = mapped_column(Float, nullable=True)

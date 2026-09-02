@@ -1642,6 +1642,88 @@ Three consumers still pooled the two:
   delivered shared chemistry. It now labels each by kind and changes the verb.
 
 
+## `is_mag` was a boolean with no source
+
+Every ingest path in this project wrote `is_mag=False`, and not one of them
+had grounds for it:
+
+- `ingest/gtdb.py` set False with the comment *"no verified MAG-detection
+  column yet"* — an admission in the code that the value was a placeholder;
+- `ingest/mibig.py` set False on a deposited **locus**, which is not an
+  assembly, so neither answer applies;
+- `ingest/antismash.py` set False from a JSON carrying no assembly metadata
+  at all, and its comment named this exact gap as unfixable in the schema.
+
+The detail panel read the column and rendered **"Isolate genome assembly"**
+for all 1,542 genomes in the shipped corpus — a claim about each genome's
+provenance, made on nothing. `AssemblyLevel.UNKNOWN` had existed since Phase
+1b for precisely this reason; `is_mag` simply never got the same option.
+
+It is now `bool | None`. False means *established as not a MAG*; None means
+the question has never been answered. Migration `c9f1a4d83b57` nulls every
+unverified False, keeping the one signal that is real: a row already at
+`assembly_level = 'mag'` becomes True, because that level is parsed from
+GTDB's own metadata. On the bundle: 1,542 unverified Falses to NULL, none
+promoted (GTDB's metadata emits no MAG level for these genomes).
+
+The downgrade cannot preserve the distinction — a NOT NULL boolean has
+nowhere to put a third value — so it re-asserts False and says so in its
+output rather than losing the fact quietly.
+
+`magOnly` in the filter rail now requires `is_mag === true`, so an
+unestablished genome is excluded for want of an answer rather than counted
+as an isolate, and the panel says which.
+
+## Interface gaps that were engine features with no front door
+
+Three capabilities were complete, tested and unreachable.
+
+**Prioritization had no UI at all.** The scorer, the API and
+`bgcscape prioritize` all worked; nothing in the frontend called them.
+`PrioritizationPanel` closes that, and its design problem is worth
+recording: **a refusal is this engine's most important output, and a ranking
+UI is the natural place to hide one.** After the denominator work the scorer
+declines every cluster in the shipped corpus, so a panel that listed only
+scored rows would render an empty list where the engine had said something
+precise. Unscored rows are therefore first-class — listed, counted, each
+naming the components that could not be computed — and the corpus caveats
+sit *above* the list rather than folded under it, because they govern how
+every row in it reads.
+
+A bug worth keeping: the panel first shipped guarding its fetch on the
+`loading` state, which put `loading` in the effect's dependency array. So
+`setLoading(true)` re-ran the effect, fired the previous run's cleanup, set
+`cancelled = true` on the request still in flight, and discarded its result.
+The panel sat on "Scoring the corpus…" forever against an endpoint answering
+in 0.9 s. Caught by opening it in a browser, not by a test — the same lesson
+this file keeps recording.
+
+**The class filter rail could silently omit a class.** It iterated
+`CLASS_ORDER`, the keys of the hardcoded palette in `colors.ts`. A class the
+corpus contains but the palette does not was counted by `countBgcClasses`
+and then never rendered: no row, no toggle, no way to see or filter its
+clusters. `BGCClass` is deliberately an open vocabulary — that is why
+`native_enum=False` was chosen — so the rail now asks `/api/v1/bgc-classes`
+what exists and appends anything the palette lacks in grey, saying so.
+
+**Search read only the loaded tree.** That remains the primary: it matches
+compound names, MIBiG accessions and cluster classes, none of which the
+`/search` endpoint covers. But the tree is pruned to BGC-bearing genomes by
+default and scoped to one taxonomy, so a genome genuinely in the database
+could match nothing and read as "no matches" — the same failure the match
+count was added to fix, one level further out. When and only when the tree
+has zero hits, the header now reports how many records the database holds
+for that query.
+
+## Uploads do not survive a redeploy, and now say so
+
+A hosted deployment writes to a container filesystem that is replaced on
+restart. The upload dialog reported placement in full detail and implied
+persistence by saying nothing about it. Render's free tier has no disk to
+attach, so the honest fix is the notice, not a config change: the result
+panel now leads with the fact that the upload is temporary and names the two
+ways to keep the data.
+
 ## Provenance is only structural if it is populated
 
 Every `Source` in every shipped build had `license`, `url`, `citation` and

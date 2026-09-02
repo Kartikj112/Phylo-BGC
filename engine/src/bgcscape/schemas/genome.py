@@ -13,7 +13,7 @@ class GenomeBase(BaseModel):
     accession: str
     taxon_id: uuid.UUID | None = None
     assembly_level: AssemblyLevel
-    is_mag: bool = False
+    is_mag: bool | None = None
     genome_size_bp: int | None = None
     gc_content_pct: float | None = None
     completeness_pct: float | None = None

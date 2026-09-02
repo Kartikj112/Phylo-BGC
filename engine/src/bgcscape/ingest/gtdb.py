@@ -218,7 +218,11 @@ def load_gtdb_genome(session: Session, parsed: ParsedGtdbGenome, source: Source)
         gtdb_tip_accession=parsed.tip_accession,
         taxon_id=leaf_taxon.id if leaf_taxon else None,
         assembly_level=parsed.assembly_level,
-        is_mag=False,  # no verified MAG-detection column yet, see module docstring
+        # None, not False. GTDB's metadata has no verified MAG-detection
+        # column, so this loader has never had grounds for either answer —
+        # and writing False turned that gap into a claim. `assembly_level`
+        # is parsed from the TSV and is the real signal.
+        is_mag=None,
         genome_size_bp=parsed.genome_size_bp,
         gc_content_pct=parsed.gc_content_pct,
         completeness_pct=parsed.completeness_pct,

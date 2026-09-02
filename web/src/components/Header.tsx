@@ -8,6 +8,16 @@ interface HeaderProps {
   genomeCount: number;
   totalGenomes?: number;
   matchCount?: number | null;
+  /** Matches the SERVER found that are not in the tree on screen.
+   *
+   * The header searches the loaded tree, which is the right default — it
+   * matches compound names, MIBiG accessions and cluster classes, none of
+   * which the search endpoint covers. But the tree on screen is pruned to
+   * BGC-bearing genomes by default and scoped to one taxonomy, so a genome
+   * that is genuinely in the database can match nothing and read as "no
+   * matches". That is the same failure the match count itself was added to
+   * fix, one level further out. */
+  offTreeMatchCount?: number | null;
   /** Which taxonomy the tree on screen came from. Not decoration: the
    * eukaryote view is NCBI, the prokaryote view is GTDB, and labelling both
    * "GTDB" would misattribute half the corpus. */
@@ -29,6 +39,7 @@ export function Header({
   genomeCount,
   totalGenomes,
   matchCount,
+  offTreeMatchCount,
   taxonomyLabel = "GTDB",
   railOpen = false,
   onToggleRail,
@@ -107,6 +118,19 @@ export function Header({
         </div>
 
       </div>
+
+      {/* Only when the tree has nothing and the database does. A count of
+          "also 3 elsewhere" beside 40 visible hits would be noise; "no
+          matches here, 3 in the database" is the difference between a dead
+          end and a filtered view. */}
+      {query.trim() !== "" && matchCount === 0 && (offTreeMatchCount ?? 0) > 0 && (
+        <p className="px-1 text-[11px] leading-relaxed text-chrome-ink-faint lg:order-last lg:w-full">
+          Nothing on screen matches, but the database holds{" "}
+          <span className="font-mono text-chrome-ink-muted">{offTreeMatchCount}</span> matching taxon
+          or genome record{offTreeMatchCount === 1 ? "" : "s"} — filtered out of this view, on the
+          other taxonomy tab, or carrying no clusters. They are still in the database.
+        </p>
+      )}
 
       {/* Row 2 on small screens: the view/orientation toolbar. It scrolls
           sideways rather than wrapping into three ragged rows or being

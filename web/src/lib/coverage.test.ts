@@ -7,7 +7,15 @@
  * Only the first is a biological finding.
  */
 import { describe, expect, it } from "vitest";
-import { cladeSummary, emptyCladeReading, toRootDisplayNode } from "./tree-logic";
+import {
+  EMPTY_FILTERS,
+  cladeSummary,
+  emptyCladeReading,
+  filtersAreActive,
+  genomePassesFilters,
+  matchesQuery,
+  toRootDisplayNode,
+} from "./tree-logic";
 import type { CoverageState, GenomeSummary, TaxonTreeNode } from "./api-types";
 
 function genome(id: string, coverage: CoverageState, bgcCount = 0): GenomeSummary {
@@ -114,5 +122,64 @@ describe("clade coverage", () => {
     const summary = cladeSummary(toRootDisplayNode(parent));
     expect(summary.genomeCount).toBe(4);
     expect(summary.examinedGenomeCount).toBe(3);
+  });
+});
+
+/**
+ * Genome QC filters, and the tri-state MAG flag.
+ *
+ * `is_mag` was a NOT NULL boolean that every ingest path wrote False into
+ * without a source, so "unknown" and "no" were the same value. These pin
+ * the distinction where the filter can see it.
+ */
+describe("genome filters", () => {
+  const g = (over: Partial<GenomeSummary>): GenomeSummary & { _kind: "genome" } => ({
+    ...genome("f", "examined"),
+    ...over,
+    _kind: "genome",
+  });
+
+  it("filters on contamination as a maximum, not a minimum", () => {
+    const filters = { ...EMPTY_FILTERS, maxContaminationPct: 5 };
+    expect(genomePassesFilters(g({ contamination_pct: 1.2 }), filters)).toBe(true);
+    expect(genomePassesFilters(g({ contamination_pct: 12 }), filters)).toBe(false);
+  });
+
+  it("keeps genomes with no contamination measurement", () => {
+    /* 551 of the 1,542 genomes in the shipped corpus are MIBiG loci with no
+     * QC figures at all. Dropping them would make the filter look far more
+     * selective than it is — the same rule the other filters follow. */
+    const filters = { ...EMPTY_FILTERS, maxContaminationPct: 1 };
+    expect(genomePassesFilters(g({ contamination_pct: null }), filters)).toBe(true);
+  });
+
+  it("counts contamination as an active filter", () => {
+    expect(filtersAreActive({ ...EMPTY_FILTERS, maxContaminationPct: 5 })).toBe(true);
+    expect(filtersAreActive(EMPTY_FILTERS)).toBe(false);
+  });
+
+  it("completeness and contamination compose", () => {
+    const filters = { ...EMPTY_FILTERS, minCompletenessPct: 90, maxContaminationPct: 5 };
+    // The case the pair exists for: high completeness is not enough on its own.
+    expect(
+      genomePassesFilters(g({ completeness_pct: 95, contamination_pct: 12 }), filters),
+    ).toBe(false);
+    expect(
+      genomePassesFilters(g({ completeness_pct: 95, contamination_pct: 1 }), filters),
+    ).toBe(true);
+  });
+
+  it("'MAGs only' excludes a genome whose MAG status was never established", () => {
+    const filters = { ...EMPTY_FILTERS, magOnly: true };
+    expect(genomePassesFilters(g({ is_mag: true }), filters)).toBe(true);
+    expect(genomePassesFilters(g({ is_mag: false }), filters)).toBe(false);
+    // Excluded for want of an answer, not because the answer was no — the
+    // panel says so; what matters here is that it is not counted as a MAG.
+    expect(genomePassesFilters(g({ is_mag: null }), filters)).toBe(false);
+  });
+
+  it("an unknown MAG status does not answer a 'mag' search", () => {
+    expect(matchesQuery(g({ is_mag: true }), "mag")).toBe(true);
+    expect(matchesQuery(g({ is_mag: null }), "mag")).toBe(false);
   });
 });

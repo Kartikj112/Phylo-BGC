@@ -39,6 +39,9 @@ export type AssemblyLevel = components["schemas"]["AssemblyLevel"];
 export type CoverageState = components["schemas"]["CoverageState"];
 export type AnalysisRunSummary = components["schemas"]["AnalysisRunSummary"];
 export type PlacementConfidence = components["schemas"]["PlacementConfidence"];
+export type PrioritizationResponse = components["schemas"]["PrioritizationResponse"];
+export type PrioritizationOut = components["schemas"]["PrioritizationOut"];
+export type ComponentScoreOut = components["schemas"]["ComponentScoreOut"];
 
 /**
  * The tree logic (tree-logic.ts) and D3 rendering need to treat taxon

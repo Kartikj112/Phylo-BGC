@@ -7,6 +7,7 @@ import { BgcTypeDonut } from "@/components/BgcTypeDonut";
 import { ClassFilterRail } from "@/components/ClassFilterRail";
 import { DistributionSummaryBar } from "@/components/DistributionSummaryBar";
 import { FilterPanel } from "@/components/FilterPanel";
+import { PrioritizationPanel } from "@/components/PrioritizationPanel";
 import { ComparisonPanel } from "@/components/ComparisonPanel";
 import { CorpusStatsBar } from "@/components/CorpusStatsBar";
 import { ExportButton } from "@/components/ExportButton";
@@ -22,6 +23,7 @@ import { LoadingOverlay } from "@/components/LoadingOverlay";
 import { WelcomeDialog } from "@/components/WelcomeDialog";
 import { TreeCanvas } from "@/components/TreeCanvas";
 import { useTaxonomyTree } from "@/hooks/useTaxonomyTree";
+import { fetchBgcClasses, search } from "@/lib/api-client";
 import type { BGCFamilySummary, TaxonTreeNode } from "@/lib/api-types";
 import { CLASS_ORDER } from "@/lib/colors";
 import {
@@ -420,6 +422,48 @@ export default function HomePage() {
     [root, query],
   );
 
+  // Asked ONLY when the tree has nothing to show for the query. The
+  // client-side search is richer (compounds, accessions, cluster classes,
+  // none of which /search covers) and needs no round trip, so it stays the
+  // primary; this exists to stop a filtered view reading as an empty
+  // database. Debounced, because it fires on a keystroke.
+  // The corpus's real class vocabulary. Fetched once: it is a property of
+  // the database, not of the open tab, and the rail must not silently omit
+  // a class the palette happens not to know about.
+  const [classVocabulary, setClassVocabulary] = useState<string[] | undefined>(undefined);
+  useEffect(() => {
+    let cancelled = false;
+    fetchBgcClasses()
+      .then((v) => !cancelled && setClassVocabulary(v.component_classes))
+      // Falling back to the hardcoded palette is the previous behaviour, so
+      // a failed lookup degrades to what shipped rather than to an empty rail.
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const [offTreeMatchCount, setOffTreeMatchCount] = useState<number | null>(null);
+  useEffect(() => {
+    const needle = query.trim();
+    if (!needle || matchCount !== 0) {
+      setOffTreeMatchCount(null);
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      search(needle, 1)
+        .then((r) => !cancelled && setOffTreeMatchCount(r.total))
+        // A failed supplementary lookup must not surface as an error: the
+        // primary search already answered.
+        .catch(() => !cancelled && setOffTreeMatchCount(null));
+    }, 350);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [query, matchCount]);
+
   function selectLevel(level: CollapseLevel): void {
     if (!root) return;
     closeRailOnMobile();
@@ -475,6 +519,7 @@ export default function HomePage() {
       <Header query={query} onQueryChange={setQuery} genomeCount={genomeCount}
         totalGenomes={pruned?.totalGenomes ?? 0}
         matchCount={matchCount}
+        offTreeMatchCount={offTreeMatchCount}
         railOpen={railOpen}
         onToggleRail={() => setRailOpen((v) => !v)}
         onHome={() => setGate("welcome")}
@@ -705,10 +750,22 @@ export default function HomePage() {
             />
           </RailSection>
 
+          {/* After the family rail and before the class filter: it answers
+              "which of these should I look at", which is a coarser question
+              than "which classes do I want to see" and a finer one than
+              "which family am I tracing". */}
+          <RailSection>
+            <PrioritizationPanel
+              onSelectBgc={(bgcId) => setSelection({ kind: "bgc", id: bgcId })}
+              selectedBgcId={selection?.kind === "bgc" ? selection.id : null}
+            />
+          </RailSection>
+
           <RailSection>
             <ClassFilterRail
               activeClasses={activeClasses}
               counts={classCounts}
+              vocabulary={classVocabulary}
               onToggle={toggleClass}
               onReset={() => setActiveClasses(new Set(CLASS_ORDER))}
             />

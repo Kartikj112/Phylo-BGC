@@ -95,6 +95,11 @@ export function FilterPanel({ filters, onChange, matched, total, filteredEveryth
           step="0.1"
         />
 
+        {/* Completeness and contamination sit together because they are read
+            together: a 95%-complete bin at 12% contamination is not a good
+            genome, and offering only the first half invites exactly that
+            reading. Contamination is a MAXIMUM — the one QC number where
+            less is better. */}
         <div>
           <div className="mb-1 text-chrome-ink-muted">Min completeness (%)</div>
           <input
@@ -102,6 +107,18 @@ export function FilterPanel({ filters, onChange, matched, total, filteredEveryth
             value={filters.minCompletenessPct ?? ""}
             onChange={(e) => set("minCompletenessPct", num(e.target.value))}
             placeholder="any"
+            className="w-full rounded border border-chrome-line bg-chrome-soft px-1.5 py-1.5 text-xs text-chrome-ink placeholder:text-chrome-ink-faint outline-none focus:border-chrome-accent"
+          />
+        </div>
+
+        <div>
+          <div className="mb-1 text-chrome-ink-muted">Max contamination (%)</div>
+          <input
+            type="number"
+            value={filters.maxContaminationPct ?? ""}
+            onChange={(e) => set("maxContaminationPct", num(e.target.value))}
+            placeholder="any"
+            step="0.1"
             className="w-full rounded border border-chrome-line bg-chrome-soft px-1.5 py-1.5 text-xs text-chrome-ink placeholder:text-chrome-ink-faint outline-none focus:border-chrome-accent"
           />
         </div>
@@ -121,6 +138,12 @@ export function FilterPanel({ filters, onChange, matched, total, filteredEveryth
         Genomes with no recorded value for a measurement are kept rather than filtered out — the filter
         can&apos;t speak to them.
       </p>
+      {filters.magOnly && (
+        <p className="mt-1 text-xs leading-relaxed text-chrome-ink-faint">
+          MAG status is unrecorded for most genomes here, and unknown is not the same as no. This
+          shows only genomes something has actually established to be metagenome-assembled.
+        </p>
+      )}
     </div>
   );
 }

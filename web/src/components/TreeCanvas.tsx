@@ -1950,7 +1950,7 @@ function GenomeNode({
           </g>
         );
       })}
-      {node.is_mag && showLabel && (
+      {node.is_mag === true && showLabel && (
         <text
           x={flip ? -(barEnd + 6 * gls) : barEnd + 6 * gls}
           dy="0.32em"
