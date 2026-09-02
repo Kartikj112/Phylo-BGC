@@ -34,6 +34,32 @@ interesting. Components that cannot be computed return `None` (an
 `available=False` component), are excluded from the weighted mean, and are
 named in `unavailable_components` so the caller can see the score rests on
 less than it appears to.
+
+**4. "Rare" is relative to what was EXAMINED, not to what was ingested.**
+Every rarity component is a fraction, and the denominator used to be "rows
+that happen to be in this database". That is not a corpus — it is whatever
+somebody loaded. A cluster class occurring in 1 of 40 curated entries is not
+"rare in this clade" unless those 40 genomes were actually surveyed for
+clusters, and the genomes MIBiG happens to have entries for were not.
+
+So the denominators now come from `AnalysisRun` coverage
+(`bgcscape.coverage`), and each component's explanation names the
+denominator it used:
+
+  * `class_rarity_in_clade` counts only clusters on genomes a
+    BGC_DETECTION run covered, over the peer group's EXAMINED genomes. Under
+    two examined genomes it returns `None` — a "frequency" over an unsurveyed
+    peer group is a statement about somebody's reading list.
+  * `unclustered`, `family_rarity` and `taxonomic_isolation` are answerable
+    only for genomes a SEQUENCE_CLUSTERING run reached. This is the fix for a
+    bug that was dormant only because no clustering had been ingested: with
+    one BiG-SCAPE run over ten genomes, every other cluster in the corpus
+    scored 1.0 on `unclustered` — "no sufficiently similar cluster was found"
+    — having never been compared to anything.
+
+The consequence on a MIBiG-derived corpus is that most components go
+unavailable and most clusters decline to score. That is the correct answer
+and always was; the numbers the scorer used to emit there were the artifact.
 """
 from __future__ import annotations
 
@@ -43,7 +69,16 @@ from dataclasses import dataclass, field
 
 from sqlalchemy.orm import Session, selectinload
 
-from bgcscape.models import BGC, BGCFamily, BGCFamilyMembership, FamilyKind, Genome, Taxon
+from bgcscape.coverage import examined_genome_ids
+from bgcscape.models import (
+    BGC,
+    AnalysisType,
+    BGCFamily,
+    BGCFamilyMembership,
+    FamilyKind,
+    Genome,
+    Taxon,
+)
 
 WEIGHTS_ARE_UNCALIBRATED = (
     "Component weights are a documented starting point, not a validated model. They encode a "
@@ -142,6 +177,24 @@ class ScoringContext:
     #: in the caveats, that they were deliberately excluded from scoring.
     compound_group_count: int = 0
 
+    # ---- coverage: the denominators -------------------------------------
+    #: Genomes a BGC_DETECTION run covered. The denominator for
+    #: `class_rarity_in_clade`, and the set within which a zero is a
+    #: finding rather than a gap.
+    detection_covered: set[uuid.UUID] = field(default_factory=set)
+    #: Genomes a SEQUENCE_CLUSTERING run reached. The set within which
+    #: "nothing similar was found" is answerable at all.
+    clustering_covered: set[uuid.UUID] = field(default_factory=set)
+    #: BGCs on detection-covered genomes — the corpus `class_rarity_in_clade`
+    #: is actually computed over, as opposed to everything ingested.
+    examined_bgc_count: int = 0
+    #: BGCs on clustering-covered genomes: the population a family's size is
+    #: rare *within*.
+    clustered_bgc_count: int = 0
+    #: Examined genomes per peer group, replacing "genomes that happen to
+    #: have a BGC" as the denominator for "unusual for its neighbours".
+    examined_genome_count_by_parent: dict[uuid.UUID, int] = field(default_factory=dict)
+
 
 def sequence_memberships(bgc: BGC, ctx: ScoringContext) -> list[BGCFamilyMembership]:
     """The BGC's memberships in *sequence* families only.
@@ -161,6 +214,15 @@ def build_scoring_context(session: Session) -> ScoringContext:
     )
     taxa = {t.id: t for t in session.query(Taxon).all()}
     genomes = {g.id: g for g in session.query(Genome).all()}
+
+    # Coverage, from AnalysisRun. `detection_covered` is taken ONLY from
+    # recorded runs: nothing about a BGC's existence implies its genome was
+    # surveyed, because a curated MIBiG entry is a report that one cluster
+    # exists, not a search of the genome. Deriving detection coverage from
+    # the presence of clusters would recreate the exact conflation this
+    # change exists to remove.
+    detection_covered = examined_genome_ids(session, AnalysisType.BGC_DETECTION)
+    clustering_covered = examined_genome_ids(session, AnalysisType.SEQUENCE_CLUSTERING)
 
     kind_by_family: dict[uuid.UUID, FamilyKind] = {
         fid: kind for fid, kind in session.query(BGCFamily.id, BGCFamily.kind).all()
@@ -199,13 +261,32 @@ def build_scoring_context(session: Session) -> ScoringContext:
 
     mibig_present = any(b.mibig_accession for b in bgcs)
 
+    # Clustering coverage IS derivable in one direction, and honestly so: a
+    # genome carrying a BGC in a sequence family was demonstrably part of a
+    # clustering run — the membership is the run's own output. So a corpus
+    # whose clustering predates AnalysisRun still answers correctly, and the
+    # derivation adds evidence rather than assuming it. The reverse
+    # derivation is the one that does not hold, and is not made: a genome
+    # with no memberships tells you nothing about whether it was compared.
+    for bgc in bgcs:
+        if any(m.family_id in sequence_family_ids for m in bgc.family_memberships):
+            clustering_covered.add(bgc.genome_id)
+
+    examined_bgc_count = sum(1 for b in bgcs if b.genome_id in detection_covered)
+    clustered_bgc_count = sum(1 for b in bgcs if b.genome_id in clustering_covered)
+
     for bgc in bgcs:
         parent = parent_taxon_by_genome.get(bgc.genome_id)
         if bgc.genome_id not in parent_taxon_by_genome:
             parent = enclosing_group(bgc.genome_id)
             parent_taxon_by_genome[bgc.genome_id] = parent
 
-        if parent is not None:
+        # Numerator and denominator must come from the same population.
+        # Counting a curated cluster into the numerator while the
+        # denominator is "genomes actually surveyed" would make a clade look
+        # unusual in proportion to how much literature it has, which is a
+        # property of the reading list, not the biology.
+        if parent is not None and bgc.genome_id in detection_covered:
             class_counts_by_parent[parent][bgc.bgc_class.value] += 1
             genomes_seen_by_parent[parent].add(bgc.genome_id)
 
@@ -220,6 +301,19 @@ def build_scoring_context(session: Session) -> ScoringContext:
                 family_taxa[membership.family_id].add(genome_taxon)
             if bgc.mibig_accession:
                 families_with_mibig.add(membership.family_id)
+
+    # Every examined genome in a peer group counts toward its denominator,
+    # including the ones a run found nothing in — those are precisely the
+    # observations that make a class look rare, and dropping them would
+    # inflate every frequency in the group.
+    examined_genome_count_by_parent: dict[uuid.UUID, int] = defaultdict(int)
+    for genome_id in detection_covered:
+        parent = parent_taxon_by_genome.get(genome_id)
+        if genome_id not in parent_taxon_by_genome:
+            parent = enclosing_group(genome_id)
+            parent_taxon_by_genome[genome_id] = parent
+        if parent is not None:
+            examined_genome_count_by_parent[parent] += 1
 
     return ScoringContext(
         total_bgcs=len(bgcs),
@@ -236,6 +330,11 @@ def build_scoring_context(session: Session) -> ScoringContext:
         genome_count_by_parent={k: len(v) for k, v in genomes_seen_by_parent.items()},
         sequence_family_ids=sequence_family_ids,
         compound_group_count=compound_group_count,
+        detection_covered=detection_covered,
+        clustering_covered=clustering_covered,
+        examined_bgc_count=examined_bgc_count,
+        clustered_bgc_count=clustered_bgc_count,
+        examined_genome_count_by_parent=dict(examined_genome_count_by_parent),
     )
 
 
@@ -246,12 +345,26 @@ def _component_unclustered(bgc: BGC, ctx: ScoringContext) -> ComponentScore:
             None,
             "No family clustering has been ingested, so 'unclustered' carries no information here.",
         )
+    if bgc.genome_id not in ctx.clustering_covered:
+        # The bug this branch fixes: one clustering run over ten genomes used
+        # to make every OTHER cluster in the corpus score 1.0 here, with the
+        # explanation "no sufficiently similar cluster was found" — a
+        # similarity claim about clusters that were never compared to
+        # anything. Being outside a clustering run is not a finding.
+        return ComponentScore(
+            "unclustered",
+            None,
+            "This cluster's genome was not covered by any sequence-clustering run, so it has "
+            "never been compared to anything. That is not the same as having no similar cluster "
+            "— the question was not asked of it.",
+        )
     if not sequence_memberships(bgc, ctx):
         return ComponentScore(
             "unclustered",
             1.0,
-            "Not assigned to any sequence-based gene cluster family — no sufficiently similar "
-            "cluster was found in this corpus.",
+            f"Not assigned to any sequence-based gene cluster family — no sufficiently similar "
+            f"cluster was found among the {ctx.clustered_bgc_count} cluster(s) that were actually "
+            f"clustered.",
         )
     return ComponentScore(
         "unclustered", 0.0, "Belongs to a sequence-based gene cluster family with other members."
@@ -277,7 +390,9 @@ def _component_family_rarity(bgc: BGC, ctx: ScoringContext) -> ComponentScore:
         "family_rarity",
         value,
         f"Smallest containing sequence family has {smallest} "
-        f"member{'s' if smallest != 1 else ''} in this corpus.",
+        f"member{'s' if smallest != 1 else ''}, out of the {ctx.clustered_bgc_count} cluster(s) "
+        f"a clustering run actually compared. Rarity is relative to that population, not to "
+        f"everything ingested.",
     )
 
 
@@ -297,9 +412,11 @@ def _component_taxonomic_isolation(bgc: BGC, ctx: ScoringContext) -> ComponentSc
     return ComponentScore(
         "taxonomic_isolation",
         value,
-        f"Sequence family spans {spread} classified taxon{'a' if spread != 1 else ''} in this corpus. "
-        "A family confined to one taxon is less well characterized across the tree; note this cuts "
-        "both ways — a widely distributed family may be a transfer signal worth attention too.",
+        f"Sequence family spans {spread} classified taxon{'a' if spread != 1 else ''} among the "
+        f"genomes a clustering run covered. A family confined to one taxon is less well "
+        "characterized across the tree; note this cuts both ways — a widely distributed family "
+        "may be a transfer signal worth attention too. The spread is bounded by which genomes "
+        "were clustered, not by where the family really occurs.",
     )
 
 
@@ -327,6 +444,13 @@ def _component_mibig_distance(bgc: BGC, ctx: ScoringContext) -> ComponentScore:
             "Clusters with a MIBiG reference entry in the same family — likely related to a "
             "characterized pathway.",
         )
+    if bgc.genome_id not in ctx.clustering_covered:
+        return ComponentScore(
+            "mibig_distance",
+            None,
+            "This cluster has never been compared to anything — its genome was not covered by a "
+            "sequence-clustering run — so no family-mediated link to MIBiG can be assessed.",
+        )
     if not memberships:
         return ComponentScore(
             "mibig_distance",
@@ -353,13 +477,28 @@ def _component_class_rarity_in_clade(bgc: BGC, ctx: ScoringContext) -> Component
         )
     counts = ctx.class_counts_by_parent.get(parent, {})
     total = sum(counts.values())
-    genomes_in_group = ctx.genome_count_by_parent.get(parent, 0)
-    if total == 0 or genomes_in_group < 2:
+    examined_in_group = ctx.examined_genome_count_by_parent.get(parent, 0)
+    if examined_in_group < 2:
+        # The denominator correction. This used to count "genomes in the
+        # group that happen to have a BGC row", which on a curated corpus is
+        # "genomes somebody published about" — so a class was called rare in
+        # proportion to how thin the literature was, not how thin the class
+        # is. A frequency needs a survey underneath it, and under two
+        # surveyed genomes there is no peer group to be unusual within.
         return ComponentScore(
             "class_rarity_in_clade",
             None,
-            f"Peer group has {genomes_in_group} genome(s) with BGCs — too few for 'unusual for its "
-            "neighbours' to mean anything.",
+            f"Only {examined_in_group} genome(s) in this cluster's enclosing group have been "
+            "examined for clusters by a recorded analysis run — too few for 'unusual for its "
+            "neighbours' to mean anything. The neighbours have to have been surveyed; counting "
+            "curated entries instead would measure the literature, not the biology.",
+        )
+    if total == 0:
+        return ComponentScore(
+            "class_rarity_in_clade",
+            None,
+            f"The {examined_in_group} examined genome(s) in this group carry no clusters at all, "
+            "so there is no class distribution to be unusual within.",
         )
     own = counts.get(bgc.bgc_class.value, 0)
     frequency = own / total
@@ -367,7 +506,9 @@ def _component_class_rarity_in_clade(bgc: BGC, ctx: ScoringContext) -> Component
     return ComponentScore(
         "class_rarity_in_clade",
         value,
-        f"{bgc.bgc_class.value} accounts for {own}/{total} BGCs in this cluster's enclosing group.",
+        f"{bgc.bgc_class.value} accounts for {own}/{total} clusters found across the "
+        f"{examined_in_group} EXAMINED genome(s) in this cluster's enclosing group. Clusters on "
+        "unexamined genomes in the same group are excluded from both halves of that fraction.",
     )
 
 
@@ -391,6 +532,35 @@ def corpus_caveats(ctx: ScoringContext) -> list[str]:
     """
     caveats = [NOT_A_NOVELTY_CLAIM, SCORE_IS_ORDINAL, WEIGHTS_ARE_UNCALIBRATED]
 
+    # The denominators, stated before anything that uses them. An unstated
+    # denominator is what made "rare in this corpus" mean "rare among rows
+    # somebody loaded" for as long as it did.
+    examined_genomes = len(ctx.detection_covered)
+    if examined_genomes == 0:
+        caveats.append(
+            "DENOMINATOR: no genome in this corpus has been covered by a recorded "
+            "cluster-detection run. 'Rare' has nothing to be rare within — the clusters here are "
+            "curated reports, not the result of surveying any genome — so class rarity is "
+            "uncomputable for every cluster. Ingest an antiSMASH run, or declare an existing one "
+            "with `bgcscape record-analysis-run`, to make rarity answerable."
+        )
+    else:
+        caveats.append(
+            f"DENOMINATOR: class rarity is computed over the {ctx.examined_bgc_count} cluster(s) "
+            f"on the {examined_genomes} genome(s) that a cluster-detection run actually covered — "
+            "not over everything ingested. Clusters on unexamined genomes are excluded from both "
+            "the numerator and the denominator of every frequency here."
+        )
+
+    clustered_genomes = len(ctx.clustering_covered)
+    if clustered_genomes:
+        caveats.append(
+            f"DENOMINATOR: family rarity and taxonomic spread are computed over the "
+            f"{ctx.clustered_bgc_count} cluster(s) on the {clustered_genomes} genome(s) a "
+            "sequence-clustering run reached. Clusters outside that run are not scored on those "
+            "components at all, because nothing compared them."
+        )
+
     if not ctx.families_present:
         caveats.append(
             "No sequence-based gene cluster families (e.g. BiG-SCAPE) have been ingested, so the "
@@ -413,7 +583,7 @@ def corpus_caveats(ctx: ScoringContext) -> list[str]:
     if ctx.total_bgcs < 50:
         caveats.append(
             f"Corpus contains {ctx.total_bgcs} BGCs. Every component is relative to what has been "
-            "ingested; 'rare' in a small corpus mostly reflects what hasn't been ingested yet."
+            "examined; 'rare' in a small corpus mostly reflects what hasn't been examined yet."
         )
     return caveats
 

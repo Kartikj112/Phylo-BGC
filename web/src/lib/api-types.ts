@@ -36,6 +36,9 @@ export type BGCClass = components["schemas"]["BGCClass"];
 export type TaxonRank = components["schemas"]["TaxonRank"];
 export type EvidenceLevel = components["schemas"]["EvidenceLevel"];
 export type AssemblyLevel = components["schemas"]["AssemblyLevel"];
+export type CoverageState = components["schemas"]["CoverageState"];
+export type AnalysisRunSummary = components["schemas"]["AnalysisRunSummary"];
+export type PlacementConfidence = components["schemas"]["PlacementConfidence"];
 
 /**
  * The tree logic (tree-logic.ts) and D3 rendering need to treat taxon

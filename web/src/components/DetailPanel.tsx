@@ -1,9 +1,14 @@
 "use client";
 
-import { ExternalLink, MapPin, Share2, X } from "lucide-react";
+import { AlertTriangle, ExternalLink, MapPin, Microscope, Share2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { fetchBgc, fetchGenome } from "@/lib/api-client";
-import type { BGCDetail, GenomeDetail } from "@/lib/api-types";
+import type {
+  BGCDetail,
+  BGCFamilySummary,
+  CoverageState,
+  GenomeDetail,
+} from "@/lib/api-types";
 import { bareAccession, isAssemblyAccession } from "@/lib/accession";
 import { BGC_CLASS_LABELS, COLORS, classColor } from "@/lib/colors";
 
@@ -17,10 +22,23 @@ interface DetailPanelProps {
    * family_ids). Lets the panel pivot from one cluster to "where is this
    * cluster's family across the tree". */
   familyIds?: string[];
+  /** The loaded family list, so a family id can be labelled by its KIND.
+   * A compound group and a sequence family are different scientific
+   * objects (see the API's `FamilyKind`); calling both "gene cluster
+   * family" in this panel presented a shared molecule as shared gene
+   * content, which on a MIBiG-derived corpus is every row. */
+  families?: BGCFamilySummary[];
   onShowFamily?: (familyId: string) => void;
 }
 
-export function DetailPanel({ selection, onClose, onSelectBgc, familyIds, onShowFamily }: DetailPanelProps) {
+export function DetailPanel({
+  selection,
+  onClose,
+  onSelectBgc,
+  familyIds,
+  families,
+  onShowFamily,
+}: DetailPanelProps) {
   const [genome, setGenome] = useState<GenomeDetail | null>(null);
   const [bgc, setBgc] = useState<BGCDetail | null>(null);
   const [loading, setLoading] = useState(false);
@@ -78,7 +96,12 @@ export function DetailPanel({ selection, onClose, onSelectBgc, familyIds, onShow
         {error && <div className="text-sm text-red-700">{error}</div>}
         {genome && <GenomeDetailView genome={genome} onSelectBgc={onSelectBgc} />}
         {bgc && (
-          <BgcDetailView bgc={bgc} familyIds={familyIds ?? []} onShowFamily={onShowFamily} />
+          <BgcDetailView
+            bgc={bgc}
+            familyIds={familyIds ?? []}
+            families={families ?? []}
+            onShowFamily={onShowFamily}
+          />
         )}
       </div>
     </div>
@@ -98,6 +121,36 @@ function EvidenceBadge({ level }: { level: string }) {
 }
 
 type GenomeTab = "overview" | "bgcs" | "info" | "lineage";
+
+/** How a genome's cluster count should be read, per the engine's
+ * `CoverageState`. The three states exist because "0 clusters" was two
+ * different facts wearing one face: a genome antiSMASH surveyed and found
+ * nothing in, and a genome nobody has ever looked at. Only the first is a
+ * finding, and the interface must not render the second as a count.
+ *
+ * The wording is the engine's own (`bgcscape.coverage.ABSENCE_NOTES`) where
+ * it fits; these are the short forms for a dot and a chip. */
+const COVERAGE_UI: Record<
+  CoverageState,
+  { dot: string; label: string; title: string }
+> = {
+  examined: {
+    dot: "#5B8C5A",
+    label: "Examined",
+    title: "A cluster-detection run has covered this genome — its count is a result",
+  },
+  curated_only: {
+    dot: "#C58A2E",
+    label: "Curated only",
+    title:
+      "Clusters recorded from literature; no detection run has covered this genome, so the count is a floor",
+  },
+  unexamined: {
+    dot: "#9A9D95",
+    label: "Not examined",
+    title: "Nothing has looked for clusters on this genome",
+  },
+};
 
 /** External resources, generated from the accession rather than
  * hardcoded. antiSMASH DB is deliberately omitted: it only resolves for
@@ -130,10 +183,13 @@ function GenomeDetailView({ genome, onSelectBgc }: { genome: GenomeDetail; onSel
   return (
     <>
       <div className="mb-1 flex items-center gap-2">
+        {/* Keyed to coverage, not to `bgcs.length`. The old dot was green
+            for "has clusters" and grey for "none recorded", which gave a
+            never-examined genome the same mark as one a run found empty. */}
         <span
           className="inline-block h-2 w-2 rounded-full"
-          style={{ backgroundColor: genome.bgcs.length > 0 ? "#5B8C5A" : "#9A9D95" }}
-          title={genome.bgcs.length > 0 ? "Has predicted BGCs" : "No BGCs recorded"}
+          style={{ backgroundColor: COVERAGE_UI[genome.coverage].dot }}
+          title={COVERAGE_UI[genome.coverage].title}
         />
         <span className="font-mono text-sm text-ink">{genome.accession}</span>
       </div>
@@ -226,11 +282,53 @@ function GenomeDetailView({ genome, onSelectBgc }: { genome: GenomeDetail; onSel
         Biosynthetic gene clusters ({genome.bgcs.length})
       </div>
       )}
+
+      {/* What the number above does and does not license. Shown for every
+          state, not only the bad ones: a reader who sees the caveat solely
+          on unexamined genomes learns to skip it, and "this count is a real
+          survey result" is worth saying out loud where it is true. */}
+      {(tab === "overview" || tab === "bgcs") && (
+        <div
+          className="mb-3 rounded border p-2.5"
+          style={{
+            borderColor: genome.coverage === "examined" ? COLORS.line : COLORS.lineStrong,
+            backgroundColor: genome.coverage === "unexamined" ? COLORS.paper : "transparent",
+          }}
+        >
+          <div className="mb-1 flex items-center gap-1.5">
+            {genome.coverage === "examined" ? (
+              <Microscope size={11} className="flex-shrink-0 text-ink-faint" />
+            ) : (
+              <AlertTriangle size={11} className="flex-shrink-0 text-ink-faint" />
+            )}
+            <span className="text-xs uppercase tracking-wider text-ink-muted">
+              {COVERAGE_UI[genome.coverage].label}
+            </span>
+          </div>
+          <div className="text-[11px] leading-relaxed text-ink-muted">
+            {genome.coverage_note}
+          </div>
+          {genome.analysis_runs.map((run) => (
+            <div key={run.id} className="mt-1.5 text-[11px] leading-relaxed text-ink-faint">
+              <span className="font-mono text-ink-muted">
+                {run.tool} {run.tool_version}
+              </span>{" "}
+              covered {run.genomes_covered} genome{run.genomes_covered === 1 ? "" : "s"}
+              {/* A declared run is somebody's word; a derived one was read
+                  out of the tool's own output. Both are coverage; they are
+                  not equally strong, and the panel says which. */}
+              {run.evidence_level === "hypothesized" && " — coverage declared, not derived from tool output"}
+            </div>
+          ))}
+        </div>
+      )}
       {(tab === "overview" || tab === "bgcs") && (
       <div className="flex flex-col gap-2">
         {genome.bgcs.length === 0 && (
           <div className="text-sm text-ink-faint">
-            No clusters recorded. Run antiSMASH on this genome to populate them.
+            {genome.coverage === "examined"
+              ? "None found. This genome was examined and no clusters were detected — a result, not a gap."
+              : "No clusters recorded, and nothing has examined this genome. Run antiSMASH on it to make its cluster content answerable."}
           </div>
         )}
         {(tab === "overview" ? genome.bgcs.slice(0, 6) : genome.bgcs).map((b) => (
@@ -288,12 +386,15 @@ function GenomeDetailView({ genome, onSelectBgc }: { genome: GenomeDetail; onSel
 function BgcDetailView({
   bgc,
   familyIds,
+  families,
   onShowFamily,
 }: {
   bgc: BGCDetail;
   familyIds: string[];
+  families: BGCFamilySummary[];
   onShowFamily?: (familyId: string) => void;
 }) {
+  const byId = new Map(families.map((f) => [f.id, f]));
   return (
     <>
       <div className="mb-1 text-sm text-ink">
@@ -325,6 +426,22 @@ function BgcDetailView({
           <div className="text-xs leading-relaxed text-ink">
             {bgc.placement_note ?? bgc.placement_method}
           </div>
+          {/* A name match and a taxid match are different claims. The
+              engine stores the confidence as a column so this is a lookup,
+              not a reading of the prose above. */}
+          {bgc.placement_confidence && (
+            <div
+              className="mt-1 inline-block rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wider"
+              style={{
+                color: bgc.placement_confidence === "weak" ? COLORS.signal : COLORS.inkFaint,
+                backgroundColor:
+                  bgc.placement_confidence === "weak" ? COLORS.signalWash : "transparent",
+              }}
+              title={bgc.placement_caveat ?? undefined}
+            >
+              {bgc.placement_confidence} match
+            </div>
+          )}
           {bgc.contig && (
             <div className="mt-1 text-[11px] leading-relaxed text-ink-faint">
               Characterized on MIBiG locus{" "}
@@ -336,22 +453,46 @@ function BgcDetailView({
         </div>
       )}
 
+      {/* Labelled per family by its KIND. This block used to call every
+          grouping a "gene cluster family" and offer to show "this family's
+          distribution" — but on a MIBiG-derived corpus every one of them is
+          a compound group, so the panel was offering shared gene content
+          and delivering shared chemistry. Convergent evolution makes those
+          different claims, and the difference is the whole reason
+          `FamilyKind` exists. */}
       {familyIds.length > 0 && onShowFamily && (
         <div className="mt-4 rounded border border-line bg-paper p-2.5">
-          <div className="mb-1.5 text-xs uppercase tracking-wider text-ink-muted">
-            Gene cluster {familyIds.length === 1 ? "family" : "families"}
-          </div>
-          <div className="flex flex-col gap-1">
-            {familyIds.map((fid) => (
-              <button
-                key={fid}
-                onClick={() => onShowFamily(fid)}
-                className="flex items-center gap-1.5 text-left text-xs text-signal hover:underline"
-              >
-                <Share2 size={11} className="flex-shrink-0" />
-                Show this family&apos;s distribution across the tree
-              </button>
-            ))}
+          <div className="flex flex-col gap-2">
+            {familyIds.map((fid) => {
+              const family = byId.get(fid);
+              const isCompoundGroup = family?.kind === "compound_group";
+              return (
+                <div key={fid}>
+                  <div className="mb-0.5 text-xs uppercase tracking-wider text-ink-muted">
+                    {isCompoundGroup ? "Compound group" : "Gene cluster family"}
+                    {family?.label ? (
+                      <span className="ml-1.5 font-mono normal-case tracking-normal text-ink-faint">
+                        {family.label}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="mb-1 text-[11px] leading-relaxed text-ink-faint">
+                    {isCompoundGroup
+                      ? "Grouped because MIBiG records these clusters as making the same named compound. No sequences were compared — this is not evidence they are similar clusters."
+                      : "Grouped by sequence similarity: gene content and domain architecture."}
+                  </div>
+                  <button
+                    onClick={() => onShowFamily(fid)}
+                    className="flex items-center gap-1.5 text-left text-xs text-signal hover:underline"
+                  >
+                    <Share2 size={11} className="flex-shrink-0" />
+                    {isCompoundGroup
+                      ? "Show where this compound is made across the tree"
+                      : "Show this family's distribution across the tree"}
+                  </button>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

@@ -114,7 +114,7 @@ describe("toDisplayChildren", () => {
       id: "empty",
       name: "Emptygenus",
       rank: "genus",
-      genome_count: 0,
+      genome_count: 0, examined_genome_count: 0,
       bgc_class_counts: {},
       direct_genomes: [],
       children: [],
@@ -333,20 +333,20 @@ describe("computeTreeLayout", () => {
       id: "big-genus",
       name: "Biggenus",
       rank: "genus" as const,
-      genome_count: 0,
+      genome_count: 0, examined_genome_count: 0,
       bgc_class_counts: {},
       direct_genomes: [],
       children: Array.from({ length: 6 }, (_, i) => ({
         id: `big-species-${i}`,
         name: `Biggenus species${i}`,
         rank: "species" as const,
-        genome_count: 1,
+        genome_count: 1, examined_genome_count: 1,
         bgc_class_counts: { other: 1 },
         direct_genomes: [
           {
             id: `big-genome-${i}`,
             accession: `GCF_BIG_${i}.1`,
-            assembly_level: "complete_genome" as const,
+            assembly_level: "complete_genome" as const, coverage: "examined" as const,
             is_mag: false,
             bgcs: [],
           },
@@ -359,7 +359,7 @@ describe("computeTreeLayout", () => {
       id: null,
       name: "root",
       rank: null,
-      genome_count: 12,
+      genome_count: 12, examined_genome_count: 12,
       bgc_class_counts: {},
       direct_genomes: [],
       children: [bigGenus, bigGenus2],
@@ -510,7 +510,7 @@ describe("branch weighting", () => {
 
   it("an empty subtree gets the minimum width, not zero or NaN", () => {
     const empty = toRootDisplayNode({
-      id: "e", name: "Empty", rank: "genus", genome_count: 0,
+      id: "e", name: "Empty", rank: "genus", genome_count: 0, examined_genome_count: 0,
       bgc_class_counts: {}, direct_genomes: [], children: [],
     });
     expect(branchWidth(empty, 100)).toBe(MIN_BRANCH_WIDTH);
@@ -518,7 +518,7 @@ describe("branch weighting", () => {
 
   it("dominantBgcClass returns null on a genuine tie rather than picking arbitrarily", () => {
     const tied = toRootDisplayNode({
-      id: "t", name: "Tied", rank: "genus", genome_count: 2,
+      id: "t", name: "Tied", rank: "genus", genome_count: 2, examined_genome_count: 2,
       bgc_class_counts: { nrps: 3, pks: 3 }, direct_genomes: [], children: [],
     });
     expect(dominantBgcClass(tied)).toBeNull();
@@ -526,7 +526,7 @@ describe("branch weighting", () => {
 
   it("dominantBgcClass finds a clear winner", () => {
     const clear = toRootDisplayNode({
-      id: "c", name: "Clear", rank: "genus", genome_count: 2,
+      id: "c", name: "Clear", rank: "genus", genome_count: 2, examined_genome_count: 2,
       bgc_class_counts: { nrps: 9, pks: 2 }, direct_genomes: [], children: [],
     });
     expect(dominantBgcClass(clear)).toBe("nrps");
@@ -596,9 +596,9 @@ describe("radial layout", () => {
     // equal and the test proves nothing.
     const small = computeRadialTreeLayout(
       toRootDisplayNode({
-        id: null, name: "root", rank: null, genome_count: 90, bgc_class_counts: {},
+        id: null, name: "root", rank: null, genome_count: 90, examined_genome_count: 90, bgc_class_counts: {},
         direct_genomes: Array.from({ length: 90 }, (_, i) => ({
-          id: `s${i}`, accession: `SYN_${i}.1`, assembly_level: "complete_genome" as const,
+          id: `s${i}`, accession: `SYN_${i}.1`, assembly_level: "complete_genome" as const, coverage: "examined" as const,
           is_mag: false, bgcs: [],
         })),
         children: [],
@@ -607,9 +607,9 @@ describe("radial layout", () => {
     );
     const big = computeRadialTreeLayout(
       toRootDisplayNode({
-        id: null, name: "root", rank: null, genome_count: 300, bgc_class_counts: {},
+        id: null, name: "root", rank: null, genome_count: 300, examined_genome_count: 300, bgc_class_counts: {},
         direct_genomes: Array.from({ length: 300 }, (_, i) => ({
-          id: `g${i}`, accession: `SYN_${i}.1`, assembly_level: "complete_genome" as const,
+          id: `g${i}`, accession: `SYN_${i}.1`, assembly_level: "complete_genome" as const, coverage: "examined" as const,
           is_mag: false, bgcs: [],
         })),
         children: [],
@@ -667,10 +667,10 @@ describe("semantic label management", () => {
     const mk = (n: number) =>
       computeRadialTreeLayout(
         toRootDisplayNode({
-          id: null, name: "root", rank: null, genome_count: n, bgc_class_counts: {},
+          id: null, name: "root", rank: null, genome_count: n, examined_genome_count: n, bgc_class_counts: {},
           direct_genomes: Array.from({ length: n }, (_, i) => ({
             id: `g${i}`, accession: `SYN_${i}.1`,
-            assembly_level: "complete_genome" as const, is_mag: false, bgcs: [],
+            assembly_level: "complete_genome" as const, coverage: "examined" as const, is_mag: false, bgcs: [],
           })),
           children: [],
         }),
@@ -742,17 +742,17 @@ describe("rank-level collapse", () => {
     // domain with no phylum/class/order between. Asking for "order"
     // should still terminate the branch rather than showing all of it.
     const skipped = toRootDisplayNode({
-      id: null, name: "root", rank: null, genome_count: 1, bgc_class_counts: {},
+      id: null, name: "root", rank: null, genome_count: 1, examined_genome_count: 1, bgc_class_counts: {},
       direct_genomes: [],
       children: [
         {
-          id: "d1", name: "Bacteria", rank: "domain", genome_count: 1, bgc_class_counts: {},
+          id: "d1", name: "Bacteria", rank: "domain", genome_count: 1, examined_genome_count: 1, bgc_class_counts: {},
           direct_genomes: [],
           children: [
             {
-              id: "g1", name: "Orphangenus", rank: "genus", genome_count: 1, bgc_class_counts: {},
+              id: "g1", name: "Orphangenus", rank: "genus", genome_count: 1, examined_genome_count: 1, bgc_class_counts: {},
               direct_genomes: [
-                { id: "gm1", accession: "SYN_1.1", assembly_level: "complete_genome", is_mag: false, bgcs: [] },
+                { id: "gm1", accession: "SYN_1.1", assembly_level: "complete_genome", coverage: "examined" as const, is_mag: false, bgcs: [] },
               ],
               children: [],
             },
@@ -785,7 +785,7 @@ describe("pruning to BGC-bearing genomes", () => {
    * never been run on, with a few that carry clusters. */
   function mixedTree(): TaxonTreeNode {
     const withBgcs = {
-      id: "g-has", accession: "GCF_HAS.1", assembly_level: "complete_genome" as const,
+      id: "g-has", accession: "GCF_HAS.1", assembly_level: "complete_genome" as const, coverage: "examined" as const,
       is_mag: false,
       bgcs: [{
         id: "b1", bgc_class: "nrps" as const, subtype: null,
@@ -794,18 +794,18 @@ describe("pruning to BGC-bearing genomes", () => {
     };
     const empties = Array.from({ length: 5 }, (_, i) => ({
       id: `g-empty-${i}`, accession: `GCF_EMPTY_${i}.1`,
-      assembly_level: "complete_genome" as const, is_mag: false, bgcs: [],
+      assembly_level: "complete_genome" as const, coverage: "examined" as const, is_mag: false, bgcs: [],
     }));
     return {
-      id: null, name: "root", rank: null, genome_count: 6,
+      id: null, name: "root", rank: null, genome_count: 6, examined_genome_count: 6,
       bgc_class_counts: { nrps: 1 }, direct_genomes: [],
       children: [
         {
-          id: "productive", name: "Productivegenus", rank: "genus", genome_count: 1,
+          id: "productive", name: "Productivegenus", rank: "genus", genome_count: 1, examined_genome_count: 1,
           bgc_class_counts: { nrps: 1 }, direct_genomes: [withBgcs], children: [],
         },
         {
-          id: "barren", name: "Barrengenus", rank: "genus", genome_count: 5,
+          id: "barren", name: "Barrengenus", rank: "genus", genome_count: 5, examined_genome_count: 5,
           bgc_class_counts: {}, direct_genomes: empties, children: [],
         },
       ],
@@ -844,9 +844,9 @@ describe("pruning to BGC-bearing genomes", () => {
     // GTDB ingested without antiSMASH. Pruning to an empty canvas would
     // read as a broken app rather than an empty result.
     const barren = toRootDisplayNode({
-      id: null, name: "root", rank: null, genome_count: 3, bgc_class_counts: {},
+      id: null, name: "root", rank: null, genome_count: 3, examined_genome_count: 3, bgc_class_counts: {},
       direct_genomes: Array.from({ length: 3 }, (_, i) => ({
-        id: `g${i}`, accession: `GCF_${i}.1`, assembly_level: "complete_genome" as const,
+        id: `g${i}`, accession: `GCF_${i}.1`, assembly_level: "complete_genome" as const, coverage: "examined" as const,
         is_mag: false, bgcs: [],
       })),
       children: [],
@@ -889,7 +889,7 @@ describe("clade summary glyphs", () => {
 
   it("reports an empty clade as zero rather than omitting it", () => {
     const empty = toRootDisplayNode({
-      id: "e", name: "Empty", rank: "genus", genome_count: 3, bgc_class_counts: {},
+      id: "e", name: "Empty", rank: "genus", genome_count: 3, examined_genome_count: 3, bgc_class_counts: {},
       direct_genomes: [], children: [],
     });
     const summary = cladeSummary(empty);
@@ -985,7 +985,7 @@ describe("genome filters", () => {
   function g(overrides: Partial<GenomeDisplayNode> = {}): GenomeDisplayNode {
     return {
       _kind: "genome", id: "g1", accession: "GCF_1.1",
-      assembly_level: "complete_genome", is_mag: false,
+      assembly_level: "complete_genome", coverage: "examined" as const, is_mag: false,
       genome_size_bp: 5_000_000, gc_content_pct: 60, completeness_pct: 98,
       bgcs: [], ...overrides,
     } as GenomeDisplayNode;
@@ -1111,14 +1111,14 @@ describe("family distribution — the central question", () => {
       id: null,
       name: "root",
       rank: null,
-      genome_count: 2,
+      genome_count: 2, examined_genome_count: 2,
       bgc_class_counts: { nrps: 2 },
       direct_genomes: [],
       children: ["A", "B"].map((p, i) => ({
         id: `phy-${p}`,
         name: `Phylum${p}`,
         rank: "phylum" as const,
-        genome_count: 1,
+        genome_count: 1, examined_genome_count: 1,
         bgc_class_counts: { nrps: 1 },
         direct_genomes: [],
         children: [
@@ -1126,13 +1126,13 @@ describe("family distribution — the central question", () => {
             id: `gen-${p}`,
             name: `Genus${p}`,
             rank: "genus" as const,
-            genome_count: 1,
+            genome_count: 1, examined_genome_count: 1,
             bgc_class_counts: { nrps: 1 },
             direct_genomes: [
               {
                 id: `gm-${p}`,
                 accession: `SYN_${i}.1`,
-                assembly_level: "complete_genome" as const,
+                assembly_level: "complete_genome" as const, coverage: "examined" as const,
                 is_mag: false,
                 bgcs: [
                   {
@@ -1197,18 +1197,18 @@ describe("family distribution — the central question", () => {
       id: null,
       name: "root",
       rank: null,
-      genome_count: 6,
+      genome_count: 6, examined_genome_count: 6,
       bgc_class_counts: { nrps: 2, pks: 1 },
       direct_genomes: [],
       children: [
         // the real GTDB tree
-        { ...tree.children[0]!, genome_count: 4, bgc_class_counts: { nrps: 1, pks: 1 } },
+        { ...tree.children[0]!, genome_count: 4, examined_genome_count: 4, bgc_class_counts: { nrps: 1, pks: 1 } },
         // MIBiG orphans with no GTDB placement
         {
           id: "orphan-1",
           name: "Aspergillus oryzae",
           rank: "species",
-          genome_count: 1,
+          genome_count: 1, examined_genome_count: 1,
           bgc_class_counts: { nrps: 1 },
           direct_genomes: [],
           children: [],
@@ -1217,7 +1217,7 @@ describe("family distribution — the central question", () => {
           id: "orphan-2",
           name: "Alternaria alternata",
           rank: "species",
-          genome_count: 1,
+          genome_count: 1, examined_genome_count: 1,
           bgc_class_counts: { pks: 0, nrps: 0 },
           direct_genomes: [],
           children: [],

@@ -1449,6 +1449,199 @@ looked like a fix while still missing the one hyphenated name — an 11-member
 group in the real corpus. Membership is now tested label-to-label, and the
 round trip is asserted for every name in the set.
 
+## Absence needs a denominator: `AnalysisRun`
+
+The data model recorded what we believe. It did not record what was
+examined, by what, with what coverage — and three of this project's worst
+claims traced to that single gap.
+
+A genome with no BGCs and a genome nobody had ever run antiSMASH on were the
+same row. Both had zero `bgc` children; both rendered as "0 BGCs". On a full
+GTDB ingest that is hundreds of thousands of organisms the tool asserts
+produce nothing, having never looked at one of them. It was the falsest
+thing this tool said, and it said it confidently, in a count.
+
+`AnalysisRun` + `AnalysisRunCoverage` (models/analysis.py) record which tool,
+which version, which parameters, which genomes, when. `bgcscape.coverage`
+turns that into the question every caller actually has:
+
+| state | meaning | what absence licenses |
+|---|---|---|
+| `EXAMINED` | a `BGC_DETECTION` run covers this genome | zero clusters is a **finding** |
+| `CURATED_ONLY` | clusters recorded, no covering run | the count is a **floor**, not a census |
+| `UNEXAMINED` | no run, no clusters | nothing. Nobody looked. |
+
+### Why this is not `Source`
+
+`Source` documents itself as "one specific antiSMASH/BiG-SCAPE execution",
+so the overlap deserves an answer. In practice it is not one:
+`_get_or_create_source` keys on `(name, version)`, so a single `Source` row
+covers *every* antiSMASH 7.1.0 run ever ingested here. And `Source` names no
+genomes — which is the entire point. An `AnalysisRun` points at a `Source`
+rather than replacing it.
+
+### Coverage is typed, and MIBiG creates none
+
+`analysis_type` is required because "covered by BiG-SCAPE" says nothing about
+whether anything looked for clusters, and "covered by antiSMASH" says nothing
+about whether its clusters were ever compared. Those are two different
+denominators and the scorer needs them apart.
+
+MIBiG ingestion deliberately records **no** run. A MIBiG entry is a curated
+report that one cluster exists in an organism; it is not a survey of that
+organism's genome. Recording detection coverage for it would manufacture
+exactly the denominator this table exists to stop assuming — it would turn
+"somebody once published three clusters" into "we looked and found three".
+
+### What that says about the shipped corpus
+
+All 2,437 clusters in the bundled database are MIBiG, `predicted_by_tool` is
+NULL for every one, and no antiSMASH run exists anywhere in it. So after this
+change the bundle reports, correctly:
+
+```
+Genomes: 1542
+  examined            0
+  curated only     1521
+  unexamined         21
+```
+
+Zero examined. That is uncomfortable and it is true, and the interface
+states it **once**, at corpus level, rather than by greying out every glyph —
+on a corpus with no coverage that would read as a broken app rather than an
+honest one. The tree marks unexamined empty clades with a hatch and a dashed
+outline; examined-empty clades keep the hollow rectangle, which now means
+something.
+
+### `record-analysis-run` exists for the half that has no output
+
+antiSMASH over 900 genomes finding clusters in 40 produces 40 files. The
+other 860 are the scientifically interesting half — genomes examined and
+found empty — and no ingestion path can see them, because they produced
+nothing to ingest. `bgcscape record-analysis-run` declares that coverage, at
+`evidence_level = HYPOTHESIZED` rather than `COMPUTED`: Phylo-BGC did not
+read a tool's output to establish it, somebody asserted it. Both are worth
+having; they are not equally strong, and a query can tell them apart.
+
+## The scorer's denominators were "rows somebody loaded"
+
+Every rarity component is a fraction, and the denominator was whatever
+happened to be ingested. A class occurring in 1 of 40 curated entries is not
+"rare in this clade" unless those 40 genomes were surveyed — and the genomes
+MIBiG has entries for were not surveyed, they were *published about*.
+
+Two corrections, both in `scoring/prioritization.py`:
+
+**`class_rarity_in_clade`** now counts only clusters on detection-covered
+genomes, over the peer group's **examined** genomes, and returns `None` below
+two of them. Numerator and denominator come from the same population; letting
+curated entries into the numerator made a clade look unusual in proportion to
+how much literature it has.
+
+**`unclustered`, `family_rarity`, `taxonomic_isolation`** are answerable only
+for genomes a `SEQUENCE_CLUSTERING` run reached. This fixes a bug that was
+dormant only because no clustering had been ingested: `families_present` was
+corpus-wide, so one BiG-SCAPE run over ten genomes would have made every
+other cluster in the corpus score 1.0 on `unclustered` — *"no sufficiently
+similar cluster was found"* — having never been compared to anything.
+
+Every caveat now names its denominator, prefixed `DENOMINATOR:`.
+
+### One derivation holds, and only in one direction
+
+A genome carrying a BGC in a sequence family was demonstrably in a clustering
+run — the membership *is* that run's output. So clustering coverage is
+derived from memberships as well as from `AnalysisRun`, which keeps a corpus
+clustered before this change answering correctly. The reverse does not hold
+and is not assumed: no memberships tells you nothing about whether the genome
+was compared. And detection coverage is **never** derived, for the MIBiG
+reason above.
+
+### The consequence, stated plainly
+
+| corpus | scored before | scored after |
+|---|---|---|
+| shipped bundle (GTDB + MIBiG + compound groups) | 2,052 of 2,437 | **0 of 2,437** |
+| synthetic demo (80 genomes, coverage recorded) | all | all |
+
+The bundle's 2,052 scores were the artifact. With `class_rarity_in_clade`
+correctly unavailable, only `mibig_distance` remains computable, which is
+below `MIN_COMPONENTS_FOR_SCORE` — so the scorer declines, exactly as it does
+on any other MIBiG-only corpus. This is the same refusal ARCHITECTURE.md's
+own "MIBiG-only, no groups: 2,437 / 2,437" row always described; the corpus
+was only escaping it by counting curated clusters as a survey.
+
+## Placement is a relation, not a JSON blob
+
+`link-mibig` re-points each MIBiG cluster onto GTDB's genome for the same
+organism. That inference lived in a `_bgcscape_placement` key inside
+`BGC.raw_annotation`: real, but unqueryable and unconstrained. "Which entries
+rest on weak name matching?" meant decoding 2,437 JSON blobs in Python, and
+nothing stopped a caller writing a method string the vocabulary never had.
+
+`bgc_organism_placement` (models/placement.py) stores `method`, `confidence`
+and `caveat` as columns. On the bundle:
+
+| confidence | count | methods |
+|---|---|---|
+| strong | 1,589 | `ncbi_taxid` |
+| moderate | 40 | `gtdb_species` (31), `ncbi_species_taxid` (9) |
+| **weak** | **220** | `ncbi_species_name` |
+
+`WHERE confidence = 'weak'` — 220 clusters whose position on the tree is
+nomenclature rather than an identifier. `bgcscape placements --confidence
+weak` lists them.
+
+### The claim is carried by the column name
+
+The FK is `representative_genome_id`, not `genome_id`. The genome *represents
+the organism*; it is not the assembly the cluster was sequenced from, and the
+column name is the only place a reader is guaranteed to look. `BGC.contig`
+still holds MIBiG's own locus accession, so what was actually sequenced
+remains recorded, and every non-unplaced caveat says "NOT sequenced from this
+assembly" in as many words.
+
+An undefined `match_method` is **counted and skipped**, never coerced. The
+mapping TSV's method column is free text from a script somebody can edit;
+inventing a confidence for a value nobody defined would put a number on the
+tree that no method backs. The cluster is still linked — only the confidence
+claim is withheld.
+
+### The migration's backfill, and the bug real data found
+
+`b8c2d5e71a30` lifts every placement out of `raw_annotation` into the table —
+1,849 rows on the bundle. It also keeps writing the JSON key, deliberately:
+the downgrade drops the table, and the JSON is what a downgraded database
+still has. `placement_of()` reads the table and falls back to the JSON, so a
+database migrated but not re-linked still answers.
+
+The backfill shipped a real bug that the empty-database round trip could not
+see, because an empty database has no rows to insert. `sqlalchemy.Uuid`
+stores as native UUID on Postgres and CHAR(32) on SQLite, so ids read back by
+raw SQL are `uuid.UUID` on one dialect and `str` on the other; feeding the
+string into a `sa.Uuid` bind parameter fails with `'str' object has no
+attribute 'hex'`. Found by running the migration against the real 2,437-cluster
+bundle. Verified afterwards on **both** dialects with seeded placement rows,
+not just on the empty schema.
+
+## Two kinds of grouping: the last three consumers
+
+`BGCFamily.kind` landed in `725aba2` and the scorer has honoured it since.
+Three consumers still pooled the two:
+
+- **`api/comparison.py`** counted both into one `family_count` and one
+  `shared_families` list, so two clades sharing a compound group read as
+  sharing repertoire. Every `FamilyRef` now carries its `kind`, the per-clade
+  counts are split, and a caveat says why the difference matters: convergent
+  evolution routinely produces the same molecule from unrelated pathways.
+- **`/api/v1/provenance`** summed both into `family_count`, the number that
+  travels into figure captions. Split.
+- **The BGC detail panel** labelled every `family_id` "Gene cluster family"
+  and offered to show "this family's distribution" — on a MIBiG-derived
+  corpus that is 100% compound groups, so it offered shared gene content and
+  delivered shared chemistry. It now labels each by kind and changes the verb.
+
+
 ## Provenance is only structural if it is populated
 
 Every `Source` in every shipped build had `license`, `url`, `citation` and

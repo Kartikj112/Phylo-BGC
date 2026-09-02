@@ -26,7 +26,7 @@ from bgcscape.ingest.bigscape import (
 )
 from bgcscape.ingest.gtdb import ingest_gtdb_metadata, read_gtdb_metadata_tsv
 from bgcscape.ingest.mibig import ingest_mibig_entries, read_mibig_entries_from_path
-from bgcscape.models import Source, SourceType
+from bgcscape.models import AnalysisType, Genome, Source, SourceType
 
 app = typer.Typer(help="Phylo-BGC scientific engine CLI.")
 ingest_app = typer.Typer(help="Ingest curated reference datasets (MIBiG, GTDB).")
@@ -282,7 +282,12 @@ def ingest_bigscape_cmd(
         )
         rows = read_bigscape_clustering_tsv(path)
         report = ingest_bigscape_clustering(
-            session, source, rows, cutoff=resolved_cutoff, clustering_method=f"BiG-SCAPE {version}"
+            session,
+            source,
+            rows,
+            cutoff=resolved_cutoff,
+            clustering_method=f"BiG-SCAPE {version}",
+            tool_version=version,
         )
     typer.echo(f"Cutoff: {resolved_cutoff}")
     _echo_report(report)
@@ -365,6 +370,7 @@ def ingest_bigfam_cmd(
             include_putative=include_putative,
             core_radius=core_radius,
             clustering_method=f"BiG-SLiCE (BiG-FAM {version})",
+            tool_version=version,
         )
 
     _echo_report(report)
@@ -443,6 +449,212 @@ def group_by_compound_cmd(
         typer.echo(f"    {example}")
 
 
+@app.command("record-analysis-run")
+def record_analysis_run_cmd(
+    accessions: Path = typer.Argument(
+        ...,
+        help=(
+            "A text file of genome accessions, one per line, that this run examined. "
+            "Blank lines and lines starting with '#' are ignored."
+        ),
+    ),
+    tool: str = typer.Option("antiSMASH", help="The tool that was run."),
+    tool_version: str = typer.Option(..., help="Its version, e.g. 7.1.0."),
+    analysis_type: str = typer.Option(
+        "bgc_detection",
+        help="What the run looked for: 'bgc_detection' (antiSMASH) or 'sequence_clustering'.",
+    ),
+    label: str = typer.Option("", help="Distinguishes two runs of the same tool and version."),
+    notes: str = typer.Option(None, help="Anything a reader needs to interpret this coverage."),
+) -> None:
+    """Declare that a tool examined these genomes, without ingesting its output.
+
+    The case this exists for: antiSMASH was run over 900 genomes and found
+    clusters in 40. Ingesting the output records the 40. The other 860 are
+    the scientifically interesting half -- genomes examined and found empty --
+    and nothing in the ingestion path can see them, because they produced no
+    file to ingest. Without this command, "we looked and found nothing" is
+    unsayable, and 860 real negative results render as "never examined".
+
+    The run is recorded at `evidence_level = HYPOTHESIZED`, not COMPUTED:
+    Phylo-BGC did not read a tool's output to establish this coverage,
+    somebody asserted it. That is often the only way the fact can be
+    recorded, and it is worth recording -- but a query must be able to tell
+    an asserted coverage claim from a derived one, so the two are stored
+    differently.
+    """
+    from bgcscape.coverage import (
+        bgc_count_for_genome,
+        get_or_create_analysis_run,
+        record_coverage,
+    )
+    from bgcscape.models.base import EvidenceLevel
+
+    try:
+        parsed_type = AnalysisType(analysis_type)
+    except ValueError as exc:
+        raise typer.BadParameter(
+            f"Unknown analysis type '{analysis_type}'. Use one of: "
+            + ", ".join(t.value for t in AnalysisType)
+        ) from exc
+
+    wanted = [
+        line.strip()
+        for line in accessions.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    if not wanted:
+        typer.echo(f"No accessions found in {accessions}.", err=True)
+        raise typer.Exit(1)
+
+    with session_scope() as session:
+        source = _get_or_create_source(
+            session, name=tool, source_type=SourceType.TOOL_RUN, version=tool_version
+        )
+        run = get_or_create_analysis_run(
+            session,
+            source=source,
+            analysis_type=parsed_type,
+            tool=tool,
+            tool_version=tool_version,
+            label=label,
+            evidence_level=EvidenceLevel.HYPOTHESIZED,
+        )
+        if notes:
+            run.notes = notes
+
+        found = {g.accession: g for g in session.query(Genome).filter(Genome.accession.in_(wanted))}
+        recorded = 0
+        empty = 0
+        for accession in wanted:
+            genome = found.get(accession)
+            if genome is None:
+                continue
+            n = bgc_count_for_genome(session, genome.id)
+            record_coverage(session, run, genome, bgcs_recorded=n)
+            recorded += 1
+            if n == 0:
+                empty += 1
+        session.commit()
+
+    missing = len(wanted) - recorded
+    typer.echo(
+        f"Recorded coverage for {recorded} genome(s) by {tool} {tool_version} ({parsed_type.value})."
+    )
+    typer.echo(
+        f"  {empty} of them carry no clusters -- now recorded as examined-and-empty rather than "
+        "unexamined, which is the finding this command exists to make sayable."
+    )
+    if missing:
+        typer.echo(
+            f"  {missing} accession(s) are not in this database and were skipped. Coverage is "
+            "only meaningful for genomes the corpus actually holds -- recording it for absent "
+            "ones would claim a denominator with nothing in it.",
+            err=True,
+        )
+
+
+@app.command("coverage")
+def coverage_cmd() -> None:
+    """Report how much of the corpus has actually been examined.
+
+    The number to read before trusting any absence in this database: a
+    cluster count over unexamined genomes is not a survey result.
+    """
+    from bgcscape.coverage import corpus_coverage_summary
+    from bgcscape.models import AnalysisRun, AnalysisRunCoverage
+
+    with session_scope() as session:
+        summary = corpus_coverage_summary(session)
+        total = sum(summary.values())
+        typer.echo(f"Genomes: {total}")
+        typer.echo(
+            f"  examined      {summary['examined']:>7}  -- cluster count is a result, zero included"
+        )
+        typer.echo(
+            f"  curated only  {summary['curated_only']:>7}  -- clusters recorded, no run covered "
+            "the genome; the count is a floor"
+        )
+        typer.echo(
+            f"  unexamined    {summary['unexamined']:>7}  -- nothing has looked; a zero here "
+            "means nothing"
+        )
+
+        runs = session.query(AnalysisRun).all()
+        if not runs:
+            typer.echo(
+                "\nNo analysis runs recorded. Every cluster count in this database is a "
+                "curated report, not a survey -- absence is uninterpretable corpus-wide. "
+                "`bgcscape ingest antismash` or `bgcscape record-analysis-run` changes that."
+            )
+            return
+        typer.echo("\nRuns:")
+        for run in runs:
+            n = session.query(AnalysisRunCoverage).filter_by(analysis_run_id=run.id).count()
+            typer.echo(
+                f"  {run.tool} {run.tool_version} ({run.analysis_type.value})"
+                f"{' [' + run.label + ']' if run.label else ''}: {n} genome(s)"
+                f"  evidence={run.evidence_level.value}"
+            )
+
+
+@app.command("placements")
+def placements_cmd(
+    confidence: str = typer.Option(
+        None, help="Only show placements at this confidence: strong, moderate or weak."
+    ),
+    limit: int = typer.Option(20, help="Examples to print."),
+) -> None:
+    """Report how MIBiG clusters were put on the GTDB tree, by confidence.
+
+    "Which entries rest on weak name matching?" -- the question that used to
+    need a Python pass over every cluster's raw_annotation JSON, now a
+    column and an index.
+    """
+    from bgcscape.models import BGC, BGCOrganismPlacement, PlacementConfidence
+
+    with session_scope() as session:
+        rows = session.query(BGCOrganismPlacement.confidence, BGCOrganismPlacement.method).all()
+        if not rows:
+            typer.echo("No placements recorded. Run `bgcscape link-mibig` first.")
+            return
+
+        by_conf: dict[str, int] = {}
+        by_method: dict[str, int] = {}
+        for conf, method in rows:
+            by_conf[conf.value] = by_conf.get(conf.value, 0) + 1
+            by_method[method.value] = by_method.get(method.value, 0) + 1
+
+        typer.echo(f"Placements: {len(rows)}")
+        for name in ("strong", "moderate", "weak"):
+            typer.echo(f"  {name:<9} {by_conf.get(name, 0):>6}")
+        typer.echo("\nBy method:")
+        for method, n in sorted(by_method.items(), key=lambda kv: -kv[1]):
+            typer.echo(f"  {method:<20} {n:>6}")
+
+        if confidence:
+            try:
+                wanted = PlacementConfidence(confidence)
+            except ValueError as exc:
+                raise typer.BadParameter(
+                    f"Unknown confidence '{confidence}'. Use strong, moderate or weak."
+                ) from exc
+            typer.echo(f"\n{wanted.value} placements (first {limit}):")
+            examples = (
+                session.query(BGC.mibig_accession, Genome.accession, BGCOrganismPlacement.method)
+                .join(BGCOrganismPlacement, BGCOrganismPlacement.bgc_id == BGC.id)
+                .outerjoin(Genome, Genome.id == BGCOrganismPlacement.representative_genome_id)
+                .filter(BGCOrganismPlacement.confidence == wanted)
+                .limit(limit)
+                .all()
+            )
+            for mibig_accession, genome_accession, method in examples:
+                typer.echo(
+                    f"  {mibig_accession or '?'} -> {genome_accession or '(unplaced)'} "
+                    f"via {method.value}"
+                )
+
+
 @app.command("link-mibig")
 def link_mibig_cmd(
     mapping_path: Path = typer.Argument(
@@ -476,6 +688,21 @@ def link_mibig_cmd(
         f"Linked {report.linked} cluster(s) to a GTDB genome "
         f"({report.already_linked} already linked)."
     )
+    if report.placements_recorded:
+        typer.echo(
+            f"  Recorded {report.placements_recorded} queryable placement(s); "
+            f"{report.weak_placements} rest on a free-text name match or reach only genus "
+            "level. `bgcscape placements --confidence weak` lists them."
+        )
+    if report.unknown_methods:
+        typer.echo(
+            f"  {len(report.unknown_methods)} match method(s) in the mapping are not in the "
+            f"placement vocabulary and were not recorded as placements: "
+            f"{sorted(report.unknown_methods)}. The clusters are still linked; only the "
+            "confidence claim is withheld, because there is no defined confidence for a "
+            "method nobody defined.",
+            err=True,
+        )
     if report.pruned_genomes or report.pruned_taxa:
         typer.echo(
             f"  Removed {report.pruned_genomes} empty MIBiG locus row(s) and "

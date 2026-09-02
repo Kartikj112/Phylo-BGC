@@ -32,8 +32,9 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from bgcscape.coverage import get_or_create_analysis_run, record_coverage
 from bgcscape.ingest._util import IngestReport, get_or_create_or_update, hybrid_subtype
-from bgcscape.models import BGC, BGCClass, EvidenceLevel, Genome, Source
+from bgcscape.models import BGC, AnalysisType, BGCClass, EvidenceLevel, Genome, Source
 from bgcscape.models.genome import AssemblyLevel
 from bgcscape.schemas import BGCCreate, GenomeCreate
 
@@ -124,6 +125,12 @@ class ParsedAntismashResult:
     genome_accession: str
     regions: list[ParsedAntismashRegion]
     taxon_hint: str  # antiSMASH's own "bacteria"/"fungi" taxon field — informational only
+    #: The tool version, taken from the result's top-level `version` field.
+    #: Held here as well as per-region because a run that found NOTHING has
+    #: no regions to carry it — and that run is precisely the one whose
+    #: coverage matters most, since it is the only evidence that a genome
+    #: with zero clusters was ever examined.
+    antismash_version: str = ""
 
 
 def parse_antismash_result(raw: dict[str, Any], genome_accession: str) -> ParsedAntismashResult:
@@ -170,14 +177,29 @@ def parse_antismash_result(raw: dict[str, Any], genome_accession: str) -> Parsed
         genome_accession=genome_accession,
         regions=regions,
         taxon_hint=raw.get("taxon", "bacteria"),
+        antismash_version=str(version),
     )
 
 
-def load_antismash_result(session: Session, parsed: ParsedAntismashResult, source: Source) -> tuple[Genome, IngestReport]:
+def load_antismash_result(
+    session: Session,
+    parsed: ParsedAntismashResult,
+    source: Source,
+    *,
+    run_label: str = "",
+) -> tuple[Genome, IngestReport]:
     """Upsert a genome stub (get-or-create — reuses an existing Genome,
     e.g. one already ingested from GTDB, if the accession matches) and
     every region found for it. Each region commits individually — see
     get_or_create_or_update()'s docstring for why.
+
+    Also records an `AnalysisRun` covering this genome. That is the whole
+    point of doing it here rather than leaving it to a separate step: this
+    function is the only place that knows, for certain, that antiSMASH
+    looked at this exact genome. Coverage is recorded even when the run
+    found NO regions — a genome examined and found empty is a real
+    biological finding, and it is the finding the tool previously had no
+    way to state.
     """
     genome_create = GenomeCreate(
         accession=parsed.genome_accession,
@@ -239,6 +261,22 @@ def load_antismash_result(session: Session, parsed: ParsedAntismashResult, sourc
         else:
             report.updated += 1
 
+    # Recorded after the regions, so `bgcs_recorded` reflects what actually
+    # loaded rather than what the file claimed — a run that reported five
+    # regions of which five failed to load examined the genome and recorded
+    # nothing, which is a different fact from finding nothing.
+    run = get_or_create_analysis_run(
+        session,
+        source=source,
+        analysis_type=AnalysisType.BGC_DETECTION,
+        tool="antiSMASH",
+        tool_version=parsed.antismash_version or "unknown",
+        label=run_label,
+        parameters={"taxon": parsed.taxon_hint} if parsed.taxon_hint else None,
+    )
+    record_coverage(session, run, genome, bgcs_recorded=report.total_ok)
+    session.commit()
+
     return genome, report
 
 
@@ -253,6 +291,8 @@ def ingest_antismash_result(
     source: Source,
     raw: dict[str, Any],
     genome_accession: str,
+    *,
+    run_label: str = "",
 ) -> IngestReport:
     """Parse and load one antiSMASH result. The genome upsert itself isn't
     counted in the returned report's created/updated (that would double-
@@ -267,7 +307,7 @@ def ingest_antismash_result(
         report.record_error(genome_accession, str(exc))
         return report
 
-    _, report = load_antismash_result(session, parsed, source)
+    _, report = load_antismash_result(session, parsed, source, run_label=run_label)
     return report
 
 
@@ -275,13 +315,18 @@ def ingest_antismash_results(
     session: Session,
     source: Source,
     results: Iterator[tuple[dict[str, Any], str]] | list[tuple[dict[str, Any], str]],
+    *,
+    run_label: str = "",
 ) -> IngestReport:
     """Batch entry point: an iterable of (raw_result, genome_accession)
     pairs — the explicit pairing is the point, since antiSMASH's own JSON
-    can't supply the accession half (see module docstring)."""
+    can't supply the accession half (see module docstring).
+
+    One `run_label` across the batch, so every genome in it lands under a
+    single `AnalysisRun` — which is what a batch actually was."""
     combined = IngestReport()
     for raw, genome_accession in results:
-        single = ingest_antismash_result(session, source, raw, genome_accession)
+        single = ingest_antismash_result(session, source, raw, genome_accession, run_label=run_label)
         combined.created += single.created
         combined.updated += single.updated
         combined.skipped += single.skipped

@@ -859,6 +859,7 @@ export default function HomePage() {
             onClose={() => setSelection(null)}
             onSelectBgc={(id) => setSelection({ kind: "bgc", id })}
             familyIds={selectedBgcFamilyIds}
+            families={familiesList}
             onShowFamily={selectFamily}
           />
         ) : selectedFamilyId ? (

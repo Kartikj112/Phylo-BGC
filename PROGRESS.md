@@ -2,8 +2,8 @@
 
 **Read this file first when resuming work in a new chunk.**
 
-_Last updated: correctness + performance pass following a full end-to-end
-stress test of the shipped build._
+_Last updated: the analysis-coverage pass — modelling what was EXAMINED, not
+just what was found, and correcting every denominator that depended on it._
 
 ## Status at a glance
 
@@ -17,77 +17,100 @@ stress test of the shipped build._
 | 4 | Publication-grade export | ✅ Done |
 | 5 | User uploads + BGC prioritization scoring | ✅ Done |
 
-**Tests:** 212 engine tests (SQLite) / 211 (real Postgres 16), 4–5 skipped
-where the Cairo system library is absent · 45 frontend unit tests ·
-**11 Playwright browser tests** (new).
+**Tests:** 359 engine tests (SQLite) / 358 (real Postgres 16) / **363 in the
+production image**, where Cairo exists and the PDF tests actually run ·
+168 frontend unit tests · 63 Playwright browser tests (62 passing; see
+"still unverified" item 6).
 
 Real data is ingested and shipped: `engine/gtdb_mibig_bundled.db` holds all
-2,437 active MIBiG 4.0 clusters mapped onto GTDB R11-RS232 (1,739 genomes,
-1,899 taxa, 279 compound groups).
+2,437 active MIBiG 4.0 clusters mapped onto GTDB R11-RS232 (1,542 genomes,
+2,021 taxa, 279 compound groups, 1,849 recorded placements).
 
 ## What this pass changed
 
-A full stress test against the shipped database found five broken and ten
-misleading behaviours. All are fixed; each has a regression test that fails
-without its fix. Full write-ups in ARCHITECTURE.md.
+The data model recorded what we believe, but not what was examined, by what,
+with what coverage. Every flaw below traced to that.
 
-**Scientific correctness**
+**`AnalysisRun` — absence gets a denominator (new)**
 
-- **The missing-evidence guarantee was off in the shipped build.** Compound
-  groups (`group-by-compound`) were being read as BiG-SCAPE sequence
-  families, so the prioritization scorer emitted similarity claims about a
-  corpus on which no clustering had run. On the bundle it declined to score
-  **0** of 2,437 clusters; it now declines **783**, matching the corpus
-  without compound groups exactly. `BGCFamily.kind` makes the distinction a
-  typed, CHECK-constrained column.
-- **Re-ingesting MIBiG destroyed the GTDB placement** — 1,629 clusters moved
-  off real assemblies back onto locus stubs, reported as `created=0`.
-- **`is_generic_product` was dead code, and wrong.** Now called, exposed
-  through the API, shown in the UI, and correct for hyphenated names.
-- **Provenance carried no licence.** GTDB is CC BY-SA 4.0 and requires
-  attribution; every exported figure attributed nothing. Now populated.
-- **Compound groups were typed `reference_database`.** They are `TOOL_RUN` —
-  Phylo-BGC derives them.
-- **Prioritization caveats described one row and were shown for all of them.**
-  Corpus-level and per-cluster caveats are now separate.
-- **The Sankey's `hybrid_double_counted` under-reported** by one per 3-way
-  hybrid, so the flows did not reconcile.
+- Which tool, which version, which parameters, **which genomes**, when.
+  `AnalysisRunCoverage` is one row per genome examined, and `bgcscape.coverage`
+  turns it into three states: **examined** (zero clusters is a finding),
+  **curated only** (the count is a floor), **unexamined** (nothing looked).
+- MIBiG ingestion records **no** run, deliberately: a curated entry is a
+  report that one cluster exists, not a survey of a genome.
+- `bgcscape record-analysis-run` declares coverage for the half that leaves
+  no output — genomes a run examined and found nothing in. Stored as
+  `HYPOTHESIZED`, because it is asserted rather than derived.
+- Surfaced as `coverage` per genome, `examined_genome_count` per tree node,
+  and a corpus line in the stats bar. Unexamined empty clades are hatched;
+  examined-empty ones keep the hollow rectangle, which now means something.
 
-**Robustness**
+**The scorer's denominators were wrong, and unstated**
 
-- `alembic revision --autogenerate` no longer emits CHECK-constraint drops.
-  It previously took the schema from 12 constraints to 1 with no model
-  changes, on both dialects.
-- `/api/v1/prioritization?limit` is bounded; `limit=0` used to return the
-  whole corpus and `limit=-1` everything-but-the-last-row.
-- Missing Cairo returns 503 with an install hint, not a bare 500.
-- `/api/v1/search` escapes LIKE wildcards and reports totals, truncation and
-  a "query too short" message.
+- `class_rarity_in_clade` counted "genomes that happen to have a BGC row",
+  which on a curated corpus is "genomes somebody published about". It is now
+  computed over EXAMINED genomes and refuses below two of them.
+- `unclustered` / `family_rarity` / `taxonomic_isolation` are answerable only
+  for genomes a clustering run reached. **This was a live bug waiting for
+  the first BiG-SCAPE ingest**: one run over ten genomes would have made
+  every other cluster in the corpus score 1.0 on "no sufficiently similar
+  cluster was found", having never been compared to anything.
+- Every caveat now names its denominator (`DENOMINATOR: …`).
 
-**Performance** (2,437-BGC bundle, measured before and after)
+**Placement is a queryable relation**
 
-| endpoint | before | after |
+- `bgc_organism_placement` replaces a JSON key inside `raw_annotation`, with
+  `method` / `confidence` / `caveat` as CHECK-constrained columns. On the
+  bundle: 1,589 strong, 40 moderate, **220 weak** — `WHERE confidence =
+  'weak'` instead of a Python pass over 2,437 blobs. `bgcscape placements`
+  reports it.
+- The FK is `representative_genome_id`: the genome represents the organism,
+  it is not the assembly the cluster was sequenced from, and every caveat
+  says so in as many words.
+- An undefined `match_method` is counted and skipped, never coerced.
+
+**The last three consumers that pooled the two kinds of grouping**
+
+`BGCFamily.kind` shipped in `725aba2` and the scorer has honoured it since;
+`api/comparison.py`, `/api/v1/provenance` and the BGC detail panel had not.
+The panel labelled every compound group "Gene cluster family" and offered
+its distribution as a family's — on this corpus, every row.
+
+## What this changes about the shipped bundle
+
+Both are consequences, not regressions. Both are the point.
+
+| | before | after |
 |---|---|---|
-| `/api/v1/taxonomy-tree` | 0.662 s / 1.10 MB | **0.149 s / 0.23 MB** |
-| `/api/v1/tree?depth=1` | 0.587 s | **0.087 s** |
-| `/api/v1/heatmap?rank=genus` | 0.432 s / 192 KB | **0.061 s / 24 KB** |
-| `/api/v1/flows/taxonomy-class` | 0.457 s | **0.065 s** |
+| genomes reported as examined | (unrepresentable) | **0 of 1,542** |
+| clusters the scorer scores | 2,052 of 2,437 | **0 of 2,437** |
 
-Cause: every one of these loaded mapped ORM objects, so SQLAlchemy decoded
-~4,200 `BGC.raw_annotation` JSON blobs per request for data none of them
-read — 41% of tree-build CPU. Plus gzip, which was simply absent.
+The bundle contains 2,437 MIBiG clusters, `predicted_by_tool` NULL on every
+one, and no antiSMASH run anywhere. So nothing in it has been surveyed, no
+absence in it is evidence, and no rarity claim is supportable. The 2,052
+scores were the artifact of counting curated clusters as a survey; the
+refusal is the behaviour ARCHITECTURE.md's own "MIBiG-only: 2,437 / 2,437"
+row always described.
 
-Frontend: the pan/zoom transform is no longer React state, so a pan does not
-reconcile 3,528 nodes per mouse-move. **3 long tasks → 0** over a 40-step drag.
+The interface states this **once**, in the stats bar, rather than greying out
+every glyph — on a corpus with no coverage, that would read as a broken app
+rather than an honest one.
 
 ## What is verified, and how
 
-- Engine suite on **SQLite and real Postgres 16**.
-- Migrations empty → head → base → head on **both dialects**, 13 CHECK
-  constraints intact.
+- Engine suite on **SQLite and real Postgres 16** (359 / 358).
+- Migrations empty → head → base → head on **both dialects**, **18** CHECK
+  constraints intact (13 before, +5 from the two new tables), and the
+  migrated schema compared column-by-column against the models' own metadata.
+- **The placement backfill run against real data on both dialects.** It
+  shipped a dialect-shaped UUID bug that the empty-database round trip could
+  not see, because an empty database has no rows to insert. Also verified
+  against the real 2,437-cluster bundle: 1,849 placements backfilled,
+  downgrade leaves all 1,849 recoverable from `raw_annotation`.
 - Ingestion idempotency for **all five sources** by row count, three runs each.
 - Prioritization on **MIBiG-only, GTDB-only, and both**, with and without
-  compound groups.
+  compound groups, and with and without recorded coverage.
 - **Browser tests (Playwright/Chromium)**: initial load, middle-drag pan,
   wheel zoom, every "Show down to" level, radial/horizontal toggle, search
   match counts, filter fallback, the SVG download and its embedded
@@ -96,14 +119,23 @@ reconcile 3,528 nodes per mouse-move. **3 long tasks → 0** over a 40-step drag
   as unverified.
 - Round trip: `bgcscape inspect-figure` on an exported SVG **with
   `BGCSCAPE_DATABASE_URL` unset**.
+- **The suite inside the production image** (362 passed, 1 skipped), which is
+  what finally exercises PDF rendering — see item 1 below.
+- The coverage flip end to end: `record-analysis-run` over five cluster-free
+  genomes moves them from `unexamined` to `examined`, and the CLI reports the
+  five as examined-and-empty.
+- The frontend against the migrated bundle in a real browser: stats bar reads
+  `0 / 1,542 EXAMINED` with the corpus sentence, genome panels report their
+  state, `/api/v1/prioritization` returns unscored rows with components.
 
 ## What is still unverified — read this before trusting it
 
-1. **PDF rendering is untested on this machine.** The Cairo system library is
-   not installable here, so the four PDF tests skip. The Docker image installs
-   `libcairo2`, and the browser test asserts the *error* path is actionable,
-   but "a real PDF comes out" has not been observed in this pass. Run the
-   suite in the container to close it.
+1. ~~**PDF rendering is untested on this machine.**~~ **Closed this pass.**
+   The suite was run inside the built image, where `libcairo2` is present:
+   **362 passed, 1 skipped** (the skip is `test_accession.py`'s GTDB
+   reference-tree test, which wants `bac120.tree` on disk). The four PDF
+   tests that skip locally all pass there, so "a real PDF comes out" is now
+   observed rather than assumed.
 2. **The scoring weights remain uncalibrated, by design.** Uniform because
    choosing otherwise encodes a scientific judgement that belongs to the
    researcher. Calibrating them needs real data at volume and is a scientific
@@ -113,12 +145,20 @@ reconcile 3,528 nodes per mouse-move. **3 long tasks → 0** over a 40-step drag
    uncomputable, so its mean is over few, high signals. Correcting it means
    either inventing evidence or making a weighting judgement; it is surfaced
    in a per-cluster caveat instead.
-4. **No sequence families in the bundle.** Everything family-shaped in the
-   shipped corpus is a compound group. The three sequence-similarity
-   components are uncomputable corpus-wide, which is why 783 clusters decline
-   to score. A BiG-SCAPE run is the only thing that changes this.
+4. **No sequence families and no analysis runs in the bundle.** Everything
+   family-shaped in the shipped corpus is a compound group, and nothing has
+   ever been surveyed. Every component but `mibig_distance` is uncomputable,
+   which is why **all 2,437** clusters decline to score. An antiSMASH run
+   (for rarity) and a BiG-SCAPE run (for similarity) are the only things that
+   change this — and both now record their own coverage when ingested.
 5. **E2E tests are not in CI.** They need a workflow that starts both servers
    and a database.
+6. **One browser test fails, and predates this pass.** `mobile.spec.ts ›
+   pinch zooms the canvas` — the CDP multi-touch gesture produces no scale
+   change. Confirmed pre-existing by reverting `TreeCanvas.tsx` to its
+   committed state and watching it fail identically; 62 of 63 pass either
+   way. Likely Playwright/Chromium drift, not a product bug, but it is
+   unfixed and therefore listed here.
 6. **The frontend still uses the eager `/taxonomy-tree`.** Now that the lazy
    endpoint is genuinely fast (6.7x), porting is worthwhile — but it is a real
    piece of work (fetch-on-expand, cache invalidation, focus interaction) and
@@ -145,9 +185,14 @@ TSV doesn't carry pairwise distances).
 
 ## How to resume
 
-1. **Run the engine suite in Docker** to close the PDF gap (item 1 above).
-2. **Wire the e2e tests into CI.**
-3. **Ingest antiSMASH + BiG-SCAPE output** to get real sequence families —
-   the single change that most improves what the scorer can say.
+1. **Ingest a real antiSMASH run.** This is now the single highest-value
+   action by a wide margin: it is what makes any absence in this database
+   evidence, and what makes rarity computable at all. Both the CLI and the
+   browser upload record coverage automatically; for genomes a run found
+   nothing in, use `bgcscape record-analysis-run`.
+2. **Ingest BiG-SCAPE or BiG-FAM output** for real sequence families — the
+   other half of what the scorer needs, and the thing that makes "the same
+   cluster, found elsewhere" a sequence claim rather than a chemical one.
+3. **Wire the e2e tests into CI**, and diagnose the pinch failure (item 6).
 4. **Port the frontend to the lazy tree endpoint** when the corpus outgrows
    the eager payload.

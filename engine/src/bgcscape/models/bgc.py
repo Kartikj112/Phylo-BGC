@@ -82,6 +82,15 @@ class BGC(Base, TimestampMixin, ProvenanceMixin):
         back_populates="bgc", cascade="all, delete-orphan"
     )
     compound_links: Mapped[list["BGCCompoundLink"]] = relationship(back_populates="bgc", cascade="all, delete-orphan")
+    #: How this cluster came to sit on `genome`, when something other than
+    #: the source put it there — a MIBiG entry matched to GTDB's genome for
+    #: the same organism. None for the ordinary case where the source named
+    #: the genome itself (antiSMASH). See models/placement.py: a placement
+    #: means "characterized in an organism this genome represents", never
+    #: "sequenced from this assembly".
+    placement: Mapped["BGCOrganismPlacement | None"] = relationship(
+        back_populates="bgc", cascade="all, delete-orphan", uselist=False
+    )
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<BGC {self.bgc_class.value} on genome {self.genome_id}>"

@@ -107,6 +107,7 @@ from bgcscape.ingest.accession import (
 from bgcscape.models import (
     BGC,
     BGCClass,
+    AnalysisType,
     BGCFamily,
     BGCFamilyMembership,
     EvidenceLevel,
@@ -114,6 +115,7 @@ from bgcscape.models import (
     Genome,
     Source,
 )
+from bgcscape.coverage import get_or_create_analysis_run, record_coverage
 from bgcscape.schemas import BGCCreate, BGCFamilyCreate, BGCFamilyMembershipCreate
 
 #: The columns this loader actually reads. `BGC_ID` and the three `*_URL`
@@ -520,6 +522,7 @@ def ingest_bigfam_gcf(
     include_putative: bool = False,
     core_radius: float = DEFAULT_CORE_RADIUS,
     clustering_method: str = "BiG-SLiCE (BiG-FAM)",
+    tool_version: str = "unknown",
 ) -> tuple[IngestReport, BigfamCoverage]:
     """Load one GCF's membership. Each row commits individually — see
     `get_or_create_or_update`'s docstring for why.
@@ -588,5 +591,36 @@ def ingest_bigfam_gcf(
             report.updated += 1
         else:
             report.skipped += 1
+
+    # Coverage over the genomes this GCF actually reached IN THIS CORPUS.
+    # Deliberately not the whole family: BiG-FAM's GCFs are defined over
+    # 1.2M BGCs, and claiming coverage of members whose assemblies are not
+    # here would assert a comparison this database cannot show — the same
+    # thing `BigfamCoverage` already exists to stop a caller doing in prose.
+    if coverage.placed_genome_accessions:
+        run = get_or_create_analysis_run(
+            session,
+            source=source,
+            analysis_type=AnalysisType.SEQUENCE_CLUSTERING,
+            tool="BiG-SLiCE (BiG-FAM)",
+            tool_version=tool_version,
+            label=gcf_label,
+            parameters={"core_radius": core_radius, "include_putative": include_putative},
+        )
+        placed = (
+            session.query(Genome)
+            .filter(Genome.accession.in_(coverage.placed_genome_accessions))
+            .all()
+        )
+        for genome in placed:
+            record_coverage(
+                session,
+                run,
+                genome,
+                bgcs_recorded=sum(
+                    1 for _ in session.query(BGC.id).filter(BGC.genome_id == genome.id)
+                ),
+            )
+        session.commit()
 
     return report, coverage

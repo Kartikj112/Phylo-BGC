@@ -31,6 +31,12 @@ const PROVENANCE: DatasetProvenanceResponse = {
   corpus_bgc_count: 12,
   corpus_taxon_count: 9,
   family_count: 2,
+  sequence_family_count: 0,
+  compound_group_count: 0,
+  examined_genome_count: 0,
+  curated_only_genome_count: 0,
+  unexamined_genome_count: 0,
+  coverage_note: "",
   engine_version: "0.1.0",
 };
 

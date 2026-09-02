@@ -222,6 +222,47 @@ everything else `sequence_family`. That backfill is the point of the
 migration — without it every compound group would default to
 `sequence_family` and would keep contaminating prioritization scores.
 
+Running to `head` also applies `b8c2d5e71a30`, which adds `analysis_run`,
+`analysis_run_coverage` and `bgc_organism_placement`, and **backfills every
+placement out of `BGC.raw_annotation`** into the new table (1,849 rows on the
+shipped bundle). The migration prints the count it moved and names any
+`match_method` it did not recognise; unrecognised methods are skipped rather
+than coerced, so their clusters stay linked but carry no confidence claim.
+Re-run `bgcscape link-mibig` to record those properly once the vocabulary in
+`models/placement.py` covers them.
+
+Verify with:
+
+```bash
+bgcscape coverage      # examined / curated-only / unexamined, and the runs
+bgcscape placements    # strong / moderate / weak, and by method
+```
+
+### After upgrading: what the tool will now say about your data
+
+Two changes are visible immediately and are *not* faults:
+
+- **Genomes report as unexamined** unless an `AnalysisRun` covers them. A
+  database of curated MIBiG entries has no coverage, so the stats bar says
+  so. This is the point: a cluster count over unexamined genomes is not a
+  survey result, and an empty clade in such a corpus is not evidence.
+- **The prioritization scorer refuses on a curated-only corpus.** With no
+  detection coverage, class rarity is uncomputable; with no clustering, the
+  three similarity components are too. That leaves one component, below the
+  two-component threshold, so no score is produced. Ingesting an antiSMASH
+  run (or declaring one with `bgcscape record-analysis-run`) is what makes
+  rarity answerable again — see ARCHITECTURE.md, "The scorer's denominators
+  were 'rows somebody loaded'".
+
+To record a run whose output you already have, `bgcscape ingest antismash`
+registers coverage automatically. For genomes the run examined and found
+nothing in — which produce no file to ingest, and are the more informative
+half — declare them:
+
+```bash
+bgcscape record-analysis-run examined.txt   --tool antiSMASH --tool-version 7.1.0   --notes "run externally; these genomes reported no regions"
+```
+
 ### How entries are placed on the tree
 
 MIBiG records an organism name and an NCBI taxid but no lineage, so placement

@@ -26,6 +26,7 @@ from typing import Literal
 from sqlalchemy.orm import Session
 
 from bgcscape.api.schemas import BGCSummary, GenomeSummary, TaxonTreeNode
+from bgcscape.coverage import CoverageState, coverage_state, examined_genome_ids, genomes_with_bgcs
 from bgcscape.models import BGC, BGCCompoundLink, BGCFamilyMembership, Compound, Genome, Taxon
 from bgcscape.models.taxonomy import TaxonRank
 
@@ -77,6 +78,12 @@ def _load_genome_summaries(session: Session) -> dict[uuid.UUID, list[GenomeSumma
             )
         )
 
+    # Two set queries, not a per-genome lookup: the tree builder touches every
+    # genome in the corpus, and "was this one examined?" has to stay O(1) or
+    # it costs more than everything else this loader does.
+    examined = examined_genome_ids(session)
+    with_bgcs = genomes_with_bgcs(session)
+
     by_taxon: dict[uuid.UUID, list[GenomeSummary]] = defaultdict(list)
     for (
         genome_id,
@@ -109,6 +116,7 @@ def _load_genome_summaries(session: Session) -> dict[uuid.UUID, list[GenomeSumma
                 gc_content_pct=gc_content_pct,
                 completeness_pct=completeness_pct,
                 bgcs=bgcs_by_genome.get(genome_id, []),
+                coverage=coverage_state(genome_id, examined, with_bgcs),
             )
         )
     return by_taxon
@@ -162,11 +170,20 @@ def build_taxonomy_tree(session: Session, scope: TreeScope = "all") -> TaxonTree
             for cls, count in child.bgc_class_counts.items():
                 bgc_class_counts[cls] += count
 
+        # Rolled up exactly like genome_count, so a reader comparing the two
+        # at any node is comparing like with like. A clade's zero means
+        # something only in proportion to how much of it was examined.
+        direct_examined = sum(
+            1 for g in direct_genomes if g.coverage is CoverageState.EXAMINED
+        )
+
         return TaxonTreeNode(
             id=taxon.id,
             name=taxon.name,
             rank=taxon.rank,
             genome_count=len(direct_genomes) + sum(c.genome_count for c in children),
+            examined_genome_count=direct_examined
+            + sum(c.examined_genome_count for c in children),
             bgc_class_counts=dict(bgc_class_counts),
             direct_genomes=direct_genomes,
             children=children,
@@ -184,6 +201,7 @@ def build_taxonomy_tree(session: Session, scope: TreeScope = "all") -> TaxonTree
         name="root",
         rank=None,
         genome_count=sum(n.genome_count for n in top_level_nodes),
+        examined_genome_count=sum(n.examined_genome_count for n in top_level_nodes),
         bgc_class_counts=dict(root_bgc_counts),
         direct_genomes=[],
         children=top_level_nodes,

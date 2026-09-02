@@ -61,6 +61,13 @@ of this repo.
 - **Data (antiSMASH DB predictions):** predicted, not curated — every BGC
   row ingested from antiSMASH output carries
   `evidence_level = PREDICTED`, never `OBSERVED_CURATED`.
+- **antiSMASH is the only source that establishes cluster-detection
+  coverage.** Ingesting its output records an `AnalysisRun` over the genome
+  it examined (see `engine/src/bgcscape/models/analysis.py`), which is what
+  makes "this genome has no clusters" a finding rather than a gap. A run that
+  found nothing still records coverage, with `bgcs_recorded = 0` — that row
+  is the whole point. MIBiG deliberately records none: a curated entry is a
+  report that one cluster exists, not a survey of a genome.
 - **Phylo-BGC does not vendor any antiSMASH code** —
   `engine/src/bgcscape/ingest/antismash.py` is an independently-written
   parser for antiSMASH's *output format*, not a derivative of the
@@ -149,6 +156,11 @@ of this repo.
   - A `Family` label is only meaningful **within one cutoff** — the same
     label at a different cutoff is a different grouping. Phylo-BGC keys
     families on `(source_id, label, clustering_cutoff)` accordingly.
+  - Ingesting a clustering records a `SEQUENCE_CLUSTERING` `AnalysisRun`
+    over the genomes whose regions the file actually matched — **not** the
+    whole corpus. Without that scoping, one run over ten genomes would make
+    every other cluster in the database read as "no similar cluster found",
+    which is a similarity claim about clusters nothing ever compared.
   - Real BiG-SCAPE runs commonly mix in MIBiG reference BGCs for
     comparison. These now match: MIBiG ships one GenBank per entry named
     `<accession>.gbk`, and BiG-SCAPE reports that filename stem in `GBK`,

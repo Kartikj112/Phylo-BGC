@@ -137,6 +137,18 @@ export function CorpusStatsBar({
           label="BGC classes"
           title={`${counts.length} biosynthetic classes are represented in ${scopeLabel}`}
         />
+        {/* The denominator behind every absence on screen. Corpus-wide, not
+            scoped: coverage is a property of the database, and reporting it
+            per tab would invite a "this half was examined" reading of a
+            number that never depended on the tab. */}
+        {provenance && (
+          <Stat
+            value={provenance.examined_genome_count}
+            of={provenance.corpus_genome_count}
+            label="examined"
+            title={provenance.coverage_note}
+          />
+        )}
       </div>
 
       {/* Proportional class strip — doubles as the class filter. */}
@@ -193,6 +205,22 @@ export function CorpusStatsBar({
         <p className="w-full text-[10px] leading-tight text-chrome-ink-faint sm:w-auto sm:max-w-[15rem] sm:text-[11px]">
           {hybridDoubleCount} hybrid cluster{hybridDoubleCount === 1 ? "" : "s"} count under each
           component class, so the class figures total {classTotal}, not {clusterTotal}.
+        </p>
+      )}
+
+      {/* Said once, at corpus level, rather than by greying out the tree.
+          On a corpus where nothing has been examined every glyph would
+          otherwise read as missing data, and "honest" would render as
+          "broken" — but the fact still has to be stated somewhere a reader
+          cannot miss, because it governs every absence in the figure. */}
+      {provenance && provenance.examined_genome_count === 0 && (
+        <p
+          className="w-full text-[10px] leading-tight sm:text-[11px]"
+          style={{ color: COLORS.signal }}
+        >
+          No genome in this corpus has been examined for clusters. Every cluster shown is a
+          curated report, not a survey result — an empty clade here is not evidence that it
+          produces nothing.
         </p>
       )}
     </div>

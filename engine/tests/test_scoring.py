@@ -11,8 +11,10 @@ from __future__ import annotations
 import pytest
 from sqlalchemy.orm import Session
 
+from bgcscape.coverage import get_or_create_analysis_run, record_coverage
 from bgcscape.models import (
     BGC,
+    AnalysisType,
     AssemblyLevel,
     BGCClass,
     BGCFamily,
@@ -37,7 +39,18 @@ from bgcscape.scoring import (
 class DatasetBuilder:
     """Small helper so each test can state the corpus shape it needs in a
     few lines — the scoring logic is entirely relative to corpus
-    composition, so nearly every test needs a differently-shaped one."""
+    composition, so nearly every test needs a differently-shaped one.
+
+    Genomes are recorded as covered by an antiSMASH `AnalysisRun` by
+    default, because that is what these fixtures actually depict: a corpus
+    whose clusters came from running a detection tool over these genomes.
+    Building them without coverage would depict something else — genomes
+    nobody examined, which happen to have predicted clusters — and every
+    rarity component would correctly refuse to score them.
+
+    Pass `examined=False` to build the other case on purpose. See
+    `test_class_rarity_refuses_over_unexamined_neighbours`.
+    """
 
     def __init__(self, session: Session) -> None:
         self.session = session
@@ -47,6 +60,35 @@ class DatasetBuilder:
         session.flush()
         self.genus_cache: dict[str, Taxon] = {}
         self.families: dict[str, BGCFamily] = {}
+        self.run = get_or_create_analysis_run(
+            session,
+            source=self.tool,
+            analysis_type=AnalysisType.BGC_DETECTION,
+            tool="antiSMASH",
+            tool_version="7.1.0",
+        )
+
+    def mark_examined(self, genome: Genome, bgcs_recorded: int = 0) -> None:
+        record_coverage(self.session, self.run, genome, bgcs_recorded=bgcs_recorded)
+
+    def mark_clustered(self, genome: Genome) -> None:
+        """Record that a sequence-clustering run reached this genome.
+
+        Needed for the case a family membership cannot imply: a cluster that
+        WAS in a BiG-SCAPE run and matched nothing. Without an explicit run,
+        that is indistinguishable from a cluster the run never saw — which
+        is exactly why AnalysisRun exists, and why the scorer refuses rather
+        than guessing.
+        """
+        run = get_or_create_analysis_run(
+            self.session,
+            source=self.tool,
+            analysis_type=AnalysisType.SEQUENCE_CLUSTERING,
+            tool="BiG-SCAPE",
+            tool_version="2.0.0",
+            label="c0.3",
+        )
+        record_coverage(self.session, run, genome, bgcs_recorded=0)
 
     def genus(self, name: str) -> Taxon:
         if name not in self.genus_cache:
@@ -100,6 +142,8 @@ class DatasetBuilder:
         family_label: str | None = None,
         compound_group_label: str | None = None,
         mibig_accession: str | None = None,
+        examined: bool = True,
+        clustered: bool = False,
     ) -> BGC:
         taxon = self.species(genus_name, species_name)
         genome = self.session.query(Genome).filter_by(accession=accession).one_or_none()
@@ -114,6 +158,10 @@ class DatasetBuilder:
             )
             self.session.add(genome)
             self.session.flush()
+        if examined:
+            self.mark_examined(genome)
+        if clustered:
+            self.mark_clustered(genome)
 
         bgc = BGC(
             genome_id=genome.id,
@@ -263,7 +311,12 @@ def test_unclustered_bgc_scores_high_on_that_component(builder, session):
         genus_name="Streptomyces", species_name="S. a", accession="GCF_A.1", family_label="FAM_A"
     )
     builder.add_bgc(genus_name="Streptomyces", species_name="S. b", accession="GCF_B.1", family_label="FAM_A")
-    orphan = builder.add_bgc(genus_name="Streptomyces", species_name="S. c", accession="GCF_C.1")
+    # `clustered=True` and no family: the run saw this cluster and nothing
+    # matched it. That is what "unclustered" is supposed to mean, and it is
+    # only sayable because a run covers the genome — see mark_clustered.
+    orphan = builder.add_bgc(
+        genus_name="Streptomyces", species_name="S. c", accession="GCF_C.1", clustered=True
+    )
     session.commit()
 
     ctx = build_scoring_context(session)
@@ -332,7 +385,9 @@ def test_unclustered_bgc_cannot_be_assessed_for_mibig_distance(builder, session)
         family_label="FAM_KNOWN",
         mibig_accession="BGC-TEST0000001",
     )
-    orphan = builder.add_bgc(genus_name="Streptomyces", species_name="S. orphan", accession="GCF_ORPH.1")
+    orphan = builder.add_bgc(
+        genus_name="Streptomyces", species_name="S. orphan", accession="GCF_ORPH.1", clustered=True
+    )
     session.commit()
 
     component = _component(score_bgc(orphan, build_scoring_context(session)), "mibig_distance")
@@ -442,7 +497,7 @@ def test_small_corpus_caveat_is_raised(builder, session):
     )
     session.commit()
     result = score_bgc(bgc, build_scoring_context(session))
-    assert any("mostly reflects what hasn't been ingested yet" in c for c in result.caveats)
+    assert any("mostly reflects what hasn't been examined yet" in c for c in result.caveats)
 
 
 def test_unclustered_bias_is_surfaced_not_hidden(builder, session):
@@ -465,7 +520,10 @@ def test_unclustered_bias_is_surfaced_not_hidden(builder, session):
         builder.add_bgc(
             genus_name="Streptomyces", species_name=f"S. c{i}", accession=f"GCF_C{i}.1", family_label="FAM_KNOWN"
         )
-    orphan = builder.add_bgc(genus_name="Streptomyces", species_name="S. orphan", accession="GCF_ORPH.1")
+    orphan = builder.add_bgc(
+        genus_name="Streptomyces", species_name="S. orphan",
+        accession="GCF_ORPH.1", clustered=True
+    )
     session.commit()
 
     result = score_bgc(orphan, build_scoring_context(session))
@@ -653,3 +711,266 @@ def test_corpus_caveats_do_not_assert_one_rows_component_coverage(builder, sessi
     # A fully-scored row carries no coverage caveat of its own.
     scored = [r for r in results if r.score is not None and not r.unavailable_components]
     assert scored and scored[0].specific_caveats == []
+
+# === DENOMINATORS ===============================================================
+#
+# "Rare in this corpus" used to mean "rare among rows somebody happened to
+# load". These pin it to "rare among genomes actually examined", which is a
+# different and much smaller set — and on a purely curated corpus, an empty
+# one.
+
+
+def test_class_rarity_refuses_over_unexamined_neighbours(builder, session):
+    """THE denominator regression.
+
+    Four genomes in one genus, none of them surveyed, three carrying a
+    curated NRPS entry and one a PKS. The old scorer called the PKS
+    "unusual for its neighbours" at 0.75 — a number that measured how much
+    literature the genus has, not what it makes. Nothing here was surveyed,
+    so the honest answer is that the question is unanswerable.
+    """
+    for i in range(3):
+        builder.add_bgc(
+            genus_name="Streptomyces",
+            species_name=f"S. lit{i}",
+            accession=f"GCF_LIT{i}.1",
+            bgc_class=BGCClass.NRPS,
+            mibig_accession=f"BGC-TEST000000{i}",
+            examined=False,
+        )
+    odd_one = builder.add_bgc(
+        genus_name="Streptomyces",
+        species_name="S. odd",
+        accession="GCF_ODD.1",
+        bgc_class=BGCClass.PKS,
+        mibig_accession="BGC-TEST0000009",
+        examined=False,
+    )
+    session.commit()
+
+    component = _component(
+        score_bgc(odd_one, build_scoring_context(session)), "class_rarity_in_clade"
+    )
+    assert component.value is None
+    assert "examined" in component.explanation
+
+
+def test_class_rarity_counts_only_examined_genomes_in_both_halves(builder, session):
+    """Numerator and denominator must come from the same population.
+
+    Two examined genomes carrying NRPS, one examined genome carrying PKS,
+    and a curated-only genome carrying three more PKS entries. The PKS
+    frequency is 1/3 over the examined set. Letting the curated entries into
+    the numerator would make PKS look common in a clade nobody surveyed for
+    it.
+    """
+    for i in range(2):
+        builder.add_bgc(
+            genus_name="Micromonospora",
+            species_name=f"M. ex{i}",
+            accession=f"GCF_MEX{i}.1",
+            bgc_class=BGCClass.NRPS,
+        )
+    target = builder.add_bgc(
+        genus_name="Micromonospora",
+        species_name="M. target",
+        accession="GCF_MTGT.1",
+        bgc_class=BGCClass.PKS,
+    )
+    for i in range(3):
+        builder.add_bgc(
+            genus_name="Micromonospora",
+            species_name=f"M. lit{i}",
+            accession=f"GCF_MLIT{i}.1",
+            bgc_class=BGCClass.PKS,
+            examined=False,
+        )
+    session.commit()
+
+    component = _component(
+        score_bgc(target, build_scoring_context(session)), "class_rarity_in_clade"
+    )
+    assert component.value == pytest.approx(1.0 - 1 / 3)
+    assert "1/3" in component.explanation
+    assert "EXAMINED" in component.explanation
+
+
+def test_an_examined_genome_with_no_clusters_counts_in_the_denominator(builder, session):
+    """A run that found nothing is an observation, and dropping it would
+    inflate every frequency in the group."""
+    target = builder.add_bgc(
+        genus_name="Kutzneria", species_name="K. one", accession="GCF_K1.1", bgc_class=BGCClass.PKS
+    )
+    builder.add_bgc(
+        genus_name="Kutzneria", species_name="K. two", accession="GCF_K2.1", bgc_class=BGCClass.NRPS
+    )
+    session.commit()
+
+    ctx_before = build_scoring_context(session)
+    before = _component(score_bgc(target, ctx_before), "class_rarity_in_clade")
+
+    # A third genome in the same genus, examined, carrying nothing.
+    empty = Genome(
+        accession="GCF_K3.1",
+        taxon_id=builder.species("Kutzneria", "K. three").id,
+        assembly_level=AssemblyLevel.COMPLETE_GENOME,
+        is_mag=False,
+        source_id=builder.tool.id,
+        evidence_level=EvidenceLevel.OBSERVED_CURATED,
+    )
+    session.add(empty)
+    session.flush()
+    builder.mark_examined(empty)
+    session.commit()
+
+    after = _component(
+        score_bgc(target, build_scoring_context(session)), "class_rarity_in_clade"
+    )
+    # The class frequency is unchanged (no clusters were added), but the
+    # peer group is now stated as three examined genomes rather than two.
+    assert after.value == pytest.approx(before.value)
+    assert "3 EXAMINED" in after.explanation
+
+
+def test_unclustered_refuses_for_a_genome_no_clustering_reached(builder, session):
+    """The latent bug: one BiG-SCAPE run over two genomes used to make every
+    other cluster in the corpus score 1.0 on `unclustered` — "no sufficiently
+    similar cluster was found" — having never been compared to anything."""
+    builder.add_bgc(
+        genus_name="Streptomyces", species_name="S. a", accession="GCF_SA.1", family_label="FAM_A"
+    )
+    builder.add_bgc(
+        genus_name="Streptomyces", species_name="S. b", accession="GCF_SB.1", family_label="FAM_A"
+    )
+    outsider = builder.add_bgc(
+        genus_name="Amycolatopsis", species_name="A. out", accession="GCF_AO.1"
+    )
+    session.commit()
+
+    ctx = build_scoring_context(session)
+    assert ctx.families_present is True, "a clustering HAS been ingested, corpus-wide"
+
+    component = _component(score_bgc(outsider, ctx), "unclustered")
+    assert component.value is None
+    assert "never been compared to anything" in component.explanation
+
+
+def test_family_membership_is_evidence_the_genome_was_clustered(builder, session):
+    """The one derivation that holds, and only in this direction.
+
+    A membership is a clustering run's own output, so a genome carrying one
+    was demonstrably in the run — which keeps a corpus clustered before
+    AnalysisRun existed answering correctly. The reverse does not hold and
+    is not assumed: no memberships tells you nothing.
+    """
+    clustered = builder.add_bgc(
+        genus_name="Streptomyces", species_name="S. m", accession="GCF_SM.1", family_label="FAM_M"
+    )
+    session.commit()
+
+    ctx = build_scoring_context(session)
+    assert clustered.genome_id in ctx.clustering_covered
+    assert _component(score_bgc(clustered, ctx), "unclustered").value == 0.0
+
+
+def test_corpus_caveats_state_both_denominators(builder, session):
+    builder.add_bgc(
+        genus_name="Streptomyces",
+        species_name="S. a",
+        accession="GCF_DA.1",
+        family_label="FAM_D",
+        clustered=True,
+    )
+    builder.add_bgc(
+        genus_name="Streptomyces",
+        species_name="S. b",
+        accession="GCF_DB.1",
+        family_label="FAM_D",
+        clustered=True,
+    )
+    session.commit()
+
+    caveats = corpus_caveats(build_scoring_context(session))
+    denominators = [c for c in caveats if c.startswith("DENOMINATOR")]
+    assert len(denominators) == 2
+    assert any("cluster-detection run actually covered" in c for c in denominators)
+    assert any("sequence-clustering run reached" in c for c in denominators)
+
+
+def test_zero_coverage_says_rarity_is_uncomputable_rather_than_quoting_a_denominator(
+    builder, session
+):
+    """"0 of 1,542 genomes examined" reads as a rounding error. What it means
+    is that no absence anywhere is a finding, and that deserves a sentence."""
+    builder.add_bgc(
+        genus_name="Streptomyces",
+        species_name="S. c",
+        accession="GCF_ZC.1",
+        mibig_accession="BGC-TEST0000100",
+        examined=False,
+    )
+    session.commit()
+
+    caveats = corpus_caveats(build_scoring_context(session))
+    assert any(
+        "no genome in this corpus has been covered by a recorded cluster-detection run" in c
+        for c in caveats
+    )
+
+
+# === THE TWO NAMED REGRESSIONS ==================================================
+
+
+def test_scorer_refuses_on_a_mibig_only_corpus(builder, session):
+    """MIBiG-only: curated clusters, no survey, no clustering.
+
+    Every component but `mibig_distance` is uncomputable, and one component
+    is below the threshold, so no cluster gets a score. This is the refusal
+    the brief asks to be verified — and the shape of the shipped bundle,
+    where it now declines all 2,437 clusters rather than scoring 2,052 of
+    them off an unsurveyed denominator.
+    """
+    for i in range(8):
+        builder.add_bgc(
+            genus_name="Streptomyces",
+            species_name=f"S. m{i}",
+            accession=f"GCF_MO{i}.1",
+            mibig_accession=f"BGC-TEST000010{i}",
+            examined=False,
+        )
+    session.commit()
+
+    results = rank_bgcs(session)
+    assert results, "clusters are still returned, just not scored"
+    assert all(r.score is None for r in results), "a curated corpus supports no ranking"
+    for result in results:
+        available = [c.name for c in result.components if c.available]
+        assert available == ["mibig_distance"]
+
+
+def test_compound_groups_still_do_not_make_a_mibig_corpus_scoreable(builder, session):
+    """The regression that shipped once: running `group-by-compound` turned
+    the missing-evidence guarantee off for the whole corpus.
+
+    Adding compound groups to the corpus above must change nothing about
+    what can be scored. They are a curated chemical fact, not a sequence
+    comparison, and not a survey of anything.
+    """
+    for i in range(8):
+        builder.add_bgc(
+            genus_name="Streptomyces",
+            species_name=f"S. g{i}",
+            accession=f"GCF_GO{i}.1",
+            mibig_accession=f"BGC-TEST000020{i}",
+            compound_group_label="CMPD_vancomycin",
+            examined=False,
+        )
+    session.commit()
+
+    ctx = build_scoring_context(session)
+    assert ctx.compound_group_count == 1
+    assert ctx.families_present is False
+    assert ctx.clustering_covered == set(), "a compound group is not a clustering run"
+
+    results = rank_bgcs(session)
+    assert all(r.score is None for r in results)

@@ -42,8 +42,13 @@ export function groupUnplacedTaxa(root: TaxonDisplayNode): TaxonDisplayNode {
 
   const bgc_class_counts: Record<string, number> = {};
   let genome_count = 0;
+  // Rolled up alongside genome_count, not defaulted to zero: this bucket is
+  // a real part of the tree, and reporting it as wholly unexamined when its
+  // children were examined would understate the corpus.
+  let examined_genome_count = 0;
   for (const node of unplaced) {
     genome_count += node.genome_count;
+    examined_genome_count += node.examined_genome_count;
     for (const [cls, n] of Object.entries(node.bgc_class_counts)) {
       bgc_class_counts[cls] = (bgc_class_counts[cls] ?? 0) + n;
     }
@@ -53,6 +58,7 @@ export function groupUnplacedTaxa(root: TaxonDisplayNode): TaxonDisplayNode {
     name: "Unplaced organisms",
     rank: null,
     genome_count,
+    examined_genome_count,
     bgc_class_counts,
     direct_genomes: [],
     children: unplaced,
@@ -1047,10 +1053,28 @@ export function pruneToBgcBearing(root: TaxonDisplayNode, enabled: boolean): Pru
  */
 export interface CladeSummary {
   genomeCount: number;
+  /** How many of `genomeCount` a cluster-detection run has covered.
+   *
+   * The denominator for anything this glyph says about absence. A clade
+   * showing zero clusters over 40 examined genomes is a finding; the same
+   * zero over 40 unexamined genomes is an empty database, and the glyph
+   * drew both identically until this existed. */
+  examinedGenomeCount: number;
   bgcCount: number;
   /** Class proportions, largest first. Ordered so the glyph's dominant
    * segment is always leftmost and comparable across clades at a glance. */
   composition: { bgcClass: string; count: number; fraction: number }[];
+}
+
+/** Whether an empty glyph means "we looked and found nothing" or "nothing
+ * has looked". Only meaningful when `bgcCount` is 0; a clade with clusters
+ * is drawn from its composition either way. */
+export function emptyCladeReading(
+  summary: CladeSummary,
+): "examined-empty" | "unexamined" | "partly-examined" {
+  if (summary.examinedGenomeCount === 0) return "unexamined";
+  if (summary.examinedGenomeCount < summary.genomeCount) return "partly-examined";
+  return "examined-empty";
 }
 
 export function cladeSummary(node: DisplayNode): CladeSummary {
@@ -1074,6 +1098,12 @@ export function cladeSummary(node: DisplayNode): CladeSummary {
 
   return {
     genomeCount: node._kind === "genome" ? 1 : node.genome_count,
+    examinedGenomeCount:
+      node._kind === "genome"
+        ? node.coverage === "examined"
+          ? 1
+          : 0
+        : node.examined_genome_count,
     bgcCount,
     composition,
   };

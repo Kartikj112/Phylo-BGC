@@ -410,6 +410,40 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AnalysisRunSummary
+         * @description One tool run, as much of it as a reader needs to judge its coverage.
+         */
+        AnalysisRunSummary: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Analysis Type */
+            analysis_type: string;
+            /** Tool */
+            tool: string;
+            /** Tool Version */
+            tool_version: string;
+            /**
+             * Label
+             * @default
+             */
+            label: string;
+            /** Completed At */
+            completed_at?: string | null;
+            /** Parameters */
+            parameters?: {
+                [key: string]: unknown;
+            } | null;
+            evidence_level: components["schemas"]["EvidenceLevel"];
+            /**
+             * Genomes Covered
+             * @default 0
+             */
+            genomes_covered: number;
+        };
         /** AntismashUploadResponse */
         AntismashUploadResponse: {
             /** Genomes */
@@ -497,6 +531,9 @@ export interface components {
             placement_method?: string | null;
             /** Placement Note */
             placement_note?: string | null;
+            placement_confidence?: components["schemas"]["PlacementConfidence"] | null;
+            /** Placement Caveat */
+            placement_caveat?: string | null;
         };
         /** BGCFamilyDetail */
         BGCFamilyDetail: {
@@ -682,6 +719,16 @@ export interface components {
             class_profile: components["schemas"]["ClassProfileEntry"][];
             /** Family Count */
             family_count: number;
+            /**
+             * Sequence Family Count
+             * @default 0
+             */
+            sequence_family_count: number;
+            /**
+             * Compound Group Count
+             * @default 0
+             */
+            compound_group_count: number;
             /** Only In This Clade */
             only_in_this_clade: components["schemas"]["FamilyRef"][];
         };
@@ -769,6 +816,11 @@ export interface components {
             compound_class?: string | null;
         };
         /**
+         * CoverageState
+         * @enum {string}
+         */
+        CoverageState: "examined" | "curated_only" | "unexamined";
+        /**
          * DatasetProvenanceResponse
          * @description What the current database actually contains, for figure captions
          *     and `ViewConfig.dataset`. Fetched rather than assembled client-side so
@@ -786,6 +838,16 @@ export interface components {
             taxon_count: number;
             /** Family Count */
             family_count: number;
+            /**
+             * Sequence Family Count
+             * @default 0
+             */
+            sequence_family_count: number;
+            /**
+             * Compound Group Count
+             * @default 0
+             */
+            compound_group_count: number;
             /** Engine Version */
             engine_version: string;
             /**
@@ -799,6 +861,26 @@ export interface components {
             corpus_bgc_count: number;
             /** Corpus Taxon Count */
             corpus_taxon_count: number;
+            /**
+             * Examined Genome Count
+             * @default 0
+             */
+            examined_genome_count: number;
+            /**
+             * Curated Only Genome Count
+             * @default 0
+             */
+            curated_only_genome_count: number;
+            /**
+             * Unexamined Genome Count
+             * @default 0
+             */
+            unexamined_genome_count: number;
+            /**
+             * Coverage Note
+             * @default
+             */
+            coverage_note: string;
         };
         /**
          * EvidenceLevel
@@ -879,6 +961,8 @@ export interface components {
             id: string;
             /** Label */
             label: string;
+            /** @default sequence_family */
+            kind: components["schemas"]["FamilyKind"];
         };
         /** FlowLink */
         FlowLink: {
@@ -923,6 +1007,18 @@ export interface components {
             contamination_pct?: number | null;
             /** Bgcs */
             bgcs: components["schemas"]["BGCSummary"][];
+            /** @default unexamined */
+            coverage: components["schemas"]["CoverageState"];
+            /**
+             * Coverage Note
+             * @default
+             */
+            coverage_note: string;
+            /**
+             * Analysis Runs
+             * @default []
+             */
+            analysis_runs: components["schemas"]["AnalysisRunSummary"][];
             /**
              * Lineage
              * @default []
@@ -943,6 +1039,8 @@ export interface components {
             is_mag: boolean;
             /** Bgcs */
             bgcs: components["schemas"]["BGCSummary"][];
+            /** @default unexamined */
+            coverage: components["schemas"]["CoverageState"];
             /** Genome Size Bp */
             genome_size_bp?: number | null;
             /** Gc Content Pct */
@@ -1022,6 +1120,26 @@ export interface components {
             /** Name */
             name: string;
         };
+        /**
+         * PlacementConfidence
+         * @description How much weight the match itself bears.
+         *
+         *     STRONG    An identifier matched an identifier — NCBI taxid to NCBI
+         *               taxid. Two databases naming the same organism by number.
+         *     MODERATE  A species-level identifier or GTDB's own species name
+         *               matched. Still an identifier, but one rank coarser, or
+         *               mediated by a name GTDB controls.
+         *     WEAK      A free-text organism name matched, or the cluster reached
+         *               only its genus. Nomenclature drifts, GTDB reclassifies, and
+         *               two organisms can share a name across databases that do not
+         *               mean the same thing by it.
+         *
+         *     Derived from `method` at write time and stored, not computed on read:
+         *     the point of the exercise is that a researcher can filter on it in SQL
+         *     without importing Python.
+         * @enum {string}
+         */
+        PlacementConfidence: "strong" | "moderate" | "weak";
         /**
          * PresenceHeatmap
          * @description Clade x BGC-class presence/absence matrix (report section 4.9).
@@ -1186,6 +1304,11 @@ export interface components {
             rank: components["schemas"]["TaxonRank"] | null;
             /** Genome Count */
             genome_count: number;
+            /**
+             * Examined Genome Count
+             * @default 0
+             */
+            examined_genome_count: number;
             /** Bgc Class Counts */
             bgc_class_counts: {
                 [key: string]: number;

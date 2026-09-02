@@ -21,11 +21,25 @@ them would be exactly the kind of overclaim this project's provenance model
 exists to prevent. Three things keep the distinction visible:
 
   - `BGC.contig` still holds MIBiG's own locus accession, untouched.
-  - The match method is recorded on the BGC and surfaced by the API, so a
-    reader can tell an exact-taxid placement from a species-name one.
-  - `evidence_level` is unchanged: the cluster is still OBSERVED_CURATED,
-    because the curation is MIBiG's; only its position on the tree comes
-    from GTDB.
+  - The match method and its confidence are stored as columns on
+    `BGCOrganismPlacement`, so "which entries rest on weak name matching?"
+    is a query rather than a paragraph in a report.
+  - `evidence_level` on the cluster is unchanged: it is still
+    OBSERVED_CURATED, because the curation is MIBiG's. The *placement* row
+    is COMPUTED, because the placement is ours.
+
+## Where the placement is stored, and why it moved
+
+It is a row in `bgc_organism_placement` (see models/placement.py), whose
+`representative_genome_id` column carries the claim in its name: GTDB's
+genome represents the organism; it is not the assembly the cluster came off.
+
+It is ALSO still written into `BGC.raw_annotation` under `PLACEMENT_KEY`,
+deliberately. Two reasons, neither of them "we forgot to remove it": the
+Alembic downgrade drops the table, and the JSON is what a downgraded
+database still has; and a `raw_annotation` blob exported from this database
+stays self-describing. `placement_of()` reads the table first and falls back
+to the JSON, so a database migrated but not yet re-linked still answers.
 
 Idempotent: re-running over the same mapping is a no-op.
 """
@@ -37,11 +51,48 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from bgcscape.models import BGC, Genome, Taxon
+from bgcscape.models import (
+    CONFIDENCE_BY_METHOD,
+    BGC,
+    BGCOrganismPlacement,
+    EvidenceLevel,
+    Genome,
+    PlacementMethod,
+    Taxon,
+)
 
 #: Key under which placement provenance is written into `BGC.raw_annotation`.
 #: Namespaced so it can never collide with a field MIBiG itself defines.
 PLACEMENT_KEY = "_bgcscape_placement"
+
+#: What a reader must be told before citing a placement, per method. Stored
+#: on each row rather than looked up at render time, so the caveat travels
+#: with an export instead of living only in this file.
+PLACEMENT_CAVEATS: dict[PlacementMethod, str] = {
+    PlacementMethod.NCBI_TAXID: (
+        "Placed by exact NCBI taxonomy ID match. This cluster was characterized in an organism "
+        "this genome represents; it was NOT sequenced from this assembly."
+    ),
+    PlacementMethod.NCBI_SPECIES_TAXID: (
+        "Placed by NCBI species-level taxonomy ID; the strain may differ. This cluster was "
+        "characterized in an organism this genome represents; it was NOT sequenced from this "
+        "assembly."
+    ),
+    PlacementMethod.GTDB_SPECIES: (
+        "Placed by GTDB species name. This cluster was characterized in an organism this genome "
+        "represents; it was NOT sequenced from this assembly."
+    ),
+    PlacementMethod.NCBI_SPECIES_NAME: (
+        "Placed by free-text organism name only - GTDB has since reclassified this organism, so "
+        "it appears under GTDB's current name rather than the one MIBiG records. A name match is "
+        "the weakest join here. This cluster was NOT sequenced from this assembly."
+    ),
+    PlacementMethod.GENUS: (
+        "Placed at genus level only: GTDB has no genome for this organism. The genome shown is a "
+        "relative, not the source of this cluster."
+    ),
+    PlacementMethod.UNPLACED: "Not placed on the GTDB tree.",
+}
 
 #: How a cluster was put on the tree, strongest first. Surfaced in the UI.
 PLACEMENT_METHOD_LABELS: dict[str, str] = {
@@ -66,6 +117,13 @@ class LinkReport:
     missing_genome: int = 0
     pruned_genomes: int = 0
     pruned_taxa: int = 0
+    #: Placements written, and how many rest on a free-text name match. The
+    #: second number is the one a reader needs: it is the fraction of the
+    #: corpus whose position on the tree is nomenclature rather than an
+    #: identifier.
+    placements_recorded: int = 0
+    weak_placements: int = 0
+    unknown_methods: set = field(default_factory=set)
     missing_examples: list[str] = field(default_factory=list)
 
     def __str__(self) -> str:  # pragma: no cover - human-facing summary
@@ -136,6 +194,8 @@ def link_mibig_to_gtdb(
         annotation[PLACEMENT_KEY] = placement
         bgc.raw_annotation = annotation
 
+        _record_placement(session, bgc, genome, method, gtdb_accession, report)
+
     session.flush()
 
     if prune_unlinked:
@@ -143,6 +203,62 @@ def link_mibig_to_gtdb(
 
     session.commit()
     return report
+
+
+def _record_placement(
+    session: Session,
+    bgc: BGC,
+    genome: Genome,
+    method: str,
+    gtdb_accession: str,
+    report: LinkReport,
+) -> None:
+    """Upsert the queryable placement row for one cluster.
+
+    A method the vocabulary does not contain is counted and skipped rather
+    than coerced to something plausible. The mapping TSV's `match_method`
+    column is free text produced by a script that can be edited; inventing a
+    confidence for a value nobody defined would put a number on the tree
+    that no method backs - which is the failure this table exists to end.
+    """
+    try:
+        parsed_method = PlacementMethod(method)
+    except ValueError:
+        report.unknown_methods.add(method)
+        return
+
+    confidence = CONFIDENCE_BY_METHOD[parsed_method]
+    existing = (
+        session.query(BGCOrganismPlacement).filter_by(bgc_id=bgc.id).one_or_none()
+    )
+    if existing is None:
+        session.add(
+            BGCOrganismPlacement(
+                bgc_id=bgc.id,
+                representative_genome_id=genome.id,
+                method=parsed_method,
+                confidence=confidence,
+                gtdb_accession=gtdb_accession,
+                caveat=PLACEMENT_CAVEATS[parsed_method],
+                source_id=bgc.source_id,
+                # COMPUTED, never OBSERVED_CURATED. MIBiG curated the
+                # cluster and named the organism; the join from that
+                # organism to a GTDB genome is Phylo-BGC's inference, and
+                # letting it inherit the cluster's curated level would
+                # launder an inference into an observation.
+                evidence_level=EvidenceLevel.COMPUTED,
+            )
+        )
+    else:
+        existing.representative_genome_id = genome.id
+        existing.method = parsed_method
+        existing.confidence = confidence
+        existing.gtdb_accession = gtdb_accession
+        existing.caveat = PLACEMENT_CAVEATS[parsed_method]
+
+    report.placements_recorded += 1
+    if confidence.value == "weak":
+        report.weak_placements += 1
 
 
 def _prune_empty_mibig_rows(session: Session, report: LinkReport) -> None:
@@ -188,7 +304,22 @@ def _prune_empty_mibig_rows(session: Session, report: LinkReport) -> None:
 
 
 def placement_of(bgc: BGC) -> dict | None:
-    """The recorded placement for a cluster, or None if it was never linked."""
+    """The recorded placement for a cluster, or None if it was never linked.
+
+    The `bgc_organism_placement` row is the system of record. The
+    `raw_annotation` fallback is what answers for a database that has been
+    migrated but not re-linked, and for one that has been downgraded - see
+    the module docstring. Both shapes return the same dict, plus
+    `confidence` and `caveat` where the table can supply them.
+    """
+    placement = bgc.placement
+    if placement is not None:
+        return {
+            "method": placement.method.value,
+            "gtdb_accession": placement.gtdb_accession,
+            "confidence": placement.confidence.value,
+            "caveat": placement.caveat,
+        }
     annotation = bgc.raw_annotation or {}
-    placement = annotation.get(PLACEMENT_KEY)
-    return placement if isinstance(placement, dict) else None
+    legacy = annotation.get(PLACEMENT_KEY)
+    return legacy if isinstance(legacy, dict) else None

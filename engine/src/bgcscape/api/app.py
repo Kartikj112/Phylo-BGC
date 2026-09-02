@@ -42,6 +42,7 @@ from bgcscape.api.comparison import (
     partition_families,
 )
 from bgcscape.api.schemas import (
+    AnalysisRunSummary,
     AntismashUploadResponse,
     ClusteringOutcomeOut,
     BGCDetail,
@@ -82,6 +83,15 @@ from bgcscape.api.tree_builder import (
     load_classified_bgc_rows,
 )
 from bgcscape.ingest.link import PLACEMENT_METHOD_LABELS, placement_of
+from bgcscape.coverage import (
+    ABSENCE_NOTES,
+    CoverageState,
+    corpus_coverage_summary,
+    coverage_state,
+    examined_genome_ids,
+    genomes_with_bgcs,
+    runs_covering,
+)
 from bgcscape.db.session import get_sessionmaker
 from bgcscape.export import (
     ConfigVersionError,
@@ -104,6 +114,7 @@ from bgcscape.scoring import (
 from bgcscape.ingest.compound_groups import is_generic_product
 from bgcscape.models import (
     BGC,
+    AnalysisRunCoverage,
     BGCCompoundLink,
     BGCFamily,
     BGCFamilyMembership,
@@ -286,6 +297,22 @@ def get_genome(genome_id: uuid.UUID, session: Session = Depends(get_session)) ->
             current = taxa.get(current.parent_id) if current.parent_id else None
         lineage.reverse()  # root-first, the order a breadcrumb reads
 
+    # The three-way state, not a boolean: "no clusters recorded" and "no
+    # cluster-detection run has covered this genome" are different facts and
+    # a reader needs to be told which one they are looking at.
+    state = coverage_state(
+        genome.id, examined_genome_ids(session), genomes_with_bgcs(session)
+    )
+    runs = runs_covering(session, genome.id)
+    coverage_counts = {
+        run_id: n
+        for run_id, n in session.query(
+            AnalysisRunCoverage.analysis_run_id, func.count(AnalysisRunCoverage.id)
+        )
+        .filter(AnalysisRunCoverage.analysis_run_id.in_([r.id for r in runs]))
+        .group_by(AnalysisRunCoverage.analysis_run_id)
+    } if runs else {}
+
     return GenomeDetail(
         id=genome.id,
         accession=genome.accession,
@@ -308,6 +335,22 @@ def get_genome(genome_id: uuid.UUID, session: Session = Depends(get_session)) ->
             )
             for b in genome.bgcs
         ],
+        coverage=state,
+        coverage_note=ABSENCE_NOTES[state],
+        analysis_runs=[
+            AnalysisRunSummary(
+                id=run.id,
+                analysis_type=run.analysis_type.value,
+                tool=run.tool,
+                tool_version=run.tool_version,
+                label=run.label,
+                completed_at=run.completed_at,
+                parameters=run.parameters,
+                evidence_level=run.evidence_level,
+                genomes_covered=coverage_counts.get(run.id, 0),
+            )
+            for run in runs
+        ],
         lineage=lineage,
     )
 
@@ -328,6 +371,12 @@ def get_bgc(bgc_id: uuid.UUID, session: Session = Depends(get_session)) -> BGCDe
 
     placement = placement_of(bgc)
     placement_method = placement.get("method") if placement else None
+    # Present only from the `bgc_organism_placement` table; a database
+    # migrated but not yet re-linked falls back to the raw_annotation JSON,
+    # which never carried these. None therefore means "not recorded", never
+    # "strong" — the same missing-evidence discipline the scorer applies.
+    placement_confidence = placement.get("confidence") if placement else None
+    placement_caveat = placement.get("caveat") if placement else None
 
     return BGCDetail(
         id=bgc.id,
@@ -352,6 +401,8 @@ def get_bgc(bgc_id: uuid.UUID, session: Session = Depends(get_session)) -> BGCDe
         ],
         placement_method=placement_method,
         placement_note=PLACEMENT_METHOD_LABELS.get(placement_method) if placement_method else None,
+        placement_confidence=placement_confidence,
+        placement_caveat=placement_caveat,
     )
 
 
@@ -467,14 +518,25 @@ def compare_clades(
     comparable, caveats = compute_caveats(profiles)
     shared_ids, only_in = partition_families(profiles)
 
-    labels: dict[uuid.UUID, str] = {}
+    # (label, kind) per family id. The kind travels with the label because a
+    # reference rendered without it cannot be told apart from a sequence
+    # family — see FamilyRef.kind.
+    labels: dict[uuid.UUID, tuple[str, FamilyKind]] = {}
     for profile in profiles:
-        labels.update(profile.family_labels)
+        for fid, label in profile.family_labels.items():
+            labels[fid] = (label, profile.family_kinds.get(fid, FamilyKind.SEQUENCE_FAMILY))
     missing = (set(shared_ids) | {fid for ids in only_in.values() for fid in ids}) - labels.keys()
     labels.update(all_family_labels(session, missing))
 
     def family_refs(ids: list[uuid.UUID]) -> list[FamilyRef]:
-        refs = [FamilyRef(id=fid, label=labels.get(fid, "(unlabelled)")) for fid in ids]
+        refs = [
+            FamilyRef(
+                id=fid,
+                label=labels.get(fid, ("(unlabelled)", FamilyKind.SEQUENCE_FAMILY))[0],
+                kind=labels.get(fid, ("(unlabelled)", FamilyKind.SEQUENCE_FAMILY))[1],
+            )
+            for fid in ids
+        ]
         refs.sort(key=lambda r: r.label)
         return refs
 
@@ -498,6 +560,8 @@ def compare_clades(
                 bgcs_per_genome=profile.bgcs_per_genome,
                 class_profile=class_profile,
                 family_count=len(profile.family_ids),
+                sequence_family_count=len(profile.ids_of_kind(FamilyKind.SEQUENCE_FAMILY)),
+                compound_group_count=len(profile.ids_of_kind(FamilyKind.COMPOUND_GROUP)),
                 only_in_this_clade=family_refs(only_in.get(profile.taxon.id, [])),
             )
         )
@@ -797,6 +861,11 @@ def get_provenance(
     corpus_bgcs = session.query(BGC).count()
     corpus_taxa = session.query(Taxon).count()
 
+    # Corpus-wide, not scoped: coverage is a property of the whole database,
+    # and reporting it per taxonomy tab would invite "this half was
+    # examined" readings of a number that never depended on the tab.
+    coverage = corpus_coverage_summary(session)
+
     taxon_ids = taxon_ids_in_scope(session, scope)
     if taxon_ids is None:
         genome_count, bgc_count, taxon_count = corpus_genomes, corpus_bgcs, corpus_taxa
@@ -814,11 +883,46 @@ def get_provenance(
         # corpus by construction, and slicing it per taxonomy would report a
         # different number for the same family depending on the open tab.
         family_count=session.query(BGCFamily).count(),
+        sequence_family_count=session.query(BGCFamily)
+        .filter(BGCFamily.kind == FamilyKind.SEQUENCE_FAMILY)
+        .count(),
+        compound_group_count=session.query(BGCFamily)
+        .filter(BGCFamily.kind == FamilyKind.COMPOUND_GROUP)
+        .count(),
         engine_version=__version__,
         scope=scope,
         corpus_genome_count=corpus_genomes,
         corpus_bgc_count=corpus_bgcs,
         corpus_taxon_count=corpus_taxa,
+        examined_genome_count=coverage["examined"],
+        curated_only_genome_count=coverage["curated_only"],
+        unexamined_genome_count=coverage["unexamined"],
+        coverage_note=_coverage_note(coverage, corpus_genomes),
+    )
+
+
+def _coverage_note(coverage: dict[str, int], total: int) -> str:
+    """One sentence a figure caption can carry verbatim.
+
+    Phrased differently at zero coverage on purpose. "0 of 1,542 genomes
+    examined" is technically complete and reads as a rounding error; the
+    fact it is stating is that NOTHING in the figure's absences is a
+    finding, and that deserves a sentence rather than a fraction.
+    """
+    examined = coverage["examined"]
+    if total == 0:
+        return "This database holds no genomes."
+    if examined == 0:
+        return (
+            f"No cluster-detection run has covered any of these {total} genomes. Every cluster "
+            "shown is a curated report, not a survey result, and no absence anywhere in this "
+            "figure is evidence that a clade lacks a class — nothing has looked."
+        )
+    return (
+        f"{examined} of {total} genomes have been examined for clusters by a recorded analysis "
+        f"run; {coverage['curated_only']} carry curated clusters without a covering run, and "
+        f"{coverage['unexamined']} have never been examined. Absence is only evidence within "
+        "the examined set."
     )
 
 

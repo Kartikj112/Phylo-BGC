@@ -40,8 +40,18 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
+from bgcscape.coverage import get_or_create_analysis_run, record_coverage
 from bgcscape.ingest._util import IngestReport, get_or_create_or_update
-from bgcscape.models import BGC, BGCFamily, BGCFamilyMembership, EvidenceLevel, FamilyKind, Source
+from bgcscape.models import (
+    BGC,
+    AnalysisType,
+    BGCFamily,
+    BGCFamilyMembership,
+    EvidenceLevel,
+    FamilyKind,
+    Genome,
+    Source,
+)
 from bgcscape.schemas import BGCFamilyCreate, BGCFamilyMembershipCreate
 
 _CUTOFF_FROM_FILENAME = re.compile(r"_c(\d+\.?\d*)\.tsv$")
@@ -90,16 +100,25 @@ def load_bigscape_membership(
     *,
     cutoff: float,
     clustering_method: str,
+    covered_genome_ids: set | None = None,
 ) -> tuple[BGCFamilyMembership | None, str]:
     """Upsert one family membership.
 
     Returns `(membership_or_None, outcome)`, outcome one of "created",
     "updated", "no_matching_bgc" (see module docstring for why the last
     one is expected, not an error).
+
+    `covered_genome_ids`, when passed, collects the genome of every BGC this
+    clustering actually reached. That set is the run's coverage, and it is
+    what makes "this cluster is in no family" mean "nothing similar was
+    found" for those genomes and nothing at all for the rest — a real BiG-SCAPE
+    run covers the genomes it was given, not the whole database.
     """
     bgc = session.query(BGC).filter_by(external_ref=parsed.gbk_stem).one_or_none()
     if bgc is None:
         return None, "no_matching_bgc"
+    if covered_genome_ids is not None:
+        covered_genome_ids.add(bgc.genome_id)
 
     family_create = BGCFamilyCreate(
         label=parsed.family_label,
@@ -142,10 +161,20 @@ def ingest_bigscape_clustering(
     *,
     cutoff: float,
     clustering_method: str = "BiG-SCAPE",
+    tool_version: str = "unknown",
+    run_label: str = "",
 ) -> IngestReport:
     """Load a batch of clustering rows. Each row commits individually —
-    see get_or_create_or_update()'s docstring for why."""
+    see get_or_create_or_update()'s docstring for why.
+
+    Records a SEQUENCE_CLUSTERING `AnalysisRun` over the genomes this file
+    actually reached. Without it, ingesting one clustering over ten genomes
+    would make every unclustered cluster in the corpus read as "no similar
+    cluster found" — a similarity claim about thousands of clusters that
+    were never compared to anything.
+    """
     report = IngestReport()
+    covered_genome_ids: set = set()
     for row in rows:
         identifier = row.get("GBK", "<unknown>")
         try:
@@ -156,7 +185,12 @@ def ingest_bigscape_clustering(
 
         try:
             _, outcome = load_bigscape_membership(
-                session, parsed, source, cutoff=cutoff, clustering_method=clustering_method
+                session,
+                parsed,
+                source,
+                cutoff=cutoff,
+                clustering_method=clustering_method,
+                covered_genome_ids=covered_genome_ids,
             )
             session.commit()
         except Exception as exc:  # noqa: BLE001 - one bad row shouldn't abort a bulk load
@@ -170,5 +204,30 @@ def ingest_bigscape_clustering(
             report.updated += 1
         else:
             report.skipped += 1
+
+    if covered_genome_ids:
+        # The cutoff is in the run's parameters as well as on each family,
+        # because a re-run at a different cutoff covers the same genomes
+        # while producing a materially different grouping — and `label`
+        # keeps the two runs apart in the identity key.
+        run = get_or_create_analysis_run(
+            session,
+            source=source,
+            analysis_type=AnalysisType.SEQUENCE_CLUSTERING,
+            tool="BiG-SCAPE",
+            tool_version=tool_version,
+            label=run_label or f"c{cutoff}",
+            parameters={"cutoff": cutoff, "clustering_method": clustering_method},
+        )
+        for genome in session.query(Genome).filter(Genome.id.in_(covered_genome_ids)).all():
+            record_coverage(
+                session,
+                run,
+                genome,
+                bgcs_recorded=sum(
+                    1 for b in session.query(BGC.id).filter(BGC.genome_id == genome.id)
+                ),
+            )
+        session.commit()
 
     return report

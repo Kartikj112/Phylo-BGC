@@ -7,14 +7,17 @@ descendant, which has no equivalent column anywhere in bgcscape.models.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel
 
+from bgcscape.coverage import CoverageState
 from bgcscape.models.base import EvidenceLevel
 from bgcscape.models.bgc import BGCClass
 from bgcscape.models.bgc_family import FamilyKind
 from bgcscape.models.genome import AssemblyLevel
+from bgcscape.models.placement import PlacementConfidence
 from bgcscape.models.taxonomy import TaxonRank
 from bgcscape.schemas.source import SourceRead
 
@@ -47,6 +50,18 @@ class GenomeSummary(BaseModel):
     assembly_level: AssemblyLevel
     is_mag: bool
     bgcs: list[BGCSummary]
+    coverage: CoverageState = CoverageState.UNEXAMINED
+    """Whether this genome has actually been examined for clusters.
+
+    Without it, `len(bgcs) == 0` is two different facts wearing the same
+    face: a genome antiSMASH surveyed and found nothing in, and a genome
+    nobody has ever looked at. Only the first is a biological finding. A
+    client MUST NOT render an unexamined genome's zero as a count — see
+    `bgcscape.coverage` for the three states and what each licenses.
+
+    Carried per genome in the tree payload rather than fetched per node: it
+    is one short string, and the alternative is a request per genome at the
+    moment the tree is being drawn."""
     # Carried in the tree payload so filtering on genome quality/size/GC
     # can happen without a request per genome. These are small scalars;
     # the payload cost is real but bounded, and Phase B's lazy
@@ -68,6 +83,13 @@ class TaxonTreeNode(BaseModel):
     name: str
     rank: TaxonRank | None
     genome_count: int  # this node + every descendant
+    examined_genome_count: int = 0
+    """Of `genome_count`, how many a cluster-detection run has covered.
+
+    The denominator for every claim about absence in this subtree. A clade
+    showing zero clusters over 40 examined genomes is a finding; the same
+    zero over 40 unexamined genomes is an empty database. Aggregated exactly
+    like `genome_count` so the two are comparable at every node."""
     bgc_class_counts: dict[str, int]  # aggregated the same way
     direct_genomes: list[GenomeSummary]  # genomes classified exactly here
     children: list["TaxonTreeNode"]
@@ -105,6 +127,16 @@ class BGCDetail(BaseModel):
     are different claims, and a reader should be able to tell them apart."""
     placement_note: str | None = None
     """Plain-language rendering of `placement_method`."""
+    placement_confidence: PlacementConfidence | None = None
+    """How much weight the match bears — see `PlacementConfidence`. `weak`
+    means the cluster reached this genome by a free-text organism name or
+    only to genus level. Exposed as its own field so a client can mark it
+    without parsing prose, and so "which of these rest on weak matching?"
+    is answerable in the interface as well as in SQL."""
+    placement_caveat: str | None = None
+    """What a reader must know before citing this placement. Always says,
+    for a placed cluster, that it was characterized in an organism this
+    genome represents and NOT sequenced from this assembly."""
 
 
 class GenomeDetail(BaseModel):
@@ -119,10 +151,38 @@ class GenomeDetail(BaseModel):
     completeness_pct: float | None = None
     contamination_pct: float | None = None
     bgcs: list[BGCSummary]
+    coverage: CoverageState = CoverageState.UNEXAMINED
+    """See `GenomeSummary.coverage`."""
+    coverage_note: str = ""
+    """Plain-language rendering of `coverage`, for direct display. States
+    what this genome's cluster count does and does not license — including,
+    where nothing has examined it, that the count is not a finding."""
+    analysis_runs: list["AnalysisRunSummary"] = []
+    """Every run that examined this genome, newest first. Empty means
+    nobody has — which is exactly the fact `coverage` reports."""
     lineage: list["LineageStep"] = []
     """Full GTDB lineage, root-first. Assembled server-side because the
     tree payload only carries the genome's own taxon — walking ancestors
     client-side would need the whole taxon table."""
+
+
+class AnalysisRunSummary(BaseModel):
+    """One tool run, as much of it as a reader needs to judge its coverage."""
+
+    id: uuid.UUID
+    analysis_type: str
+    tool: str
+    tool_version: str
+    label: str = ""
+    completed_at: datetime | None = None
+    parameters: dict | None = None
+    evidence_level: EvidenceLevel
+    """How the coverage claim itself was established. `computed` means
+    Phylo-BGC derived it from the tool's own output as it was ingested;
+    `hypothesized` means somebody declared the run without output for
+    Phylo-BGC to read (`bgcscape record-analysis-run`). Both are useful;
+    they are not equally strong, and pooling them would hide which."""
+    genomes_covered: int = 0
 
 
 class SearchResult(BaseModel):
@@ -231,6 +291,16 @@ class BGCFamilyDetail(BGCFamilySummary):
 class FamilyRef(BaseModel):
     id: uuid.UUID
     label: str
+    kind: FamilyKind = FamilyKind.SEQUENCE_FAMILY
+    """Which sort of grouping this is — see `FamilyKind`.
+
+    Carried on every reference because the two support different claims.
+    Two clades sharing a SEQUENCE_FAMILY share gene content. Two clades
+    sharing a COMPOUND_GROUP both make a named molecule, which says
+    nothing about their clusters' sequences: convergent evolution routinely
+    produces the same product from unrelated pathways. A client that renders
+    both as "shared families" states the stronger claim about rows that
+    only support the weaker one."""
 
 
 class ClassProfileEntry(BaseModel):
@@ -256,6 +326,12 @@ class CladeSummary(BaseModel):
     bgcs_per_genome: float | None = None
     class_profile: list[ClassProfileEntry]
     family_count: int
+    """Every grouping in this clade, of both kinds. Split below — a bare
+    total is the number that invited the two to be read as one thing."""
+    sequence_family_count: int = 0
+    """Of `family_count`, those that are BiG-SCAPE/BiG-FAM sequence families."""
+    compound_group_count: int = 0
+    """Of `family_count`, those that are MIBiG compound groups."""
     only_in_this_clade: list[FamilyRef]
     """Families found in this clade and none of the others compared.
 
@@ -268,7 +344,11 @@ class CladeSummary(BaseModel):
 class CladeComparison(BaseModel):
     clades: list[CladeSummary]
     shared_families: list[FamilyRef]
-    """Families present in every compared clade (not merely in several)."""
+    """Groupings present in every compared clade (not merely in several).
+
+    Read each entry's `kind`. This list mixes sequence families and compound
+    groups deliberately — both are real comparative findings — but they are
+    not the same finding, and `caveats` says so."""
     comparable: bool
     """False when sampling is too thin or lopsided for the numbers to
     support a claim about biology. The response is still returned — the UI
@@ -287,6 +367,11 @@ class DatasetProvenanceResponse(BaseModel):
     bgc_count: int
     taxon_count: int
     family_count: int
+    """Every `bgc_family` row, of both kinds. Split below: pooling a
+    sequence clustering and a compound grouping into one figure-caption
+    number is what made them look like one thing."""
+    sequence_family_count: int = 0
+    compound_group_count: int = 0
     engine_version: str
 
     #: Which taxonomy the four counts above are over. `all` is the whole
@@ -302,6 +387,17 @@ class DatasetProvenanceResponse(BaseModel):
     corpus_genome_count: int
     corpus_bgc_count: int
     corpus_taxon_count: int
+
+    #: How many genomes in this scope a cluster-detection run has covered,
+    #: and how the rest break down. A figure caption that reports "1,542
+    #: genomes, 2,437 clusters" without these is overstating its own basis:
+    #: it implies a survey that may never have happened.
+    examined_genome_count: int = 0
+    curated_only_genome_count: int = 0
+    unexamined_genome_count: int = 0
+    coverage_note: str = ""
+    """One sentence a caption can carry verbatim, stating what fraction of
+    this corpus was actually examined and therefore what its absences mean."""
 
 
 class ExportRequest(BaseModel):
@@ -414,6 +510,11 @@ class LineageStep(BaseModel):
 class BGCTypeCount(BaseModel):
     bgc_class: str
     count: int
+
+
+# GenomeDetail forward-references LineageStep and AnalysisRunSummary, both
+# defined after it. Rebuilt here, once both exist.
+GenomeDetail.model_rebuild()
 
 
 class LazyTaxonNode(BaseModel):

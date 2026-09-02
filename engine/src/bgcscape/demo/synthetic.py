@@ -45,10 +45,12 @@ import random
 
 from sqlalchemy.orm import Session
 
+from bgcscape.coverage import get_or_create_analysis_run, record_coverage
 from bgcscape.models import (
     BGC,
     AssemblyLevel,
     BGCClass,
+    AnalysisType,
     BGCFamily,
     BGCFamilyMembership,
     Compound,
@@ -178,6 +180,23 @@ def generate_demo_corpus(
     genomes: list[Genome] = []
     all_bgcs: list[BGC] = []
 
+    detection_run = get_or_create_analysis_run(
+        session,
+        source=source,
+        analysis_type=AnalysisType.BGC_DETECTION,
+        tool="synthetic generator (not a real prediction)",
+        tool_version="0",
+        evidence_level=EvidenceLevel.HYPOTHESIZED,
+    )
+    clustering_run = get_or_create_analysis_run(
+        session,
+        source=source,
+        analysis_type=AnalysisType.SEQUENCE_CLUSTERING,
+        tool="synthetic generator (not a real BiG-SCAPE run)",
+        tool_version="0",
+        evidence_level=EvidenceLevel.HYPOTHESIZED,
+    )
+
     for index in range(genome_count):
         genus_name = rng.choices(genus_names, weights=genus_weights, k=1)[0]
         epithet = rng.choice(_EPITHETS)
@@ -204,6 +223,15 @@ def generate_demo_corpus(
         session.add(genome)
         session.flush()
         genomes.append(genome)
+        # Fabricated coverage for a fabricated corpus, and labelled as such.
+        # Without it, every genome here reads as "never examined" and the
+        # scorer correctly declines to say anything — which would be a true
+        # statement about a corpus that is pretending to be the output of a
+        # detection run over these genomes. The pretence is the point of the
+        # demo; leaving the coverage out would make it pretend less
+        # coherently, not more honestly. Everything about it is
+        # HYPOTHESIZED and the source names itself as not real.
+        record_coverage(session, detection_run, genome, bgcs_recorded=0)
 
         # Most genomes modest, a few prolific — the shape that makes the
         # barcode row worth looking at.
@@ -280,6 +308,17 @@ def generate_demo_corpus(
         family_index += 1
         for member in members:
             session.add(BGCFamilyMembership(bgc_id=member.id, family_id=fam.id, similarity_score=None))
+    session.flush()
+
+    # Every genome was in the pretend clustering run — including the ones
+    # whose clusters matched nothing. That is what makes the ~30% left out
+    # of families genuinely UNCLUSTERED ("compared, nothing similar found")
+    # rather than merely uncompared, and it is the distinction that lets
+    # this corpus keep exercising the scorer's `unclustered` component and
+    # the by-construction bias it exposed. See ARCHITECTURE.md, "It
+    # immediately exposed a real methodological flaw".
+    for genome in genomes:
+        record_coverage(session, clustering_run, genome, bgcs_recorded=0)
     session.flush()
 
     # --- a handful of "characterized" reference clusters ---------------------

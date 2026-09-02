@@ -36,7 +36,7 @@ from collections import defaultdict
 
 from sqlalchemy.orm import Session, selectinload
 
-from bgcscape.models import BGC, BGCFamily, BGCFamilyMembership, Genome, Taxon
+from bgcscape.models import BGC, BGCFamily, BGCFamilyMembership, FamilyKind, Genome, Taxon
 
 # Below this many genomes, per-genome rates are too noisy to compare
 # meaningfully — one unusual genome dominates the profile.
@@ -80,6 +80,17 @@ class CladeProfile:
         self.bgc_class_counts: dict[str, int] = defaultdict(int)
         self.family_ids: set[uuid.UUID] = set()
         self.family_labels: dict[uuid.UUID, str] = {}
+        #: Which kind of grouping each id in `family_ids` is. Two clades
+        #: sharing a *sequence family* share gene content; two clades
+        #: sharing a *compound group* both make a named molecule, which
+        #: convergent evolution means implies nothing about sequence. Both
+        #: are real comparative facts and both are reported — but pooling
+        #: them into one "shared families" number states the stronger of
+        #: the two claims about rows that only support the weaker one.
+        self.family_kinds: dict[uuid.UUID, FamilyKind] = {}
+
+    def ids_of_kind(self, kind: FamilyKind) -> set[uuid.UUID]:
+        return {fid for fid in self.family_ids if self.family_kinds.get(fid) == kind}
 
     @property
     def bgcs_per_genome(self) -> float | None:
@@ -118,6 +129,7 @@ def build_clade_profile(session: Session, taxon: Taxon) -> CladeProfile:
                 profile.family_ids.add(membership.family_id)
                 if membership.family is not None:
                     profile.family_labels[membership.family_id] = membership.family.label
+                    profile.family_kinds[membership.family_id] = membership.family.kind
 
     return profile
 
@@ -177,6 +189,30 @@ def compute_caveats(profiles: list[CladeProfile]) -> tuple[bool, list[str]]:
         "No statistical testing is performed. Closely related genomes are not independent "
         "samples, so apparent enrichment may reflect shared ancestry rather than selection."
     )
+
+    # Two kinds of grouping share `bgc_family`, and only one of them is a
+    # sequence comparison. Reporting a shared compound group without saying
+    # so states "these clades carry the same clusters" on the strength of
+    # "these clades both make this molecule" — which convergent evolution
+    # makes a different claim entirely. Every FamilyRef carries its `kind`;
+    # this says why the reader should look at it.
+    shared_kinds = {
+        kind for profile in profiles for kind in profile.family_kinds.values()
+    }
+    if FamilyKind.COMPOUND_GROUP in shared_kinds:
+        caveats.append(
+            "Some groupings compared here are COMPOUND GROUPS — clusters that MIBiG records "
+            "as making the same named compound, with no sequences compared. Two clades sharing "
+            "one make the same molecule; that is not evidence they carry similar clusters, "
+            "because unrelated pathways converge on the same product. Each entry's `kind` says "
+            "which it is."
+        )
+    if FamilyKind.SEQUENCE_FAMILY not in shared_kinds:
+        caveats.append(
+            "No sequence-based gene cluster families appear in these clades, so nothing here "
+            "supports a claim about shared gene content. Ingest a BiG-SCAPE or BiG-FAM "
+            "clustering to make that question answerable."
+        )
     return comparable, caveats
 
 
@@ -213,8 +249,17 @@ def partition_families(profiles: list[CladeProfile]) -> tuple[list[uuid.UUID], d
     return sorted(shared_set), only_in
 
 
-def all_family_labels(session: Session, family_ids: set[uuid.UUID]) -> dict[uuid.UUID, str]:
+def all_family_labels(
+    session: Session, family_ids: set[uuid.UUID]
+) -> dict[uuid.UUID, tuple[str, FamilyKind]]:
+    """`(label, kind)` for each id — the kind travels with the label because
+    a caller rendering one without the other has no way to tell a sequence
+    family from a compound group."""
     if not family_ids:
         return {}
-    rows = session.query(BGCFamily.id, BGCFamily.label).filter(BGCFamily.id.in_(family_ids)).all()
-    return {row[0]: row[1] for row in rows}
+    rows = (
+        session.query(BGCFamily.id, BGCFamily.label, BGCFamily.kind)
+        .filter(BGCFamily.id.in_(family_ids))
+        .all()
+    )
+    return {row[0]: (row[1], row[2]) for row in rows}

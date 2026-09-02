@@ -20,8 +20,24 @@ function bgc(
   };
 }
 
-function genome(accession: string, is_mag: boolean, bgcs: BGCSummary[]): GenomeSummary {
-  return { id: nid("genome"), accession, assembly_level: "complete_genome", is_mag, bgcs };
+function genome(
+  accession: string,
+  is_mag: boolean,
+  bgcs: BGCSummary[],
+  /** These fixtures stand in for a corpus antiSMASH has actually been run
+   * over, so their genomes are `examined` — a cluster count from them is a
+   * survey result. Pass another state to build the cases where it is not;
+   * see `coverage` in the API's GenomeSummary. */
+  coverage: GenomeSummary["coverage"] = "examined",
+): GenomeSummary {
+  return {
+    id: nid("genome"),
+    accession,
+    assembly_level: "complete_genome",
+    is_mag,
+    bgcs,
+    coverage,
+  };
 }
 
 function taxon(
@@ -52,6 +68,9 @@ function taxon(
     name,
     rank,
     genome_count: direct_genomes.length + children.reduce((sum, c) => sum + c.genome_count, 0),
+    examined_genome_count:
+      direct_genomes.filter((g) => g.coverage === "examined").length +
+      children.reduce((sum, c) => sum + c.examined_genome_count, 0),
     bgc_class_counts,
     direct_genomes,
     children,
@@ -106,6 +125,7 @@ export function buildFixtureTree(): TaxonTreeNode {
     name: "root",
     rank: null,
     genome_count: domain.genome_count,
+    examined_genome_count: domain.examined_genome_count,
     bgc_class_counts: domain.bgc_class_counts,
     direct_genomes: [],
     children: [domain],

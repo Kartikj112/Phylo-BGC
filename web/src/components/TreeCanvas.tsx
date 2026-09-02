@@ -947,6 +947,29 @@ export function TreeCanvas({
         // navigation never sees either event.
         style={{ display: "block", cursor: "grab", touchAction: "none" }}
       >
+        {/* Inside the SVG rather than in CSS, because `lib/export.ts` lifts
+            this element out of the DOM to build the downloadable figure —
+            a pattern defined anywhere else would not travel with it, and
+            the exported figure would silently lose the distinction between
+            an examined-empty clade and an unexamined one. */}
+        <defs>
+          <pattern
+            id="unexamined-hatch"
+            patternUnits="userSpaceOnUse"
+            width={4}
+            height={4}
+            patternTransform="rotate(45)"
+          >
+            <line
+              x1={0}
+              y1={0}
+              x2={0}
+              y2={4}
+              stroke={COLORS.lineStrong}
+              strokeWidth={1}
+            />
+          </pattern>
+        </defs>
         <rect
           data-canvas-bg="true"
           x={0}
@@ -1609,26 +1632,52 @@ function CladeGlyph({
       )}
 
       <title>
-        {node.name}: {summary.genomeCount} genome{summary.genomeCount === 1 ? "" : "s"},{" "}
-        {summary.bgcCount} BGC{summary.bgcCount === 1 ? "" : "s"}
+        {node.name}: {summary.genomeCount} genome{summary.genomeCount === 1 ? "" : "s"}
+        {` (${summary.examinedGenomeCount} examined)`}, {summary.bgcCount} BGC
+        {summary.bgcCount === 1 ? "" : "s"}
         {summary.composition.length > 0 &&
           ` — ${summary.composition
             .slice(0, 4)
             .map((c) => `${BGC_CLASS_LABELS[c.bgcClass] ?? c.bgcClass} ${c.count}`)
             .join(", ")}`}
+        {/* The sentence that makes an empty glyph readable. Without it a
+            clade nobody has examined and a clade examined and found empty
+            were the same outlined rectangle. */}
+        {summary.bgcCount === 0 &&
+          (summary.examinedGenomeCount === 0
+            ? " — no genome here has been examined for clusters; this is not a finding that it produces none"
+            : " — examined and none found")}
       </title>
 
       {summary.bgcCount === 0 ? (
-        <rect
-          x={x}
-          y={-height / 2}
-          width={width}
-          height={height}
-          fill="none"
-          stroke={COLORS.lineStrong}
-          strokeWidth={1}
-          rx={2}
-        />
+        /* Hollow for "examined and empty" (a result), hatched for
+           "unexamined" (a gap). The hatch is deliberately not another
+           colour: colour in this tree already means BGC class, and giving
+           absence a hue would put it in the same visual vocabulary as a
+           finding. */
+        <>
+          {summary.examinedGenomeCount === 0 && (
+            <rect
+              x={x}
+              y={-height / 2}
+              width={width}
+              height={height}
+              fill="url(#unexamined-hatch)"
+              stroke="none"
+            />
+          )}
+          <rect
+            x={x}
+            y={-height / 2}
+            width={width}
+            height={height}
+            fill="none"
+            stroke={COLORS.lineStrong}
+            strokeWidth={1}
+            strokeDasharray={summary.examinedGenomeCount === 0 ? "2 2" : undefined}
+            rx={2}
+          />
+        </>
       ) : (
         summary.composition.map((segment) => {
           const segWidth = Math.max(1, segment.fraction * width);
