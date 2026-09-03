@@ -168,6 +168,49 @@ of this repo.
     join directly. Rows matching nothing at all are still reported as
     `skipped`, distinctly from errors.
 
+## BiG-SLiCE / BiG-FAM
+
+- **Two names, one dataset.** BiG-FAM 1.0 publishes the Gene Cluster
+  Families produced by the BiG-SLiCE paper run; the web database and the
+  bulk files are the same clustering. Phylo-BGC *reads* those families
+  rather than computing any, which is the only reason a real GCF can be
+  shown here at all — see `ingest/bigfam.py`.
+- **Licence: CC-BY**, stated on the paper-data index. Attribution therefore
+  travels on the `Source` row, and any figure drawing on these families
+  must cite the BiG-SLiCE paper. This is a *more* permissive licence than
+  the corpus's other sources, not a waiver of attribution.
+- **Snapshot date: July 2020** (`data.db` mtime 2020-07-17). 1,225,071 BGCs
+  over 209,206 genomes **as they existed then**. This matters for joins:
+  GTDB here is R11-RS232 (April 2026), so assemblies deposited after 2020
+  cannot appear — the five mislabelled MAGs behind the placement audit
+  included. Coverage against this corpus is partial by construction and
+  must be reported, never assumed.
+- **Bulk location and real size**, verified 2026-09-03 against the live
+  index at `www.bioinformatics.nl/~kauts001/ltr/bigslice/paper_data/`:
+  the widely-quoted 189 GB is `subpfam_sources` (144 GB, HMM training
+  material) plus `full_input_data` (28 GB, input GenBanks) plus
+  `full_run_result` (17 GB). Only the last holds families. Serving is
+  Apache directory-listing over `https://www.bioinformatics.nl` — note the
+  `www.`, the bare hostname's certificate does not cover it.
+- **Checksums are per-zip only.** `MD5SUMS_data.txt` is 162 bytes: one
+  entry for each of the three archives, none for the unpacked tree the
+  server also exposes. Fetching `result/data.db` (42 GB) directly is
+  faster but unverifiable.
+- **Format: a BiG-SLiCE SQLite**, schema at
+  `bigslice/modules/data/schema.sql` in the tool's own source (Zenodo
+  record 3975432 is that source code, *not* data — nothing in it is
+  ingestible). Relevant tables:
+  `gcf(id, id_in_run, clustering_id)`,
+  `gcf_membership(gcf_id, bgc_id, membership_value, rank)`,
+  `bgc(id, dataset_id, name, type, orig_folder, orig_filename, length_nt)`.
+  `orig_folder`/`orig_filename` carries the assembly + region pair that
+  `ingest/bigfam.py` already splits, so the practical path is a script that
+  emits the web export's TSV shape rather than a second ingest module.
+- **Unverified, and load-bearing:** whether `membership_value` here is on
+  the same scale as the web export's `RADIUS`, which the ingest thresholds
+  at 900 to exclude putative members. Check against
+  `tests/fixtures/bigfam_gcf_200948_members.tsv` before relying on either.
+
 ## CORASON
 
 - Analysis tool invoked as an external dependency, same treatment as
@@ -180,6 +223,11 @@ of this repo.
   papers (PMC), plus the `mibig-secmet` GitHub organization.
 - GTDB release number and license: gtdb.ecogenomic.org (live site and
   `/licenses` page) and Wikipedia's Genome Taxonomy Database summary infobox.
+- BiG-SLiCE/BiG-FAM bulk layout, sizes and dates: the live Apache index at
+  `www.bioinformatics.nl/~kauts001/ltr/bigslice/paper_data/`, walked
+  2026-09-03 down to `data/full_run_result/result/data.db`. Schema read
+  from `medema-group/bigslice`, `bigslice/modules/data/schema.sql`.
+  BGC/genome counts from the BiG-FAM paper (PMC7778980).
 
 ---
 
