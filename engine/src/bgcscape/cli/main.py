@@ -780,6 +780,54 @@ def ingest_ncbi_taxonomy_cmd(
         typer.echo(f"    {example}")
 
 
+@app.command("recheck-placements")
+def recheck_placements_cmd(
+    metadata_path: Path = typer.Argument(
+        ...,
+        help="The GTDB metadata TSV the genomes were ingested from "
+        "(bac120_metadata.tsv / ar53_metadata.tsv). Needs its `ncbi_taxonomy` column.",
+    ),
+) -> None:
+    """Doubt identifier-based placements that rest on a mislabelled assembly.
+
+    An exact NCBI taxid match is only as good as the taxid, and a taxid is
+    supplied by whoever deposited the assembly — while GTDB's lineage comes
+    from the genome's own content. Where the two name different phyla, the
+    assembly is mislabelled and every cluster placed on it by identifier is
+    confidently in the wrong part of the tree.
+
+    This reads both lineages out of the metadata file, records the verdict
+    on each genome, and re-grades the placements that depend on it. Run it
+    after upgrading a database ingested before `ncbi_taxonomy_conflict`
+    existed. Idempotent, and it restores a placement if a later GTDB release
+    resolves the conflict.
+    """
+    from bgcscape.ingest.link import recheck_placements
+
+    if not metadata_path.exists():
+        raise typer.BadParameter(f"{metadata_path} not found")
+
+    with session_scope() as session:
+        report = recheck_placements(session, metadata_path)
+
+    typer.echo(
+        f"Checked {report.genomes_seen} genome(s) against {metadata_path.name}: "
+        f"{report.genomes_conflicted} conflicted, {report.genomes_agreed} agreed."
+    )
+    if report.genomes_unchecked:
+        typer.echo(
+            f"  {report.genomes_unchecked} genome(s) are not in this file and stay "
+            "unchecked (NULL), not cleared."
+        )
+    typer.echo(f"Placements demoted to weak: {report.demoted}")
+    if report.restored:
+        typer.echo(f"Placements restored to their method's confidence: {report.restored}")
+    for example in report.examples:
+        typer.echo(f"    {example}")
+    if not report.demoted and not report.restored:
+        typer.echo("  No placement changed.")
+
+
 @app.command("graft-taxonomy")
 def graft_taxonomy() -> None:
     """Attach parent-less species (typically from MIBiG) to their GTDB genus.

@@ -14,6 +14,9 @@ class GenomeBase(BaseModel):
     taxon_id: uuid.UUID | None = None
     assembly_level: AssemblyLevel
     is_mag: bool | None = None
+    #: True when GTDB and NCBI put this assembly in different phyla; False
+    #: when they were compared and agree; None when nobody compared them.
+    ncbi_taxonomy_conflict: bool | None = None
     genome_size_bp: int | None = None
     gc_content_pct: float | None = None
     completeness_pct: float | None = None

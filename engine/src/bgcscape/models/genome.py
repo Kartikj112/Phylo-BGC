@@ -81,6 +81,26 @@ class Genome(Base, TimestampMixin, ProvenanceMixin):
     # better signal — a row at AssemblyLevel.MAG is a MAG, and the migration
     # uses exactly that to keep the facts it could establish.
     is_mag: Mapped[bool | None] = mapped_column(Boolean, default=None, nullable=True)
+    # Tri-state, for the same reason `is_mag` is: True means the assembly's
+    # NCBI-assigned lineage and its GTDB-assigned lineage name DIFFERENT
+    # phyla; False means they were compared and agree; NULL means nobody
+    # compared them.
+    #
+    # This is a fact about the assembly, not about any cluster on it, and it
+    # is GTDB's own metadata that establishes it — `ncbi_taxonomy` and
+    # `gtdb_taxonomy` sit in adjacent columns of the same TSV row. It earns a
+    # column because a placement rule depends on it: an NCBI taxid is
+    # submitter-supplied metadata while GTDB's lineage is derived from the
+    # genome's content, so a taxid match against a mislabelled assembly is
+    # confidently wrong. See ingest/link.py, which demotes exactly those
+    # placements, and `bgcscape recheck-placements`, which backfills this
+    # column for a database ingested before it existed.
+    #
+    # A GTDB suffix split (`Myxococcota` vs `Myxococcota_A`) is NOT a
+    # conflict and does not set this — see `taxonomies_conflict()`.
+    ncbi_taxonomy_conflict: Mapped[bool | None] = mapped_column(
+        Boolean, default=None, nullable=True
+    )
     genome_size_bp: Mapped[int | None] = mapped_column(Integer, nullable=True)
     gc_content_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
     completeness_pct: Mapped[float | None] = mapped_column(Float, nullable=True)

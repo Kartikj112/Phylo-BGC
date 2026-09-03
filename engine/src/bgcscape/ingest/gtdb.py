@@ -38,6 +38,8 @@ Two-stage design matching ingest/mibig.py: parse_gtdb_metadata_row() (pure)
 from __future__ import annotations
 
 import csv
+import gzip
+import re
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -60,6 +62,23 @@ _NCBI_ASSEMBLY_LEVEL_MAP: dict[str, AssemblyLevel] = {
     "Chromosome": AssemblyLevel.CHROMOSOME,
     "Scaffold": AssemblyLevel.SCAFFOLD,
     "Contig": AssemblyLevel.CONTIG,
+}
+
+#: GTDB's own NCBI-lineage column, in the same `d__;p__;...` shape as
+#: `gtdb_taxonomy`. Present in the bac120/ar53 metadata TSVs; absent from a
+#: hand-made subset, in which case the comparison simply is not made.
+_NCBI_TAXONOMY_COLUMN = "ncbi_taxonomy"
+
+#: Phyla the two databases spell differently but circumscribe the same way.
+#: Keyed by normalised name, both directions mapping to one canonical form,
+#: so a spelling difference is not reported as a disagreement about content.
+#: Kept deliberately tiny: an entry belongs here only when the two names are
+#: documented synonyms, never to silence a conflict that is real.
+_PHYLUM_SYNONYMS: dict[str, str] = {
+    # GTDB kept "Tectomicrobia"; NCBI adopted the later "Candidatus
+    # Tectimicrobiota". Same clade — Entotheonella and its relatives.
+    "tectomicrobia": "tectomicrobia",
+    "tectimicrobiota": "tectomicrobia",
 }
 
 _RANK_PREFIXES: dict[str, TaxonRank] = {
@@ -104,6 +123,54 @@ def parse_gtdb_taxonomy_string(taxonomy_string: str) -> list[tuple[TaxonRank, st
     return result
 
 
+def phylum_of(taxonomy_string: str | None) -> str | None:
+    """The `p__` token of a `d__…;p__…;…` lineage string, or None."""
+    if not taxonomy_string:
+        return None
+    for token in taxonomy_string.split(";"):
+        token = token.strip()
+        if token.startswith("p__") and token[3:].strip():
+            return token[3:].strip()
+    return None
+
+
+def _normalize_phylum(name: str) -> str:
+    """Reduce a phylum name to what the two databases can be compared on.
+
+    GTDB appends a suffix when it splits a taxon it judges polyphyletic
+    (`Myxococcota_A`, `Bacillota_I`). The suffixed group is still inside the
+    phylum NCBI names, so the suffix is stripped: a split is a difference of
+    resolution, not of placement, and treating it as a conflict would flag
+    41 perfectly correct placements in the shipped corpus alone.
+    """
+    cleaned = re.sub(r"_[A-Z]+$", "", name.strip())
+    cleaned = re.sub(r"^Candidatus\s+", "", cleaned, flags=re.IGNORECASE).strip().lower()
+    return _PHYLUM_SYNONYMS.get(cleaned, cleaned)
+
+
+def taxonomies_conflict(
+    gtdb_taxonomy: str | None, ncbi_taxonomy: str | None
+) -> bool | None:
+    """Whether GTDB and NCBI assign this assembly to different phyla.
+
+    Returns None — not False — when either side has no phylum to compare.
+    "Nobody could ask" and "asked, and they agree" are different states, and
+    collapsing them would be the same mistake `is_mag` was fixed for.
+
+    The comparison is deliberately coarse. At phylum rank a disagreement is
+    never nomenclatural drift; it means one of the two databases has the
+    assembly in the wrong part of the tree of life, and in practice that is
+    a submitter-supplied NCBI label on a metagenome-assembled genome. Genus
+    and species disagreements are routine (GTDB reclassifies constantly) and
+    are correctly NOT flagged here.
+    """
+    gtdb_phylum = phylum_of(gtdb_taxonomy)
+    ncbi_phylum = phylum_of(ncbi_taxonomy)
+    if not gtdb_phylum or not ncbi_phylum:
+        return None
+    return _normalize_phylum(gtdb_phylum) != _normalize_phylum(ncbi_phylum)
+
+
 def _first_present(row: dict[str, str], *names: str) -> str | None:
     for name in names:
         value = row.get(name)
@@ -144,6 +211,10 @@ class ParsedGtdbGenome:
     completeness_pct: float | None
     contamination_pct: float | None
     assembly_level: AssemblyLevel
+    #: True when this assembly's NCBI and GTDB lineages name different
+    #: phyla, False when they agree, None when the TSV carries no
+    #: `ncbi_taxonomy` column to compare against.
+    ncbi_taxonomy_conflict: bool | None
 
 
 def parse_gtdb_metadata_row(row: dict[str, str]) -> ParsedGtdbGenome:
@@ -176,6 +247,9 @@ def parse_gtdb_metadata_row(row: dict[str, str]) -> ParsedGtdbGenome:
         completeness_pct=_parse_float(row.get("checkm_completeness")),
         contamination_pct=_parse_float(row.get("checkm_contamination")),
         assembly_level=assembly_level,
+        ncbi_taxonomy_conflict=taxonomies_conflict(
+            taxonomy_string, row.get(_NCBI_TAXONOMY_COLUMN)
+        ),
     )
 
 
@@ -223,6 +297,10 @@ def load_gtdb_genome(session: Session, parsed: ParsedGtdbGenome, source: Source)
         # and writing False turned that gap into a claim. `assembly_level`
         # is parsed from the TSV and is the real signal.
         is_mag=None,
+        # Established from GTDB's own two lineage columns, so unlike
+        # `is_mag` this loader genuinely has grounds for the answer it
+        # writes — including None, when the TSV has no NCBI lineage.
+        ncbi_taxonomy_conflict=parsed.ncbi_taxonomy_conflict,
         genome_size_bp=parsed.genome_size_bp,
         gc_content_pct=parsed.gc_content_pct,
         completeness_pct=parsed.completeness_pct,
@@ -240,8 +318,15 @@ def load_gtdb_genome(session: Session, parsed: ParsedGtdbGenome, source: Source)
 
 
 def read_gtdb_metadata_tsv(path: str | Path) -> Iterator[dict[str, str]]:
-    """Yield rows from a GTDB `*_metadata.tsv` file as column-name-keyed dicts."""
-    with open(Path(path), newline="", encoding="utf-8") as fh:
+    """Yield rows from a GTDB `*_metadata.tsv` file as column-name-keyed dicts.
+
+    Reads `.tsv.gz` directly, because that is how GTDB publishes these files
+    and bac120_metadata is ~2 GB decompressed — making the caller expand it
+    first would be a real cost for no gain.
+    """
+    path = Path(path)
+    opener = gzip.open if path.suffix == ".gz" else open
+    with opener(path, mode="rt", newline="", encoding="utf-8") as fh:
         yield from csv.DictReader(fh, delimiter="\t")
 
 

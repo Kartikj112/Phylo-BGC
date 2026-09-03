@@ -28,6 +28,28 @@ exists to prevent. Three things keep the distinction visible:
     OBSERVED_CURATED, because the curation is MIBiG's. The *placement* row
     is COMPUTED, because the placement is ours.
 
+## Why an exact identifier match is not automatically STRONG
+
+`ncbi_taxid` used to map to STRONG with no further test, on the reasoning
+that an identifier had matched an identifier. Only one of those identifiers
+is derived from the genome, though. GTDB assigns its lineage from genome
+content; the NCBI taxid is typed in by whoever deposited the assembly. When
+the depositor was wrong, an exact match lands the cluster in the wrong
+phylum and labels it STRONG — the most confident wrong answer the schema can
+express.
+
+This is not hypothetical. Five assemblies in the shipped corpus carry an
+NCBI lineage that disagrees with their own GTDB lineage at PHYLUM rank, and
+32 clusters were placed on them at STRONG. One is deposited as *Escherichia
+coli* and is an Eggerthellaceae MAG; one is deposited as *Bacillus subtilis*
+and is 67.4% GC (*B. subtilis* is ~43.5%).
+
+So an identifier match now consults `Genome.ncbi_taxonomy_conflict` and is
+demoted to WEAK, with a caveat naming the reason, when the target assembly
+is mislabelled. A GTDB suffix split (`Myxococcota_A`) is deliberately NOT a
+conflict; see `ingest/gtdb.taxonomies_conflict`. A genome nobody has checked
+(NULL) is not demoted — unknown is not suspicion.
+
 ## Where the placement is stored, and why it moved
 
 It is a row in `bgc_organism_placement` (see models/placement.py), whose
@@ -57,6 +79,7 @@ from bgcscape.models import (
     BGCOrganismPlacement,
     EvidenceLevel,
     Genome,
+    PlacementConfidence,
     PlacementMethod,
     Taxon,
 )
@@ -94,6 +117,26 @@ PLACEMENT_CAVEATS: dict[PlacementMethod, str] = {
     PlacementMethod.UNPLACED: "Not placed on the GTDB tree.",
 }
 
+#: Methods whose entire claim is "an NCBI identifier named this genome".
+#: They are the only ones a mislabelled assembly can corrupt: `gtdb_species`
+#: matches on a name GTDB itself controls, and the name-based and genus
+#: methods are already WEAK.
+IDENTIFIER_METHODS: frozenset[PlacementMethod] = frozenset(
+    {PlacementMethod.NCBI_TAXID, PlacementMethod.NCBI_SPECIES_TAXID}
+)
+
+#: Replaces the method's own caveat when the target assembly is mislabelled,
+#: because the method's caveat would be actively misleading there — it says
+#: the match was made on an identifier, which is true and is exactly the
+#: problem.
+CONFLICTED_GENOME_CAVEAT = (
+    "Placement DEMOTED: this cluster was matched to the genome by NCBI taxonomy ID, but that "
+    "assembly's NCBI lineage and its GTDB lineage name different phyla. The NCBI taxid is "
+    "supplied by whoever deposited the assembly; GTDB's lineage is derived from the genome's "
+    "own content. An identifier match against a mislabelled assembly is confidently wrong, so "
+    "this placement is recorded as weak. Do not cite it without checking the assembly."
+)
+
 #: How a cluster was put on the tree, strongest first. Surfaced in the UI.
 PLACEMENT_METHOD_LABELS: dict[str, str] = {
     "ncbi_taxid": "Matched to a GTDB genome by NCBI taxonomy ID",
@@ -123,6 +166,11 @@ class LinkReport:
     #: identifier.
     placements_recorded: int = 0
     weak_placements: int = 0
+    #: Identifier matches demoted because the target assembly's own two
+    #: lineages disagree at phylum rank. Counted separately from
+    #: `weak_placements` because the remedy differs: a weak name match wants
+    #: a better identifier, a demoted one wants a different genome.
+    demoted_placements: int = 0
     unknown_methods: set = field(default_factory=set)
     missing_examples: list[str] = field(default_factory=list)
 
@@ -228,6 +276,24 @@ def _record_placement(
         return
 
     confidence = CONFIDENCE_BY_METHOD[parsed_method]
+    caveat = PLACEMENT_CAVEATS[parsed_method]
+
+    # The correction that gives this function its point. `ncbi_taxid` used to
+    # mean STRONG unconditionally, on the reasoning that "an identifier
+    # matched an identifier". But one of those identifiers is submitter
+    # metadata: an assembly deposited as Escherichia coli that GTDB places in
+    # Actinomycetota still carries taxid 562, so an exact match lands the
+    # cluster in the wrong phylum and stamps it STRONG. Five such assemblies
+    # in the shipped corpus carried 32 clusters between them.
+    #
+    # None is not a conflict. A genome nobody has compared keeps the
+    # method's own confidence rather than being demoted on suspicion — the
+    # same rule the coverage model applies to unexamined genomes.
+    if parsed_method in IDENTIFIER_METHODS and genome.ncbi_taxonomy_conflict is True:
+        confidence = PlacementConfidence.WEAK
+        caveat = CONFLICTED_GENOME_CAVEAT
+        report.demoted_placements += 1
+
     existing = (
         session.query(BGCOrganismPlacement).filter_by(bgc_id=bgc.id).one_or_none()
     )
@@ -239,7 +305,7 @@ def _record_placement(
                 method=parsed_method,
                 confidence=confidence,
                 gtdb_accession=gtdb_accession,
-                caveat=PLACEMENT_CAVEATS[parsed_method],
+                caveat=caveat,
                 source_id=bgc.source_id,
                 # COMPUTED, never OBSERVED_CURATED. MIBiG curated the
                 # cluster and named the organism; the join from that
@@ -254,7 +320,7 @@ def _record_placement(
         existing.method = parsed_method
         existing.confidence = confidence
         existing.gtdb_accession = gtdb_accession
-        existing.caveat = PLACEMENT_CAVEATS[parsed_method]
+        existing.caveat = caveat
 
     report.placements_recorded += 1
     if confidence.value == "weak":
@@ -323,3 +389,101 @@ def placement_of(bgc: BGC) -> dict | None:
     annotation = bgc.raw_annotation or {}
     legacy = annotation.get(PLACEMENT_KEY)
     return legacy if isinstance(legacy, dict) else None
+
+
+@dataclass
+class RecheckReport:
+    """What `recheck_placements` established and what it changed."""
+
+    #: Genomes the metadata file could speak about at all.
+    genomes_seen: int = 0
+    genomes_conflicted: int = 0
+    genomes_agreed: int = 0
+    #: Present in the database but absent from the metadata file, so still
+    #: unchecked afterwards. Reported rather than silently left at NULL.
+    genomes_unchecked: int = 0
+    demoted: int = 0
+    restored: int = 0
+    examples: list[str] = field(default_factory=list)
+
+
+def recheck_placements(session: Session, metadata_path: str | Path) -> RecheckReport:
+    """Re-derive `Genome.ncbi_taxonomy_conflict`, then re-grade placements.
+
+    `ingest gtdb` sets the flag going forward, but a database ingested
+    before the column existed carries NULL for every genome and therefore
+    still holds the STRONG placements this rule exists to demote. Re-running
+    the whole ingest would work and is far more than the job needs: the
+    conflict is derivable from two columns of the same metadata TSV the
+    genomes came from.
+
+    Idempotent, and symmetric: a placement demoted by a conflict is restored
+    to its method's confidence if a later GTDB release resolves that
+    conflict. A one-way ratchet would leave a correction permanently
+    penalised, which is the mirror of the bug being fixed.
+    """
+    from bgcscape.ingest.gtdb import (
+        _NCBI_TAXONOMY_COLUMN,
+        normalize_gtdb_accession,
+        read_gtdb_metadata_tsv,
+        taxonomies_conflict,
+    )
+
+    report = RecheckReport()
+    genomes = {genome.accession: genome for genome in session.query(Genome).all()}
+    touched: set[str] = set()
+
+    for row in read_gtdb_metadata_tsv(metadata_path):
+        raw = (row.get("accession") or row.get("accno") or "").strip()
+        if not raw:
+            continue
+        genome = genomes.get(normalize_gtdb_accession(raw))
+        if genome is None:
+            continue
+        conflict = taxonomies_conflict(
+            row.get("gtdb_taxonomy"), row.get(_NCBI_TAXONOMY_COLUMN)
+        )
+        if conflict is None:
+            continue
+        genome.ncbi_taxonomy_conflict = conflict
+        touched.add(genome.accession)
+        report.genomes_seen += 1
+        if conflict:
+            report.genomes_conflicted += 1
+        else:
+            report.genomes_agreed += 1
+
+    report.genomes_unchecked = len(genomes) - len(touched)
+    session.flush()
+
+    placements = (
+        session.query(BGCOrganismPlacement)
+        .filter(BGCOrganismPlacement.method.in_(tuple(IDENTIFIER_METHODS)))
+        .all()
+    )
+    for placement in placements:
+        genome = placement.representative_genome
+        if genome is None:
+            continue
+        expected = CONFIDENCE_BY_METHOD[placement.method]
+        expected_caveat = PLACEMENT_CAVEATS[placement.method]
+        if genome.ncbi_taxonomy_conflict is True:
+            expected = PlacementConfidence.WEAK
+            expected_caveat = CONFLICTED_GENOME_CAVEAT
+        if placement.confidence == expected:
+            continue
+        demoting = expected == PlacementConfidence.WEAK
+        placement.confidence = expected
+        placement.caveat = expected_caveat
+        if demoting:
+            report.demoted += 1
+            if len(report.examples) < 20:
+                report.examples.append(
+                    f"{placement.bgc.mibig_accession or placement.bgc_id} "
+                    f"on {genome.accession} -> weak"
+                )
+        else:
+            report.restored += 1
+
+    session.commit()
+    return report
