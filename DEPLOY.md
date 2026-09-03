@@ -375,9 +375,11 @@ repeats the caveat for any BiG-FAM family.
 ### Getting real GCFs over the whole corpus (a few hours, one time)
 
 MIBiG's corpus is small enough that BiG-SCAPE over it is very tractable —
-roughly 2,400 clusters, not the 1.2 million in BiG-FAM (whose *bulk* download
-is a 189 GB tarball; the per-GCF exports above are the practical route to
-individual families).
+roughly 2,400 clusters, not the 1.2 million in BiG-FAM. This is the route to
+take first: it covers **100% of this corpus by construction**, needs no
+download, and is what turns "MIBiG names the same compound" into a claim
+about sequences. The bulk BiG-FAM route below answers a different question
+and is the better second step, not the better first one.
 
 1. Download **MIBiG 4.0 GenBank files** from the MIBiG download page (the
    GenBank bundle, not the JSON one you already have).
@@ -401,6 +403,56 @@ Step 4 works with no extra mapping because MIBiG ingestion sets
 input record by its GenBank filename stem — which for MIBiG's own files *is*
 the accession. Both groupings then coexist; a cluster can belong to a compound
 group and a GCF at the same time, which is why `family_ids` is a list.
+
+### Getting BiG-FAM's families in bulk (17 GB, plus an extractor to write)
+
+"The BiG-FAM bulk download is 189 GB" is the number everyone quotes and it
+sends people away. It is three components, and only one of them is GCF data:
+
+```
+https://www.bioinformatics.nl/~kauts001/ltr/bigslice/paper_data/
+  bigslice_supplementary_data.all.tar.gz  189 GB  all three, don't
+  data/
+    subpfam_sources.zip                   144 GB  HMM training material
+    full_input_data.zip                    28 GB  the input GenBanks
+    full_run_result.zip                    17 GB  <- the GCF data
+    full_run_result/result/data.db         42 GB  <- same, served unpacked
+```
+
+So the real cost is **17 GB**, not 189. The server exposes the unpacked tree,
+so `wget -c .../full_run_result/result/data.db` also works and skips the
+unzip — at the price of verifiability: `MD5SUMS_data.txt` has one checksum
+per zip and none for the files inside. On a transfer this size, take the zip.
+
+**It does not plug in as-is.** `bgcscape ingest bigfam` reads BiG-FAM's *web
+export TSV*; this is a BiG-SLiCE *SQLite database*, and nothing in `engine/`
+reads that. The cheap bridge is an extractor, not a new ingest module —
+`data.db` carries what the existing TSV parser already wants:
+
+```sql
+gcf(id, id_in_run, clustering_id)
+gcf_membership(gcf_id, bgc_id, membership_value, rank)
+bgc(id, dataset_id, name, type, orig_folder, orig_filename, length_nt)
+```
+
+`orig_folder`/`orig_filename` is the `GCF_000156695.2` +
+`NZ_ABYX02000001.region019` pair that `ingest/bigfam.py` already documents
+and splits, so a script emitting the export TSV shape reuses every join, the
+accession normalisation, and the coverage line unchanged.
+
+**Verify one thing before trusting the output.** The ingest drops
+`RADIUS > 900` as putative; `data.db` calls the column `membership_value`.
+Confirm they are the same scale by pulling GCF 200948 both ways — the web
+export for it is already checked in at
+`engine/tests/fixtures/bigfam_gcf_200948_members.tsv` — before mapping one to
+the other.
+
+**And check overlap before spending the bandwidth.** This is BiG-SLiCE 1.0
+output from **July 2020**: 1.2M BGCs over 209,206 genomes *as they existed
+then*. GTDB here is R11-RS232 (April 2026). Long-sequenced cultured producers
+will be present; recent MAGs will not (`GCA_963591685.1` is a 2023 assembly).
+Query the BiG-FAM API for a dozen of this corpus's accessions first — minutes,
+against a 17 GB commitment.
 
 ## Going bigger: full GTDB + antiSMASH + BiG-SCAPE
 
