@@ -5,9 +5,9 @@
 # also what reference managers pick up, so it is the machine-readable half of
 # the /data-sources page.
 #
-# BEFORE SUBMITTING ANYWHERE, resolve the three items marked TODO below and
-# keep them in step with web/src/lib/project-info.ts, which drives the same
-# facts on the site.
+# Keep this in step with web/src/lib/project-info.ts, which drives the same
+# facts on the site. One TODO remains: the Zenodo DOI, which cannot exist
+# until a release is archived.
 
 cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
@@ -38,15 +38,27 @@ keywords:
   - BiG-SCAPE
 
 authors:
-  # Taken from this repository's commit history. Commit authorship is not the
-  # same claim as paper authorship — CONFIRM this list, add any co-authors in
-  # citation order, and fill in the affiliation and ORCID.
   - family-names: "Juyal"
     given-names: "Kartik"
-    # TODO: affiliation — institution or department
-    # affiliation: ""
-    # TODO: ORCID — register free at https://orcid.org and paste the full URL
-    # orcid: "https://orcid.org/0000-0000-0000-0000"
+    orcid: "https://orcid.org/0000-0002-4895-6293"
+    affiliation: >-
+      Chemical Oceanography Division, CSIR-National Institute of Oceanography
+      (CSIR-NIO), Goa, India; Academy of Scientific and Innovative Research
+      (AcSIR)
+    email: "kartik.nio24a@acsir.res.in"
+  - family-names: "Thakur"
+    given-names: "Narsinh L."
+    orcid: "https://orcid.org/0000-0003-3288-5432"
+    # Affiliation inferred from the division named above rather than supplied —
+    # correct it if Narsinh L. Thakur should be listed differently.
+    affiliation: >-
+      Chemical Oceanography Division, CSIR-National Institute of Oceanography
+      (CSIR-NIO), Goa, India
+
+contact:
+  - family-names: "Juyal"
+    given-names: "Kartik"
+    email: "kartik.nio24a@acsir.res.in"
 
 # TODO: once a release is archived on Zenodo, add its DOI here. Enable the
 # repository at https://zenodo.org/account/settings/github/ and then cut a

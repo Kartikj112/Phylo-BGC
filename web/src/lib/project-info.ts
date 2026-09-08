@@ -28,24 +28,40 @@ export const PROJECT = {
   /** Short description, used in the citation and the availability statement. */
   tagline: "Interactive exploration of biosynthetic gene cluster diversity across the tree of life",
 
-  /**
-   * The people the work is attributed to, in citation order.
-   *
-   * Pre-filled from this repository's own commit history, which is evidence
-   * rather than a guess — but authorship on a paper is a stronger claim than
-   * authorship of commits, so CONFIRM this before submitting anywhere, and add
-   * any co-authors.
-   */
-  authors: ["Kartik Juyal"],
+  /** The people the work is attributed to, in citation order. */
+  authors: ["Kartik Juyal", "Narsinh L. Thakur"],
 
   /** Institutional affiliation for the corresponding author. */
-  affiliation: TODO("institution or department, e.g. 'Dept. of Biotechnology, X University'") as Maybe,
+  affiliation:
+    "Chemical Oceanography Division, CSIR-National Institute of Oceanography (CSIR-NIO), Goa, India; " +
+    "Academy of Scientific and Innovative Research (AcSIR)" as Maybe,
 
-  /** Contact for correspondence, data requests, and takedown requests. */
-  contactEmail: TODO("contact email address for correspondence") as Maybe,
+  /**
+   * Contact for correspondence, data requests, and takedown requests.
+   *
+   * The institutional address, not a personal one: it is what verifies the
+   * affiliation above to a reader, and it is the address a journal expects for
+   * correspondence. Worth revisiting if the studentship ends before the tool
+   * stops being maintained — a takedown route that bounces is worse than one
+   * that is slightly less formal.
+   */
+  contactEmail: "kartik.nio24a@acsir.res.in" as Maybe,
 
   /** Where the source lives. */
   repositoryUrl: "https://github.com/Kartikj112/bgc-scape",
+
+  /**
+   * Provenance of the wordmark (`logo.png`, `logo-animation.mp4`).
+   *
+   * Recorded as "created by X using Y" rather than as a bare authorship claim,
+   * because that is what is actually true and it is the form that survives a
+   * question. Naming the generative tool matters for two separate reasons: a
+   * growing number of journals require AI-assisted figures and artwork to be
+   * disclosed at submission, and the tool's own terms are what govern the
+   * output — worth a glance at Google's Gemini terms before the figure appears
+   * in a paper, since that is where any restriction would live.
+   */
+  wordmark: "Created for this project by Kartik Juyal using Google Gemini." as Maybe,
 
   /** Software licence for this project's own code. */
   codeLicense: "MIT",

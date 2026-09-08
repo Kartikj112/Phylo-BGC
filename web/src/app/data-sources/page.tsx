@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Fact, LegalPage, Placeholder } from "@/components/LegalPage";
+import { Fact, LegalPage } from "@/components/LegalPage";
 import { PROJECT, softwareCitation } from "@/lib/project-info";
 
 export const metadata: Metadata = {
@@ -163,15 +163,10 @@ export default function DataSources() {
 
       <h2>5. The Phylo-BGC wordmark</h2>
       <p>
-        The animated and still wordmark on the loading screen and header has no recorded origin or
-        licence in this repository.
-      </p>
-      <p>
-        <Placeholder>
-          confirm who created the wordmark and under what terms &mdash; if a tool generated it, name
-          the tool and check its output-licensing terms. Journals ask about figure permissions, so this
-          is worth settling before submission
-        </Placeholder>
+        The animated and still wordmark on the loading screen and in the header is original to this
+        project. <Fact value={PROJECT.wordmark} /> It is covered by the same{" "}
+        {PROJECT.codeLicense} Licence as the rest of the repository, and is not derived from any
+        third-party mark.
       </p>
 
       <h2>6. Reporting a problem</h2>
