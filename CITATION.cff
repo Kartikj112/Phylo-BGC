@@ -1,0 +1,108 @@
+# Citation File Format — https://citation-file-format.github.io/
+#
+# GitHub reads this file and renders a "Cite this repository" button that emits
+# BibTeX and APA, and Zenodo reads it when minting a DOI for a release. It is
+# also what reference managers pick up, so it is the machine-readable half of
+# the /data-sources page.
+#
+# Keep this in step with web/src/lib/project-info.ts, which drives the same
+# facts on the site. One TODO remains: the Zenodo DOI, which cannot exist
+# until a release is archived.
+
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "Phylo-BGC"
+abstract: >-
+  Phylo-BGC is an exploration and interpretation layer over biosynthetic gene
+  cluster data, connecting organismal phylogeny, BGC repertoire, gene cluster
+  families and known products in one view. It detects no clusters and performs
+  no clustering of its own: it integrates curated MIBiG reference clusters,
+  GTDB and NCBI taxonomy, and the output of antiSMASH and BiG-SCAPE, recording
+  the provenance and evidence level of every stored fact so that absence of
+  evidence is distinguishable from evidence of absence.
+type: software
+license: MIT
+repository-code: "https://github.com/Kartikj112/bgc-scape"
+version: "0.1.0"
+date-released: "2026-09-08"
+
+keywords:
+  - biosynthetic gene clusters
+  - natural products
+  - secondary metabolites
+  - comparative genomics
+  - phylogeny
+  - MIBiG
+  - GTDB
+  - antiSMASH
+  - BiG-SCAPE
+
+authors:
+  - family-names: "Juyal"
+    given-names: "Kartik"
+    orcid: "https://orcid.org/0000-0002-4895-6293"
+    affiliation: >-
+      Chemical Oceanography Division, CSIR-National Institute of Oceanography
+      (CSIR-NIO), Goa, India; Academy of Scientific and Innovative Research
+      (AcSIR)
+    email: "kartik.nio24a@acsir.res.in"
+  - family-names: "Thakur"
+    given-names: "Narsinh L."
+    orcid: "https://orcid.org/0000-0003-3288-5432"
+    # Affiliation inferred from the division named above rather than supplied —
+    # correct it if Narsinh L. Thakur should be listed differently.
+    affiliation: >-
+      Chemical Oceanography Division, CSIR-National Institute of Oceanography
+      (CSIR-NIO), Goa, India
+
+contact:
+  - family-names: "Juyal"
+    given-names: "Kartik"
+    email: "kartik.nio24a@acsir.res.in"
+
+# TODO: once a release is archived on Zenodo, add its DOI here. Enable the
+# repository at https://zenodo.org/account/settings/github/ and then cut a
+# GitHub release; the DOI is minted automatically.
+# identifiers:
+#   - type: doi
+#     value: "10.5281/zenodo.XXXXXXX"
+#     description: "Archived release"
+
+# When a paper or preprint exists, uncomment this block and fill it in. GitHub
+# then shows the paper as the preferred citation and the software entry above
+# as the fallback, which is the convention readers expect.
+# preferred-citation:
+#   type: article
+#   title: ""
+#   authors:
+#     - family-names: "Juyal"
+#       given-names: "Kartik"
+#   journal: ""
+#   year: 2026
+#   doi: ""
+
+references:
+  # The resources Phylo-BGC is built on. These are not optional courtesies:
+  # GTDB's CC BY-SA 4.0 licence requires attribution, and the others request
+  # it. Anyone citing Phylo-BGC should cite the ones their result depends on.
+  - type: database
+    title: "GTDB: Genome Taxonomy Database, release R11-RS232"
+    url: "https://gtdb.ecogenomic.org/"
+    license: CC-BY-SA-4.0
+    notes: "Prokaryote taxonomy backbone and genome metadata."
+  - type: database
+    title: "MIBiG 4.0: Minimum Information about a Biosynthetic Gene cluster"
+    url: "https://mibig.secondarymetabolites.org/"
+    notes: "Curated reference clusters and compound links."
+  - type: database
+    title: "NCBI Taxonomy"
+    url: "https://www.ncbi.nlm.nih.gov/taxonomy"
+    notes: "Eukaryote lineages; GTDB is prokaryote-only."
+  - type: software
+    title: "BiG-SCAPE"
+    url: "https://github.com/medema-group/BiG-SCAPE"
+    notes: "Gene cluster family assignments, version 2.0.3 at cutoff 0.3."
+  - type: software
+    title: "antiSMASH"
+    url: "https://antismash.secondarymetabolites.org/"
+    notes: "Cluster detection; output format parsed, no code vendored."

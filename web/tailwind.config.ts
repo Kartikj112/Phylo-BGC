@@ -15,7 +15,15 @@ const config: Config = {
         card: "#FFFFFF",
         ink: "#1C1E1B",
         "ink-muted": "#5B5F58",
-        "ink-faint": "#9A9D95",
+        // Was #9A9D95, which carried 2.56:1 on `paper` — well under the 4.5:1
+        // WCAG AA needs for body text, and it is used as TEXT in 42 places
+        // (counts, units, rank labels, the caveat lines), most of it at
+        // 10-11px where the large-text allowance does not apply. Darkened
+        // along the same hue and saturation until it passes: 4.81:1 on
+        // `paper`, 5.16:1 on `card`. It sits closer to `ink-muted` than
+        // before, which narrows the hierarchy a little — the alternative was
+        // a tier a portion of readers could not see at all.
+        "ink-faint": "#6C6E68",
         line: "#DEDFDA",
         "line-strong": "#C4C6BF",
         // Oxblood. The interface accent on the light stage — 9.48:1 on

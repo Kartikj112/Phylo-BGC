@@ -63,7 +63,7 @@ export function WelcomeDialog({
           <button
             ref={browseRef}
             onClick={onBrowse}
-            className="group flex flex-col items-start gap-2 rounded border border-chrome-line bg-chrome-soft p-4 text-left transition hover:border-chrome-accent focus:border-chrome-accent focus:outline-none"
+            className="group flex flex-col items-start gap-2 rounded border border-chrome-line bg-chrome-soft p-4 text-left transition hover:border-chrome-accent focus:outline-none focus-visible:border-chrome-accent focus-visible:ring-2 focus-visible:ring-chrome-accent"
           >
             <GitBranch size={20} className="text-chrome-accent" aria-hidden />
             <span className="text-sm font-semibold text-chrome-ink">Browse the tree</span>
@@ -75,7 +75,7 @@ export function WelcomeDialog({
 
           <button
             onClick={onUpload}
-            className="group flex flex-col items-start gap-2 rounded border border-chrome-line bg-chrome-soft p-4 text-left transition hover:border-chrome-accent focus:border-chrome-accent focus:outline-none"
+            className="group flex flex-col items-start gap-2 rounded border border-chrome-line bg-chrome-soft p-4 text-left transition hover:border-chrome-accent focus:outline-none focus-visible:border-chrome-accent focus-visible:ring-2 focus-visible:ring-chrome-accent"
           >
             <FolderUp size={20} className="text-chrome-accent" aria-hidden />
             <span className="text-sm font-semibold text-chrome-ink">

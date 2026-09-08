@@ -15,6 +15,14 @@ dependencies = [
     "alembic>=1.13",
     "typer>=0.12",
     "psycopg[binary]>=3.1",
+    # Parses the untrusted SVG that /api/v1/export accepts. A core
+    # dependency, not part of the `export` extra: the metadata embed and the
+    # `inspect-figure` CLI read SVG on deployments that have no Cairo and
+    # therefore never install that extra, and those paths need the same
+    # entity-expansion guard. cairosvg pulls it in transitively, which is
+    # exactly why it has to be declared here — relying on another package's
+    # dependency for a security control is how the control disappears.
+    "defusedxml>=0.7.1",
 ]
 
 [project.optional-dependencies]

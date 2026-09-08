@@ -40,6 +40,21 @@ ENV BGCSCAPE_DATABASE_URL=sqlite+pysqlite:////app/data/bgcscape.db \
     BGCSCAPE_ENVIRONMENT=production
 RUN mkdir -p /app/data && cp gtdb_mibig_bundled.db /app/data/bgcscape.db
 
+# Drop root.
+#
+# The container ran as root, which is the default and is worth changing here
+# specifically: this image accepts file uploads from anonymous callers and
+# parses them, so the blast radius of a parser bug is the difference between
+# a compromised unprivileged process and a compromised root one.
+#
+# /app/data must be writable by that user, not just readable: uploads write
+# to the SQLite file, and SQLite also needs to create `-wal`/`-journal`
+# siblings in the same DIRECTORY, so chowning the file alone would fail at
+# the first write with a confusing "readonly database".
+RUN useradd --create-home --uid 10001 bgcscape \
+    && chown -R bgcscape:bgcscape /app/data
+USER bgcscape
+
 # Listen on $PORT when the platform provides one (Render sets it; Hugging
 # Face Spaces expects 7860 — set a PORT=7860 Space variable), else 8080.
 EXPOSE 8080

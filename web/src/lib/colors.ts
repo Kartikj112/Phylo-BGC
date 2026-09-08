@@ -15,7 +15,12 @@ export const COLORS = {
   card: "#FFFFFF",
   ink: "#1C1E1B",
   inkMuted: "#5B5F58",
-  inkFaint: "#9A9D95",
+  // Kept in step with tailwind.config.ts's `ink-faint`, which was darkened
+  // from #9A9D95 (2.56:1 on `paper` — below WCAG AA for text). This copy is
+  // the one the SVG canvas draws with: the "+N more" counts, the empty-state
+  // line and the donut's centre label are all text filled with it, and the
+  // unknown-class fallback glyph is a data mark. Both needed the contrast.
+  inkFaint: "#6C6E68",
   line: "#DEDFDA",
   lineStrong: "#C4C6BF",
   /** Oxblood — the interface accent. See tailwind.config.ts for the

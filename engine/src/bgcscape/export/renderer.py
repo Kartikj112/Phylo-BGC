@@ -23,6 +23,8 @@ from __future__ import annotations
 import re
 import xml.etree.ElementTree as ET
 
+from defusedxml.ElementTree import fromstring as _safe_fromstring
+
 from bgcscape.export.view_config import ViewConfig
 
 SVG_NS = "http://www.w3.org/2000/svg"
@@ -55,6 +57,50 @@ class PdfRendererUnavailable(SvgRenderError):
     """
 
 
+#: Largest SVG this module will parse, in bytes.
+#:
+#: /api/v1/export is unauthenticated and takes an SVG document in its body, so
+#: without a ceiling the only limit is the platform's. 12 MB is far above any
+#: real figure — the whole-corpus tree exports well under 2 MB — and low
+#: enough that a parse cannot be used to exhaust the container.
+MAX_SVG_BYTES = 12 * 1024 * 1024
+
+
+def _parse_svg(svg: str) -> ET.Element:
+    """Parse untrusted SVG.
+
+    Two guards, both of which the stdlib parser this replaced would fail.
+
+    **Entity expansion.** `xml.etree.ElementTree.fromstring` honours internal
+    entity declarations, so a "billion laughs" document amplifies enormously:
+    a measured 359-byte payload expanded to 1,000,000 characters in 0.02 s,
+    and each further nesting level multiplies that by ten. defusedxml refuses
+    the declaration outright. This mattered specifically here because the
+    figure arrives from the browser and is parsed *before* cairosvg is
+    reached — cairosvg's own default (`unsafe=False`) already parses through
+    defusedxml and swaps in a fetcher that resolves only `data:` URLs, so the
+    renderer was protected and this pre-pass was not.
+
+    **Size.** Checked before parsing, not after, since the point is to not
+    build the tree at all.
+    """
+    encoded_length = len(svg.encode("utf-8"))
+    if encoded_length > MAX_SVG_BYTES:
+        raise SvgRenderError(
+            f"SVG is {encoded_length // (1024 * 1024)} MB, over the "
+            f"{MAX_SVG_BYTES // (1024 * 1024)} MB limit for a figure."
+        )
+    try:
+        return _safe_fromstring(svg)
+    except ET.ParseError as exc:
+        raise SvgRenderError(f"Input is not parseable SVG: {exc}") from exc
+    except Exception as exc:
+        # defusedxml raises its own EntitiesForbidden / DTDForbidden /
+        # ExternalReferenceForbidden, none of which subclass ParseError.
+        # Reported as bad input (422), which is what it is.
+        raise SvgRenderError(f"SVG rejected for safety: {type(exc).__name__}") from exc
+
+
 def embed_view_config(svg: str, config: ViewConfig) -> str:
     """Return `svg` with `config` embedded in a `<metadata>` block.
 
@@ -65,10 +111,7 @@ def embed_view_config(svg: str, config: ViewConfig) -> str:
     ET.register_namespace("", SVG_NS)
     ET.register_namespace("bgcscape", BGCSCAPE_NS)
 
-    try:
-        root = ET.fromstring(svg)
-    except ET.ParseError as exc:
-        raise SvgRenderError(f"Input is not parseable SVG: {exc}") from exc
+    root = _parse_svg(svg)
 
     if not root.tag.endswith("svg"):
         raise SvgRenderError(f"Root element is <{root.tag}>, expected <svg>")
@@ -94,10 +137,7 @@ def extract_view_config(svg: str) -> ViewConfig | None:
     can be asked what produced it. Returns None if the SVG carries no
     Phylo-BGC config (i.e. it wasn't exported by this tool).
     """
-    try:
-        root = ET.fromstring(svg)
-    except ET.ParseError as exc:
-        raise SvgRenderError(f"Input is not parseable SVG: {exc}") from exc
+    root = _parse_svg(svg)
 
     element = root.find(f"{{{SVG_NS}}}metadata/{{{BGCSCAPE_NS}}}{CONFIG_ELEMENT}")
     if element is None or not element.text:
@@ -115,10 +155,7 @@ def add_provenance_caption(svg: str, config: ViewConfig) -> str:
     other silently crops it, which is the obvious failure mode here.
     """
     ET.register_namespace("", SVG_NS)
-    try:
-        root = ET.fromstring(svg)
-    except ET.ParseError as exc:
-        raise SvgRenderError(f"Input is not parseable SVG: {exc}") from exc
+    root = _parse_svg(svg)
 
     caption_height = 34
     width, height = _svg_dimensions(root)
