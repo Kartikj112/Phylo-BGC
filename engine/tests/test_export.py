@@ -232,3 +232,56 @@ def test_exported_pdf_is_vector_not_rasterized():
     _, pdf = export_figure(SAMPLE_SVG, _config())
     assert b"/Subtype /Image" not in pdf
     assert b"/Subtype/Image" not in pdf
+
+
+# --- hostile SVG: /api/v1/export takes this from anyone --------------------
+
+
+BILLION_LAUGHS = """<?xml version="1.0"?>
+<!DOCTYPE svg [
+ <!ENTITY a "AAAAAAAAAA">
+ <!ENTITY b "&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;">
+ <!ENTITY c "&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;">
+ <!ENTITY d "&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;">
+]>
+<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><text>&d;</text></svg>"""
+
+
+@pytest.mark.parametrize(
+    "render",
+    [
+        lambda svg: embed_view_config(svg, _config()),
+        lambda svg: add_provenance_caption(svg, _config()),
+        extract_view_config,
+    ],
+    ids=["embed", "caption", "extract"],
+)
+def test_entity_expansion_is_refused_on_every_svg_entry_point(render):
+    """A 359-byte document must not become a megabyte in memory.
+
+    Every one of these three parses an SVG that arrived from the browser, and
+    all three ran on the stdlib parser, which honours internal entity
+    declarations. Parametrised rather than written once because the guard has
+    to live in the shared parser — a fix applied to `embed_view_config` alone
+    would leave the other two open, which is how this class of bug returns.
+    """
+    with pytest.raises(SvgRenderError):
+        render(BILLION_LAUGHS)
+
+
+def test_oversized_svg_is_refused_before_parsing():
+    """The size ceiling exists so a hostile body is never built into a tree."""
+    from bgcscape.export.renderer import MAX_SVG_BYTES
+
+    padding = "x" * (MAX_SVG_BYTES + 1)
+    huge = f'<svg xmlns="{SVG_NS}" width="10" height="10"><desc>{padding}</desc></svg>'
+
+    with pytest.raises(SvgRenderError, match="limit"):
+        embed_view_config(huge, _config())
+
+
+def test_a_normal_figure_is_still_well_under_the_ceiling():
+    """Guards the ceiling against being set below real usage."""
+    from bgcscape.export.renderer import MAX_SVG_BYTES
+
+    assert MAX_SVG_BYTES > 4 * 1024 * 1024

@@ -25,6 +25,24 @@ from bgcscape.models import Base, Source, SourceType
 _TEST_DATABASE_URL = os.environ.get("BGCSCAPE_TEST_DATABASE_URL")
 
 
+@pytest.fixture(autouse=True)
+def _clear_rate_limits():
+    """Give every test its own rate-limit allowance.
+
+    The API's limiter is per-process and the suite shares one app, so without
+    this the twenty-first test to touch /api/v1/export or the upload route
+    gets a 429 for the sins of the twenty before it — a failure with nothing
+    to do with what that test asserts, and one that moves when tests are
+    reordered. The limiter itself stays switched ON so the middleware under
+    test is the one that ships; only the counters are reset.
+    """
+    from bgcscape.api.security import reset_rate_limits
+
+    reset_rate_limits()
+    yield
+    reset_rate_limits()
+
+
 @pytest.fixture()
 def engine():
     if _TEST_DATABASE_URL:

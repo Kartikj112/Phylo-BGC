@@ -13,6 +13,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import logging
 import os
 import uuid
 from dataclasses import asdict
@@ -29,6 +30,11 @@ from sqlalchemy.orm import Session, selectinload
 
 from bgcscape import __version__
 from bgcscape.api.flows import build_taxonomy_class_flow
+from bgcscape.api.security import (
+    MaxBodySizeMiddleware,
+    RateLimitMiddleware,
+    SecurityHeadersMiddleware,
+)
 from bgcscape.api.lazy_tree import LazyTreeError, build_lazy_tree
 from bgcscape.api.uploads import (
     get_or_create_upload_source,
@@ -92,6 +98,7 @@ from bgcscape.coverage import (
     genomes_with_bgcs,
     runs_covering,
 )
+from bgcscape.config import get_settings
 from bgcscape.db.session import get_sessionmaker
 from bgcscape.export import (
     ConfigVersionError,
@@ -167,6 +174,29 @@ app = FastAPI(
 _cors_origins = [
     o.strip() for o in os.getenv("BGCSCAPE_CORS_ALLOW_ORIGINS", "*").split(",") if o.strip()
 ] or ["*"]
+
+# Worth being precise about what this does and does not buy, because it is
+# easy to file "CORS is locked down" under security and stop there.
+#
+# CORS is a browser policy. It stops OTHER PAGES reading this API's responses
+# in a visitor's browser; it does not stop anyone calling the API. Every route
+# here is unauthenticated and carries no cookie, so a script, a curl or a
+# server-side request reaches the write endpoint whether or not an origin is
+# allow-listed — there is no credential for a cross-origin page to abuse. The
+# thing that actually limits abuse of the upload route is the rate limiter and
+# the size caps below, plus BGCSCAPE_ALLOW_UPLOADS=0 on a read-only deployment.
+#
+# Setting an explicit origin is still worth doing (it keeps the API off other
+# people's pages, and narrows what a future authenticated route would expose),
+# so a production deployment left wide open says so at startup rather than
+# looking deliberate.
+if "*" in _cors_origins and get_settings().environment == "production":
+    logging.getLogger("bgcscape.api").warning(
+        "BGCSCAPE_CORS_ALLOW_ORIGINS is unset in production, so any origin may read this "
+        "API from a browser. Set it to the frontend's URL. Note this is not what protects "
+        "the upload route — see BGCSCAPE_ALLOW_UPLOADS and the rate limit."
+    )
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
@@ -189,6 +219,14 @@ app.add_middleware(
 # gzip header would cost more than it saves.
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 
+# Ordering note: Starlette applies middleware in reverse registration order,
+# so these run BEFORE gzip and CORS on the way in — which is what we want.
+# A body over the ceiling is refused without being read, and a rate-limited
+# caller is turned away without any work being done for them.
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(RateLimitMiddleware)
+app.add_middleware(MaxBodySizeMiddleware)
+
 
 def get_session() -> Iterator[Session]:
     session = get_sessionmaker()()
@@ -196,6 +234,19 @@ def get_session() -> Iterator[Session]:
         yield session
     finally:
         session.close()
+
+
+@app.get("/robots.txt", include_in_schema=False)
+def robots() -> Response:
+    """Keep the API out of search results.
+
+    The API is on a different origin from the site, so the frontend's
+    robots.txt cannot speak for it. Nothing here is secret — it is the same
+    public data the explorer draws — but the JSON endpoints are not pages,
+    and indexing them puts raw payloads in front of readers looking for the
+    tool. The frontend stays fully crawlable.
+    """
+    return Response("User-agent: *\nDisallow: /\n", media_type="text/plain")
 
 
 @app.get("/api/v1/health")
@@ -945,6 +996,13 @@ _UPLOADS_ENABLED = os.getenv("BGCSCAPE_ALLOW_UPLOADS", "1").strip().lower() not 
 _MAX_UPLOAD_BYTES = int(os.getenv("BGCSCAPE_MAX_UPLOAD_MB", "128")) * 1024 * 1024
 _MAX_UPLOAD_FILES = 25
 
+#: Ceilings on the two free-text form fields. A binomial plus a strain
+#: designation is comfortably inside 200 characters; the label is a short
+#: provenance note. Enforced server-side because the endpoint is reachable
+#: without the browser form that also limits them.
+_MAX_ORGANISM_LENGTH = 200
+_MAX_LABEL_LENGTH = 128
+
 
 def _accession_from_filename(filename: str) -> str:
     """antiSMASH's JSON carries no assembly accession (see
@@ -999,6 +1057,34 @@ async def ingest_antismash_upload(
         raise HTTPException(
             status_code=413,
             detail=f"Too many files: {len(files)} (limit {_MAX_UPLOAD_FILES} per request).",
+        )
+
+    # Server-side validation of the free-text fields.
+    #
+    # The browser caps `organism` at 200 characters, which protects nothing:
+    # the endpoint is reachable without the form. Both fields end up rendered
+    # as a taxon name and a source label, so an unbounded string here becomes
+    # an unbounded string on every other visitor's screen.
+    if organism is not None:
+        organism = organism.strip()
+        if len(organism) > _MAX_ORGANISM_LENGTH:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Organism name is {len(organism)} characters, over the "
+                    f"{_MAX_ORGANISM_LENGTH}-character limit."
+                ),
+            )
+        if "\x00" in organism or any(ch in organism for ch in "\r\n\t"):
+            raise HTTPException(
+                status_code=422,
+                detail="Organism name may not contain control characters or line breaks.",
+            )
+        organism = organism or None
+    if len(label) > _MAX_LABEL_LENGTH:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Label is over the {_MAX_LABEL_LENGTH}-character limit.",
         )
 
     source = get_or_create_upload_source(session, label.strip() or "user upload")

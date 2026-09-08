@@ -128,6 +128,32 @@ Two knobs, both read at import time:
 |---|---|---|
 | `BGCSCAPE_ALLOW_UPLOADS` | `1` | Set to `0` for a read-only public deployment. The route then answers 403 and the dialog shows the reason. |
 | `BGCSCAPE_MAX_UPLOAD_MB` | `128` | Per-file cap. antiSMASH region JSON for one bacterial genome runs to tens of MB. |
+| `BGCSCAPE_WRITE_RATE_LIMIT` | `20` | Requests per window per client, across `/api/v1/ingest/*` and `/api/v1/export`. Reads are never limited. |
+| `BGCSCAPE_RATE_LIMIT_WINDOW` | `300` | Rate-limit window, in seconds. |
+| `BGCSCAPE_MAX_REQUEST_MB` | `160` | Outer ceiling on any request body, refused on `Content-Length` before the body is read. |
+
+**What the rate limiter is and is not.** It is an in-process, in-memory
+counter (`engine/src/bgcscape/api/security.py`). It resets when the container
+restarts, and two containers behind a load balancer each get their own
+allowance. That is a real limit for the single-container deployments above,
+and it is **not** a defence against a distributed flood — that has to be
+handled at the platform or CDN. It exists to stop casual abuse and runaway
+scripts.
+
+**CORS is not what protects this route.** Every endpoint is unauthenticated
+and carries no cookie, so an allow-list only governs what other *pages* may
+read in a browser; a script or a server-side request reaches the upload
+endpoint regardless. Setting `BGCSCAPE_CORS_ALLOW_ORIGINS` is still worth
+doing, but the controls that actually bound abuse are the three above plus
+`BGCSCAPE_ALLOW_UPLOADS=0`. The API logs a warning at startup if it is left
+open in production.
+
+### Frontend environment
+
+| Variable | Needed? | Effect |
+|---|---|---|
+| `NEXT_PUBLIC_API_URL` | yes | The API origin. Also named in the page's `connect-src` CSP directive, so it must be the real origin or every fetch is blocked. |
+| `NEXT_PUBLIC_SITE_URL` | yes in production | The site's own origin, e.g. `https://phylo-bgc.vercel.app`. Without it `og:image` is emitted relative (and dropped by most crawlers, so the share card silently disappears) and `sitemap.xml` advertises `localhost`. On Vercel it falls back to `VERCEL_PROJECT_PRODUCTION_URL`. |
 
 **Uploads do not survive a restart on Render or Hugging Face.** The image
 copies the bundled SQLite file to a container-local path (`/app/data/`), so
