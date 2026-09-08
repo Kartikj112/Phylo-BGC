@@ -1,11 +1,12 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { LegalPage, Placeholder } from "@/components/LegalPage";
+import { Fact, LegalPage, Placeholder } from "@/components/LegalPage";
+import { PROJECT } from "@/lib/project-info";
 
 export const metadata: Metadata = {
   title: "Privacy Policy",
   description:
-    "What Phylo-BGC collects, what it does not, and what happens to files you upload. No cookies, no analytics, no third-party trackers.",
+    "What Phylo-BGC collects, what it does not, and what happens to files you upload. No cookies, no analytics, no third-party trackers, no accounts.",
   alternates: { canonical: "/privacy" },
 };
 
@@ -16,30 +17,24 @@ export default function PrivacyPolicy() {
       updated="2026-09-08"
       summary={
         <>
-          <strong>In short:</strong> Phylo-BGC sets no cookies, runs no analytics, and loads no
-          third-party scripts. It has no accounts and no payments, and it never asks for your name,
-          email address or any other contact detail. The only data you can give it is a scientific
-          file you choose to upload &mdash; and anything you upload becomes{" "}
+          <strong>In short:</strong> Phylo-BGC sets no cookies, runs no analytics and loads no
+          third-party scripts. It has no accounts and never asks for your name, email address or any
+          other contact detail. The only data you can give it is a scientific file you choose to
+          upload &mdash; and anything you upload becomes{" "}
           <strong>visible to every other visitor</strong>. Do not upload unpublished or confidential
           data.
         </>
       }
     >
-      <h2>1. Who is responsible for this service</h2>
+      <h2>1. Who runs this</h2>
       <p>
-        This service is operated by <Placeholder>legal entity name</Placeholder>, of{" "}
-        <Placeholder>registered business address</Placeholder>. For any question about this policy,
-        or about data you have uploaded, contact{" "}
-        <Placeholder>contact email address</Placeholder>.
-      </p>
-      <p>
-        Where data protection law applies to this service, the operator named above is the
-        controller for the processing described below.
+        Phylo-BGC is an academic research tool maintained by {PROJECT.authors.join(", ")} at{" "}
+        <Fact value={PROJECT.affiliation} />. For any question about this policy, or about data you
+        have uploaded, contact <Fact value={PROJECT.contactEmail} />.
       </p>
 
-      <h2>2. What we collect</h2>
-
-      <h3>2.1 Files and details you choose to upload</h3>
+      <h2>2. What is collected</h2>
+      <h3>2.1 Files you choose to upload</h3>
       <p>
         The explorer has exactly one feature that sends anything to the server: the{" "}
         <em>Analyze antiSMASH results</em> upload. If you use it, the following is transmitted and
@@ -52,82 +47,59 @@ export default function PrivacyPolicy() {
           assembly accession of its own;
         </li>
         <li>
-          the <strong>organism name</strong> you type (for example &ldquo;Streptomyces
-          coelicolor&rdquo;), which is required to place the genome on the tree;
+          the <strong>organism name</strong> you type, which is required to place the genome on the
+          tree;
         </li>
-        <li>
-          whether you marked the genomes as <strong>metagenome-assembled (MAGs)</strong>;
-        </li>
-        <li>
-          an optional <strong>BiG-SCAPE clustering TSV</strong>, if you supply one.
-        </li>
+        <li>whether you marked the genomes as <strong>metagenome-assembled (MAGs)</strong>;</li>
+        <li>an optional <strong>BiG-SCAPE clustering TSV</strong>, if you supply one.</li>
       </ul>
       <p>
         These are scientific files about micro-organisms. They are not intended to contain personal
-        data, and we ask you not to include any. If a filename or an organism field happens to
-        contain a person&rsquo;s name, that text is stored and displayed like the rest of the
-        record.
+        data and you are asked not to include any.
       </p>
 
-      <h3>2.2 What we do not collect</h3>
+      <h3>2.2 What is not collected</h3>
       <p>
-        There are no user accounts, no login, no password, no payment, no newsletter, no contact
-        form and no marketing. We do not ask for or store an email address, a postal address, a
-        phone number or a date of birth. There is no advertising and no profiling, and no automated
-        decision-making is performed about you.
+        There are no user accounts, no login, no password, no payment, no newsletter, no contact form
+        and no marketing. No email address, postal address or phone number is requested or stored.
+        There is no advertising, no profiling and no automated decision-making about you.
       </p>
 
-      <h3>2.3 Server and platform logs</h3>
+      <h3>2.3 Server logs</h3>
       <p>
-        Like almost any website, the hosting platforms that serve this site keep operational request
-        logs, which typically include an IP address, a timestamp, the requested URL and a user-agent
-        string. These are generated by the hosting providers rather than by this application&rsquo;s
-        own code. The application itself writes no analytics record of your visit.
-      </p>
-      <p>
-        The specific providers, their log-retention periods and their roles as processors must be
-        confirmed and named here before launch:{" "}
-        <Placeholder>
-          hosting providers actually used (frontend host, API host) and their log-retention periods
-        </Placeholder>
-        .
+        Like almost any website, the hosting platforms serving this site keep operational request
+        logs, typically including an IP address, a timestamp, the requested URL and a user-agent
+        string. These are generated by the hosting providers, not by this application, which writes no
+        analytics record of your visit. Logs are used only to keep the service running.
       </p>
 
-      <h2>3. Uploads are public and shared, not private storage</h2>
+      <h2>3. Uploads are public, not private storage</h2>
       <p>
         This is the most important thing on this page. An upload is <strong>not</strong> a private
-        workspace. It is written into the same shared reference corpus that every other visitor is
-        browsing, and it is immediately visible to them, on the tree and through the public API.
-        There is no per-user separation, because there are no users.
+        workspace. It is written into the same shared corpus every other visitor is browsing and is
+        immediately visible to them, on the tree and through the public API. There is no per-user
+        separation, because there are no users.
       </p>
       <p>
-        Uploads are also <strong>not durable</strong>. On the current hosting configuration the
-        database lives on an ephemeral container filesystem, so uploaded genomes are discarded when
-        the service restarts, redeploys or idles out. Treat the upload feature as a way to try the
-        tool against your own data, never as a place to keep it.
+        Uploads are also <strong>not durable</strong>: the database lives on an ephemeral container
+        filesystem, so uploaded genomes are discarded when the service restarts, redeploys or idles
+        out. Treat the feature as a way to try the tool against your own data, never as a place to
+        keep it.
       </p>
       <p>
         <strong>
-          Do not upload data that is unpublished, embargoed, confidential, commercially sensitive,
-          subject to a material transfer agreement, or that you do not have the right to publish.
+          Do not upload data that is unpublished, embargoed, confidential, or that you do not have the
+          right to publish.
         </strong>
       </p>
 
-      <h2>4. Why we process it, and on what basis</h2>
+      <h2>4. Why it is processed</h2>
       <p>
-        Uploaded files are processed for one purpose only: to parse the biosynthetic gene clusters
-        they describe, place the genome on the taxonomy tree, and display the result back to you and
-        to other visitors. They are not used for any other purpose, are not sold, and are not shared
-        with any third party beyond the hosting providers that run the service.
-      </p>
-      <p>
-        Where the UK/EU GDPR or a comparable regime applies and an upload does contain personal
-        data, the intended lawful basis is your consent, given by the explicit confirmation on the
-        upload form.{" "}
-        <Placeholder>
-          confirm the lawful basis with a qualified lawyer for the jurisdictions you operate in
-        </Placeholder>
-        .
+        Uploaded files are processed for one purpose: to parse the biosynthetic gene clusters they
+        describe, place the genome on the taxonomy tree, and display the result. They are not used for
+        any other purpose, are not sold, and are not shared with anyone beyond the hosting providers
+        that run the service. Uploading is entirely voluntary &mdash; the whole reference corpus is
+        browsable without it.
       </p>
 
       <h2>5. Cookies and tracking</h2>
@@ -139,48 +111,33 @@ export default function PrivacyPolicy() {
         address to a font provider. See the <Link href="/cookies">Cookie Policy</Link> for detail.
       </p>
 
-      <h2>6. Retention</h2>
+      <h2>6. Retention and removal</h2>
       <p>
-        Uploaded records persist only for the life of the running container, as described in section
-        3, and are then destroyed. Hosting-provider request logs are retained according to those
-        providers&rsquo; own schedules, which must be confirmed and stated in section 2.3.
+        Uploaded records persist only for the life of the running container, as described in section 3,
+        and are then destroyed. If you want something removed sooner &mdash; or believe content here
+        infringes your rights &mdash; contact <Fact value={PROJECT.contactEmail} /> with enough detail
+        to identify it and it will be removed.
+      </p>
+      <p>
+        Because the service holds no account and no identifier for you, that contact route is also the
+        practical way to exercise any data-protection right you may have where you live, including
+        access, correction, deletion or objection.
       </p>
 
-      <h2>7. Your rights</h2>
+      <h2>7. Where it is hosted</h2>
       <p>
-        Depending on where you live, you may have rights to access, correct, delete, restrict,
-        object to or port personal data about you, and to complain to a data protection authority.
-        Because this service holds no account and no identifier for you, the practical route to
-        exercising most of these rights is to contact us at{" "}
-        <Placeholder>contact email address</Placeholder> and identify the upload concerned. We will
-        need enough detail to locate the record.
+        The service runs on third-party hosting that may be located outside your country. The specific
+        providers and regions depend on the deployment:{" "}
+        <Placeholder>
+          name the hosting providers and regions once deployed, if your institution or funder requires
+          it to be stated
+        </Placeholder>
+        .
       </p>
 
-      <h2>8. International transfers</h2>
+      <h2>8. Changes</h2>
       <p>
-        The service is hosted on infrastructure that may be located outside your country. The
-        hosting regions and any transfer safeguards must be confirmed before launch:{" "}
-        <Placeholder>hosting regions and transfer mechanism, if any</Placeholder>.
-      </p>
-
-      <h2>9. Children</h2>
-      <p>
-        This is a specialist research tool with no consumer features. It is not directed at children
-        and we do not knowingly collect data from them.
-      </p>
-
-      <h2>10. Security</h2>
-      <p>
-        The site is served over HTTPS, the API applies request size and rate limits, and the upload
-        endpoint accepts only the file types it can parse. No system is perfectly secure, and
-        &mdash; as section 3 makes explicit &mdash; the upload feature is designed to make your data
-        public, not to protect it.
-      </p>
-
-      <h2>11. Changes</h2>
-      <p>
-        If this policy changes, the &ldquo;last updated&rdquo; date at the top of the page changes
-        with it.
+        If this policy changes, the &ldquo;last updated&rdquo; date at the top changes with it.
       </p>
     </LegalPage>
   );

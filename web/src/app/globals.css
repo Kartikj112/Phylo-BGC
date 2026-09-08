@@ -106,6 +106,27 @@ body {
   font-weight: 600;
 }
 
+/* A block meant to be copied out of the page — the software citation and the
+   availability statement. Set in mono at reading size rather than as a quote:
+   these are strings a reader pastes into a manuscript, and the monospace
+   signals "this is the literal text" the way a prose quote would not. */
+.legal-prose .cite-block {
+  margin: 0 0 1rem;
+  padding: 0.9rem 1.1rem;
+  border-left: 3px solid #7b1e2b; /* signal */
+  background: #eeeeea;
+  border-radius: 0 3px 3px 0;
+  font-family: var(--font-plex-mono), ui-monospace, monospace;
+  font-size: 0.8125rem;
+  line-height: 1.65;
+  max-width: 68ch;
+  overflow-wrap: break-word;
+}
+.legal-prose .cite-block code {
+  background: transparent;
+  padding: 0;
+}
+
 /* The app owns the whole viewport and navigates the tree by pan/zoom, so a
    rubber-band bounce at the edges only ever looks like a rendering fault.
    On iOS it also lets a pan that overshoots the canvas start a page scroll

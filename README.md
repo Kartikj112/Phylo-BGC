@@ -76,6 +76,31 @@ npm run e2e                                    # 12 tests
 # schema between tests.)
 ```
 
+## Citing Phylo-BGC
+
+If you use Phylo-BGC in published work, please cite it. Machine-readable
+metadata is in [`CITATION.cff`](CITATION.cff) — GitHub renders a "Cite this
+repository" button from it, and Zenodo reads it when minting a DOI.
+
+**Also cite the resources your result depends on.** Phylo-BGC detects no
+clusters and clusters no sequences; it integrates MIBiG, GTDB, NCBI Taxonomy,
+antiSMASH and BiG-SCAPE. GTDB is CC BY-SA 4.0, which *requires* attribution and
+places ShareAlike conditions on redistributing taxonomy-derived output — worth
+checking against your journal's figure-licensing terms. Per-source licences are
+listed at `/data-sources` on the running site and in
+[`docs/DATA_SOURCES.md`](docs/DATA_SOURCES.md).
+
+**Reproducibility.** Every exported figure embeds a machine-readable record of
+the exact source versions and corpus counts it was drawn from, and the same
+record is served live at `/api/v1/provenance`. The schema requires every stored
+fact to name its source and evidence level, so a figure cannot be produced from
+rows whose provenance is unrecorded.
+
+**Before submitting anywhere**, resolve the `TODO` items in `CITATION.cff` and
+`web/src/lib/project-info.ts` — affiliation, contact email, ORCID and a Zenodo
+DOI. Those two files drive the citation block, the availability statement and
+the policy pages, so filling them completes all of it at once.
+
 ## Status
 
 Phases 1a/1b/1c (data model; MIBiG, GTDB, antiSMASH, BiG-SCAPE ingestion),

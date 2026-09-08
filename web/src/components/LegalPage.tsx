@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { isUnresolved, type Maybe } from "@/lib/project-info";
 
 /**
  * Shared chrome for the policy documents.
@@ -78,12 +79,10 @@ export function LegalPage({
  * A fact this repository cannot supply, marked so it is impossible to ship by
  * accident.
  *
- * Business identity, a contact address and a governing jurisdiction are the
- * three things a policy page cannot be written without and that no amount of
- * reading the code will reveal. Inventing them would produce a document that
- * looks compliant and names the wrong legal person — worse than an obvious
- * gap, because nobody would go looking for it. This renders in the accent
- * colour with a `TODO` marker for the same reason.
+ * Inventing an affiliation or a contact address would produce a document that
+ * looks complete and names the wrong person — worse than an obvious gap,
+ * because nobody would go looking for it. This renders in the accent colour
+ * with a `TODO` marker for the same reason.
  */
 export function Placeholder({ children }: { children: ReactNode }) {
   return (
@@ -94,4 +93,17 @@ export function Placeholder({ children }: { children: ReactNode }) {
       [TODO: {children}]
     </mark>
   );
+}
+
+/**
+ * One field from `project-info.ts`: the value if it is filled in, the visible
+ * marker if it is not.
+ *
+ * Every unresolved fact on this site funnels through here, so the count of
+ * outstanding items is exactly the count of `[data-placeholder]` nodes — which
+ * is what makes "is this ready to publish?" a question a test can answer.
+ */
+export function Fact({ value }: { value: Maybe }) {
+  if (isUnresolved(value)) return <Placeholder>{value.__todo}</Placeholder>;
+  return <>{value}</>;
 }

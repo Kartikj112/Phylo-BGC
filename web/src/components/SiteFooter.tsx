@@ -19,7 +19,12 @@ export function SiteFooter() {
       <nav aria-label="Site information">
         <ul className="flex flex-wrap gap-x-3 gap-y-1 text-[11px]">
           {[
-            { href: "/data-sources", label: "Data sources" },
+            // "Cite" leads, and is worded as the verb rather than as the noun
+            // "Data sources": for an academic tool the first thing a reader
+            // needs from the chrome is how to credit it, and a link labelled
+            // for the action gets clicked by people who would skip a label
+            // that sounds like documentation.
+            { href: "/data-sources", label: "Cite this tool" },
             { href: "/privacy", label: "Privacy" },
             { href: "/terms", label: "Terms" },
             { href: "/cookies", label: "Cookies" },
