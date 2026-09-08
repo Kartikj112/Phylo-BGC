@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import type { ReactNode } from "react";
+import { SITE_URL } from "@/lib/site";
 import "./globals.css";
 
 // Self-hosted (not next/font/google): this sandbox's build environment
@@ -32,9 +33,59 @@ const plexMono = localFont({
   display: "swap",
 });
 
+/**
+ * `metadataBase` is what turns the co-located `opengraph-image.png` into an
+ * absolute URL. Without it Next emits a relative `og:image`, which most
+ * crawlers and chat clients drop silently — the share preview then falls back
+ * to a bare link with no card. See src/lib/site.ts for how the origin resolves.
+ */
 export const metadata: Metadata = {
-  title: "Phylo-BGC",
-  description: "Interactive exploration of biosynthetic diversity across the tree of life.",
+  metadataBase: new URL(SITE_URL),
+  // `template` gives the policy routes "Privacy Policy · Phylo-BGC" from the
+  // one word each of them sets, so no page has to repeat the product name.
+  title: {
+    default: "Phylo-BGC — biosynthetic gene clusters across the tree of life",
+    template: "%s · Phylo-BGC",
+  },
+  description:
+    "Explore biosynthetic gene clusters mapped onto the prokaryote and eukaryote trees of life. Built over MIBiG, GTDB, NCBI Taxonomy, antiSMASH and BiG-SCAPE, with every claim carrying its evidence level.",
+  applicationName: "Phylo-BGC",
+  keywords: [
+    "biosynthetic gene cluster",
+    "BGC",
+    "natural products",
+    "secondary metabolites",
+    "MIBiG",
+    "GTDB",
+    "antiSMASH",
+    "BiG-SCAPE",
+    "phylogeny",
+    "comparative genomics",
+  ],
+  alternates: { canonical: "/" },
+  openGraph: {
+    type: "website",
+    siteName: "Phylo-BGC",
+    title: "Phylo-BGC — biosynthetic gene clusters across the tree of life",
+    description:
+      "An exploration layer over MIBiG, GTDB, antiSMASH and BiG-SCAPE: which clades make what, and where nobody has looked yet.",
+    url: "/",
+    locale: "en",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Phylo-BGC — biosynthetic gene clusters across the tree of life",
+    description:
+      "An exploration layer over MIBiG, GTDB, antiSMASH and BiG-SCAPE: which clades make what, and where nobody has looked yet.",
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: { index: true, follow: true, "max-image-preview": "large" },
+  },
+  // Truthful category for a research instrument; keeps app stores and
+  // readers-mode heuristics from guessing.
+  category: "science",
 };
 
 /**
@@ -60,7 +111,19 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" className={`${plexSans.variable} ${plexMono.variable}`}>
-      <body className="font-sans bg-paper text-ink antialiased">{children}</body>
+      <body className="font-sans bg-paper text-ink antialiased">
+        {/* First thing in the tab order on every route. The explorer puts a
+            search box and two rails of controls ahead of the canvas, so
+            without this a keyboard reader tabs through the entire toolbar
+            before reaching the figure. Visually hidden until focused. */}
+        <a
+          href="#main"
+          className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-[100] focus:rounded focus:bg-chrome focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-chrome-ink focus:outline-none focus:ring-2 focus:ring-chrome-accent"
+        >
+          Skip to main content
+        </a>
+        {children}
+      </body>
     </html>
   );
 }

@@ -7,6 +7,105 @@ body {
   height: 100%;
 }
 
+/* ---------------------------------------------------------------------------
+   Visible focus, everywhere, by default.
+
+   Several controls set `outline-none` to replace the UA ring with a styled
+   one; a few replaced it with only a border-colour change, which is not a
+   reliable focus indicator (WCAG 2.4.7) and disappears entirely against a
+   busy canvas. This gives every focusable element a real ring as the floor,
+   using :focus-visible so a mouse click does not leave one behind. Anything
+   that wants a different ring still overrides it with a focus-visible: class.
+
+   `outline-offset` keeps the ring off the glyph itself, which matters on the
+   SVG canvas where nodes sit hard against each other.
+   ------------------------------------------------------------------------ */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid #7b1e2b; /* `signal`; 9.48:1 on paper */
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* On the near-black chrome the oxblood ring is invisible (1.79:1), so the
+   lifted accent is used there instead — the same substitution the palette
+   already makes for accent TEXT on chrome. */
+:where(.bg-chrome, .bg-chrome-soft, [data-chrome])
+  :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline-color: #ee95a3; /* `chrome-accent`; 8.21:1 on chrome */
+}
+
+/* Respect a reader who asks for less motion. The app's own transitions are
+   short, but the tree's zoom/pan easing and the splash crossfade are not
+   things a vestibular-sensitive reader should be given without asking. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Prose for the policy routes.
+
+   Scoped to `.legal-prose` rather than applied to bare elements: the explorer
+   shares this stylesheet and styles its own headings and lists through
+   utilities, so a global `h2 { … }` would reach into the rails.
+   ------------------------------------------------------------------------ */
+.legal-prose {
+  font-size: 0.9375rem;
+  line-height: 1.7;
+  color: #1c1e1b; /* ink */
+}
+.legal-prose h2 {
+  margin-top: 2.5rem;
+  margin-bottom: 0.75rem;
+  font-size: 1.125rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.legal-prose h3 {
+  margin-top: 1.75rem;
+  margin-bottom: 0.5rem;
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+.legal-prose p {
+  margin-bottom: 1rem;
+  max-width: 68ch;
+}
+.legal-prose ul {
+  margin-bottom: 1rem;
+  max-width: 68ch;
+  padding-left: 1.25rem;
+  list-style: disc;
+}
+.legal-prose li {
+  margin-bottom: 0.5rem;
+  padding-left: 0.25rem;
+}
+.legal-prose a {
+  color: #7b1e2b; /* signal */
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.legal-prose a:hover {
+  text-decoration-thickness: 2px;
+}
+.legal-prose code {
+  font-family: var(--font-plex-mono), ui-monospace, monospace;
+  font-size: 0.875em;
+  background: #eeeeea;
+  border-radius: 3px;
+  padding: 0.1em 0.35em;
+}
+.legal-prose strong {
+  font-weight: 600;
+}
+
 /* The app owns the whole viewport and navigates the tree by pan/zoom, so a
    rubber-band bounce at the edges only ever looks like a rendering fault.
    On iOS it also lets a pan that overshoots the canvas start a page scroll

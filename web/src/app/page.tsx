@@ -21,6 +21,7 @@ import { Header } from "@/components/Header";
 import { AntismashUploadDialog } from "@/components/AntismashUploadDialog";
 import { LoadingOverlay } from "@/components/LoadingOverlay";
 import { LoadingQuestions } from "@/components/LoadingQuestions";
+import { SiteFooter } from "@/components/SiteFooter";
 import { WelcomeDialog } from "@/components/WelcomeDialog";
 import { TreeCanvas } from "@/components/TreeCanvas";
 import { useTaxonomyTree } from "@/hooks/useTaxonomyTree";
@@ -499,6 +500,19 @@ export default function HomePage() {
 
   return (
     <div className="flex h-[100dvh] w-full flex-col overflow-hidden bg-paper">
+      {/* The page's one h1.
+
+          The document had no h1 at all: the wordmark is an <img> and the
+          only headings on screen were the <h2>s inside the two dialogs, so
+          the heading outline started at level 2 and a screen reader landing
+          here was told nothing about what the page IS. It is visually hidden
+          rather than drawn because the wordmark already carries the name in
+          the header — a second rendering of it would be the same word twice,
+          which is the reason the header states for having no text beside the
+          logo. */}
+      <h1 className="sr-only">
+        Phylo-BGC: biosynthetic gene clusters mapped onto the tree of life
+      </h1>
       {/* Driven by `loading`, not by `root`: `loading` is guaranteed to
           settle (the hook clears it in a `finally`, on success and on
           failure alike), so the splash can never outlive a failed fetch and
@@ -805,11 +819,14 @@ export default function HomePage() {
               filteredEverythingOut={filtered?.filteredEverythingOut ?? false}
             />
           </RailSection>
+          <SiteFooter />
           </div>
         </aside>
 
-        <div
-          className={`relative min-w-0 flex-1 p-2 sm:p-4 lg:p-6 ${
+        <main
+          id="main"
+          tabIndex={-1}
+          className={`relative min-w-0 flex-1 p-2 sm:p-4 lg:p-6 focus:outline-none ${
             isTreeView ? "overflow-hidden" : "overflow-auto"
           }`}
         >
@@ -909,7 +926,7 @@ export default function HomePage() {
               alignedGlyphs={alignedGlyphs}
             />
           )}
-        </div>
+        </main>
 
         {/* Right-hand panels. Below `lg` they dock to the bottom as a sheet
             instead of taking a 320px column out of a 375px screen — same
