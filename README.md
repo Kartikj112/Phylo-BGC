@@ -60,14 +60,14 @@ cp .env.local.example .env.local
 npm run dev                              # http://localhost:3000
 
 # Tests
-cd ../engine && pytest -v          # 287 tests (4 skip without Cairo)
-cd ../web && npm test               # 122 tests
+cd ../engine && pytest -v          # 398 tests (4 skip without Cairo)
+cd ../web && npm test               # 190 tests
 
 # Browser-level end-to-end tests (real Chromium). These cover the paths unit
 # tests cannot reach — the export button's download, a real CORS preflight,
 # middle-drag pan, semantic zoom. Both servers must already be running.
 cd ../web && npx playwright install chromium   # once
-npm run e2e                                    # 12 tests
+npm run e2e                                    # 69 tests
 
 # Run the engine suite against real Postgres instead of SQLite:
 #   BGCSCAPE_TEST_DATABASE_URL=postgresql+psycopg://user:pass@localhost:5432/bgcscape_test pytest -v
@@ -96,9 +96,13 @@ record is served live at `/api/v1/provenance`. The schema requires every stored
 fact to name its source and evidence level, so a figure cannot be produced from
 rows whose provenance is unrecorded.
 
-**Before submitting anywhere**, resolve the `TODO` items in `CITATION.cff` and
-`web/src/lib/project-info.ts` — affiliation, contact email, ORCID and a Zenodo
-DOI. Those two files drive the citation block, the availability statement and
+**Before submitting anywhere**, resolve the remaining `TODO` items in
+`CITATION.cff` and `web/src/lib/project-info.ts`. Authors, ORCIDs, affiliation
+and contact are filled in; what is left is a **Zenodo DOI** (cut a GitHub
+release with Zenodo enabled) and a **paper citation** once one exists. Two
+further markers — hosting providers/regions on `/privacy`, and the
+platform-cookie check on `/cookies` — can only be resolved against a live
+domain. Those files drive the citation block, the availability statement and
 the policy pages, so filling them completes all of it at once.
 
 ## Status
@@ -110,6 +114,18 @@ SVG/PDF export with embedded, replayable view configs), and Phase 5 (user
 uploads + BGC prioritization scoring) are complete and tested — **against
 both SQLite and real PostgreSQL 16**.
 
-**All five roadmap phases are now implemented.** See `PROGRESS.md` for
-what remains genuinely unverified, and `ARCHITECTURE.md` for design
-rationale.
+**All five roadmap phases are now implemented**, and a pre-submission pass has
+added the policy pages, accessibility fixes, security controls (rate limits,
+body caps, an XXE fix in the SVG pre-parser, a non-root container) and
+machine-readable citation metadata that a journal submission needs.
+
+The shipped corpus now carries **real sequence families** — 281 of them over
+747 clusters, from a BiG-SCAPE 2.0.3 run — alongside the 279 curated compound
+groups, and the two are never pooled. 1,227 of 2,437 clusters now produce a
+prioritization score; the rest correctly decline, because nothing has compared
+them. No genome in the corpus has been covered by a *cluster-detection* run
+yet, so no absence in it is evidence — ingesting antiSMASH output is the next
+high-value step.
+
+See `PROGRESS.md` for what remains genuinely unverified, and `ARCHITECTURE.md`
+for design rationale.

@@ -277,6 +277,46 @@ Expect the genome panel to read "MAG status not established" for most of a
 GTDB-derived corpus, and "MAGs only" in the filter rail to match only
 genomes something actually asserted.
 
+### Re-grading placements against NCBI's own taxonomy
+
+Migration `e2b6c04f8a13` adds `genome.ncbi_taxonomy_conflict` — **as NULL
+everywhere**, deliberately. The comparison it records needs a column that lives
+in GTDB's metadata TSV and not in this database, so the migration cannot
+establish the answer and does not assert one.
+
+Why it exists: an exact NCBI taxid match used to be graded STRONG with no
+further test. Only one of those two identifiers is derived from the genome —
+GTDB reads the lineage off genome content, while the NCBI taxid is typed in by
+whoever deposited the assembly. When the depositor was wrong, the cluster
+landed in the wrong phylum at the highest confidence the schema can express.
+
+Fill the column and re-grade in one step, against the same metadata file you
+built the corpus from:
+
+```bash
+bgcscape recheck-placements bac120_metadata.tsv.gz   # .gz is read directly
+```
+
+On the shipped bundle this compared **989 genomes, found 6 conflicted, and
+demoted 32 placements from strong to weak**, each with a caveat naming the
+reason. Genomes it could not compare stay NULL and are **not** demoted —
+unknown is not suspicion.
+
+Two things worth knowing before you run it:
+
+- It is **symmetric**. A placement demoted by a conflict is restored if a later
+  GTDB release resolves that conflict. A one-way ratchet would leave a
+  corrected assembly penalised forever, which is the mirror of the bug this
+  fixes.
+- A **GTDB suffix split is not a conflict**. The comparison is at phylum rank
+  only. `Myxococcota` vs `Myxococcota_A` is nomenclatural, and the 41 such
+  cases in the bundle are correctly left alone; genus and species disagreements
+  are routine (GTDB reclassifies 27% of MIBiG's organism labels) and are not
+  flagged either.
+
+`bgcscape placements` afterwards shows the new distribution — on the bundle,
+1,557 strong / 40 moderate / 252 weak.
+
 ### After upgrading: what the tool will now say about your data
 
 Two changes are visible immediately and are *not* faults:
@@ -354,8 +394,9 @@ So an antiSMASH KnownClusterBlast hit (`BGC…`) becomes
 Two different groupings can live in this database at once, and the UI names
 whichever it has rather than calling both "families".
 
-**What ships today — compound groups.** `bgcscape group-by-compound` groups
-clusters that MIBiG records as producing the same named compound: 279 groups
+**What ships today — both kinds.** Alongside the 281 BiG-SCAPE sequence
+families described under "Going bigger" below, `bgcscape group-by-compound`
+groups clusters that MIBiG records as producing the same named compound: 279 groups
 over 576 clusters, 209 of them spanning more than one organism. This is a
 curated experimental link, not a sequence clustering. Groups are labelled
 `CMPD_*` with `clustering_method = "MIBiG shared compound"` and no cutoff, so
@@ -482,9 +523,11 @@ against a 17 GB commitment.
 
 ## Going bigger: full GTDB + antiSMASH + BiG-SCAPE
 
-The bundled dataset ships with **279 compound groups and no sequence
-families** — `bgcscape ingest bigfam` is what adds the latter.
-The distinction matters and is enforced by `BGCFamily.kind`:
+The bundled dataset ships with **279 compound groups and 281 sequence
+families** — the latter from a BiG-SCAPE 2.0.3 run over MIBiG 4.0 at cutoff
+0.3, covering 747 clusters on 505 genomes. `bgcscape ingest bigscape` (a run
+of your own) or `bgcscape ingest bigfam` (BiG-FAM's precomputed families) is
+what adds more. The distinction matters and is enforced by `BGCFamily.kind`:
 
 - a **compound group** (`kind = compound_group`) links clusters that MIBiG
   records as making the same named compound. A curated chemical fact; no
@@ -494,13 +537,24 @@ The distinction matters and is enforced by `BGCFamily.kind`:
   from BiG-FAM's precomputed families (`bgcscape ingest bigfam`, minutes) or
   produced by your own clustering run over antiSMASH output (hours to days).
 
-The family panel is therefore populated, but with compound groups, and the
-UI labels them as such. The prioritization scorer's three similarity
-components (`unclustered`, `family_rarity`, `taxonomic_isolation`) are
-defined over sequence families **only** and treat this corpus as having no
-clustering at all — which is why it declines to score 783 of 2,437 clusters
-here rather than emitting a confident number from a proxy that measures
-something else. See ARCHITECTURE.md, "Two kinds of grouping".
+The family panel shows both kinds and the UI labels each as what it is. The
+prioritization scorer's three similarity components (`unclustered`,
+`family_rarity`, `taxonomic_isolation`) are defined over sequence families
+**only**, and are answerable exactly as far as a recorded clustering run
+reached. On this bundle that is 505 genomes, so:
+
+- 747 clusters score on 4 of 5 components (in a family, on a covered genome),
+- 480 score on 2 of 5 (covered, but in no family — now a finding, not a
+  silence),
+- **1,210 decline entirely** at 1 of 5, below the two-component threshold,
+  because nothing ever compared them.
+
+That refusal is the design: it emits nothing rather than a confident number
+from a proxy that measures something else. `class_rarity_in_clade` remains
+uncomputable for every cluster here, because a *sequence-clustering* run is not
+a *cluster-detection* run — only antiSMASH coverage changes that. See
+ARCHITECTURE.md, "Two kinds of grouping" and "'Same BGC' finally has a sequence
+meaning".
 
 When you have antiSMASH + BiG-SCAPE output:
 

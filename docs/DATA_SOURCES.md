@@ -168,6 +168,28 @@ of this repo.
     join directly. Rows matching nothing at all are still reported as
     `skipped`, distinctly from errors.
 
+- **What the shipped bundle actually contains, as of this pass.** A real run,
+  not a fixture: BiG-SCAPE **2.0.3** over MIBiG 4.0 (2,636 GBKs → 2,631
+  records, Pfam-A, glocal/region, mix weights, **cutoff 0.3**), yielding 282
+  connected components and **281 sequence families over 747 clusters**. The
+  `Source` row is `TOOL_RUN`, licensed as *"AGPL-3.0 (tool); family
+  assignments stored as derived output"* — the AGPL governs BiG-SCAPE itself,
+  not the family labels it emits, and the distinction is worth keeping
+  explicit if a reviewer asks.
+  - The version is recorded as **2.0.3 from the image's own reported version,
+    not the CLI's 2.0.0 default**. It appears on the Source row, the
+    `AnalysisRun`, and every family's `clustering_method`; since a family label
+    is meaningful only within one cutoff *and* one version, a wrong value here
+    is a wrong provenance claim on all 281 rows at once.
+  - The **mix** bin was ingested, not the class bins. MIBiG GenBanks carry no
+    antiSMASH category annotation, so class binning had nothing to bin on and
+    emitted a `Categoryless` bin holding all 2,631 records with the same 282
+    components — a duplicate. A run over real antiSMASH output would make the
+    class bins meaningful.
+  - 55 records were skipped: BGC0003xxx entries present in MIBiG 4.0 that
+    postdate this corpus's MIBiG snapshot. Counted separately from errors,
+    which is the point of that distinction.
+
 ## BiG-SLiCE / BiG-FAM
 
 - **Two names, one dataset.** BiG-FAM 1.0 publishes the Gene Cluster

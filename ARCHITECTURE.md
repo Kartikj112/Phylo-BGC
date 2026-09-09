@@ -1571,6 +1571,13 @@ on any other MIBiG-only corpus. This is the same refusal ARCHITECTURE.md's
 own "MIBiG-only, no groups: 2,437 / 2,437" row always described; the corpus
 was only escaping it by counting curated clusters as a survey.
 
+> **Superseded as a description of the shipped bundle.** The `0 of 2,437` above
+> is what this pass correctly produced *at the time*, on a corpus with no
+> sequence clustering in it. A real BiG-SCAPE run has since been ingested, and
+> 1,227 of 2,437 clusters now score — see "'Same BGC' finally has a sequence
+> meaning" below. The refusal reasoning is unchanged; only the evidence
+> available to it is.
+
 ## Placement is a relation, not a JSON blob
 
 `link-mibig` re-points each MIBiG cluster onto GTDB's genome for the same
@@ -1863,3 +1870,377 @@ cross-origin preflight on the export POST.
 `npm run e2e`, with both servers already running. They are not wired into CI
 yet — that needs a workflow that starts both servers and a database, which is
 its own piece of work.
+
+## The wait may not cost the reader anything
+
+The loading screen said "Loading taxonomy tree…" under a logo. It now rotates
+five questions the tool exists to answer, one every ~4s, each with a
+supporting line. Placement leads and known-vs-unexplored closes.
+
+The constraint is the design. `LoadingQuestions` owns no exit animation, no
+minimum lifetime and no grace period for the question on screen: the parent
+unmounts it the instant the tree is ready, mid-sentence. On a warm API that
+means a flash of question one and nothing else, which is correct — padding a
+load to fit more copy trades the reader's time for our word count.
+
+It lives in **both** loading states. The splash covers the whole screen during
+the first fetch, so questions placed only in `page.tsx` would never be seen
+while the tree actually loads; the in-page state is what a later taxonomy
+switch shows. One component, two grounds — chrome under the logo, paper in the
+stage — and no colour invented for either.
+
+The provenance line beneath is real or absent. It renders only once
+`/api/v1/provenance` answers, and is allowed to lose the race to the tree and
+never appear; a row of zeros would be a claim about the corpus that nothing had
+supported yet. It says "clusters", not "curated clusters", because `bgc_count`
+holds MIBiG entries and antiSMASH predictions both — and the fifth question on
+that same screen promises to keep those apart.
+
+Three faults only running it caught, none visible to the types or the build:
+the group overflowed a 768px-tall laptop and sat ~90px low; the margin that
+fixed that ran the first question through the logo under
+`prefers-reduced-motion`, where the fallback is a landscape still with no blank
+band to reclaim; and the provenance line orphaned a date onto its own row at
+34rem. Reduced motion gets question one, held still — a crossfade is motion.
+
+The rotation is `aria-hidden` with a single `sr-only` status carrying "Loading
+taxonomy tree…", so a screen reader is told the app is working once rather than
+re-read a new sentence every four seconds.
+
+`vitest.config.mts` gained the `@/` alias `tsconfig` already gives the app.
+Vitest does not read tsconfig paths, so before this any test importing a
+component died on that component's own `@/lib/...` imports.
+
+## An exact identifier match can still be the most confident wrong answer
+
+`ingest/link.py` graded an exact NCBI taxid match as STRONG with no further
+test. An identifier had matched an identifier, which looks like the safest join
+available. **Only one of those two identifiers is derived from the genome.**
+GTDB assigns a lineage from genome content; the NCBI taxid is typed in by
+whoever deposited the assembly. When the depositor was wrong, an exact match
+put the cluster in the wrong phylum and stamped it with the highest confidence
+the schema can express.
+
+Auditing the shipped corpus against `bac120_metadata` found 73 clusters whose
+assembly carries two lineages naming different phyla. 41 are GTDB suffix splits
+(`Myxococcota` vs `Myxococcota_A`) and are not errors. The other **32 were
+real, all STRONG, and all trace to five assemblies** — four MAGs plus one
+isolate deposited as *Bacillus subtilis* that is 67.4% GC, where *B. subtilis*
+sits near 43.5%.
+
+`Genome.ncbi_taxonomy_conflict` is tri-state, for the reason `is_mag` became
+tri-state one migration earlier: True means the two lineages disagree at phylum
+rank, False means they were compared and agree, NULL means nobody compared
+them. `ingest gtdb` establishes it from GTDB's own adjacent `ncbi_taxonomy`
+column, so — unlike the `is_mag` case — this loader has genuine grounds for
+what it writes, including None.
+
+An identifier-based placement onto a conflicted assembly is demoted to WEAK
+with a caveat naming the reason. The method is still recorded truthfully; what
+changed is what the match is worth. **NULL is not demoted** — unknown is not
+suspicion, the same rule the coverage model applies to unexamined genomes.
+
+A GTDB suffix split is deliberately not a conflict. The comparison is at phylum
+rank only, where disagreement is never nomenclatural drift. Genus and species
+disagreements are routine — GTDB reclassifies 27% of MIBiG's organism labels —
+and are correctly unflagged.
+
+`bgcscape recheck-placements <bac120_metadata.tsv[.gz]>` backfills the column
+and re-grades an existing database; re-running the whole ingest would work and
+is far more than the job needs. It is **symmetric**: a placement demoted by a
+conflict is restored if a later GTDB release resolves it, because a one-way
+ratchet would leave a corrected assembly penalised forever — the mirror of the
+original bug.
+
+The migration adds the column as NULL everywhere rather than False. The
+comparison needs a column that lives in the metadata TSV and not in this
+database, so nothing here can establish the answer and nothing here asserts
+one.
+
+`read_gtdb_metadata_tsv` now reads `.tsv.gz` directly — that is how GTDB ships
+these files, and `bac120_metadata` is ~2 GB expanded.
+
+## "Same BGC" finally has a sequence meaning
+
+`bgc_family` held 279 `compound_group` rows and **zero** `sequence_family`.
+Every "these two clusters are the same" this database could express traced back
+to MIBiG recording the same named compound — a curated chemical fact, never a
+sequence comparison. `ingest/bigscape.py` and `ingest/bigfam.py` were both
+implemented and tested against real output formats; neither had ever been run
+against anything.
+
+A BiG-SCAPE 2.0.3 run over MIBiG 4.0 (2,636 GBKs, 2,631 records, Pfam-A,
+glocal/region, mix weights, cutoff 0.3) supplies one:
+
+    3,459,765 edges -> 282 connected components
+    802 records in 289 families at c0.3
+    ingest: created=747, updated=0, skipped=55
+
+The 55 skips are BGC0003xxx entries in MIBiG 4.0 that postdate this corpus's
+MIBiG snapshot — the expected-not-an-error case the ingest counts separately.
+93% of the clustering joined on `external_ref` with no transformation, exactly
+as the module docstring predicted.
+
+**The `AnalysisRun` matters as much as the families.** It records
+SEQUENCE_CLUSTERING over the 505 genomes the run actually reached, so "this
+cluster is in no family" now means "nothing similar was found" for those
+genomes and still means nothing at all for the other 1,037. Without it the
+ingest would have made every unclustered cluster in the corpus read as a
+similarity claim about a comparison that never happened.
+
+Two downstream paths were dead for want of this data, not for want of code.
+`/api/v1/prioritization` could compute none of its five components;
+`family_rarity` and `taxonomic_isolation` now resolve over 1,227 clusters on
+505 genomes. `api/comparison.py`'s "two clades sharing a SEQUENCE_FAMILY share
+gene content" had no sequence family to share. `class_rarity_in_clade` is still
+uncomputable and still says so — that needs a recorded *cluster-detection* run,
+which is the antiSMASH half of this pair.
+
+The families are not merely non-empty, they are coherent. FAM_00016, the
+largest at 27 members, is polyketide-containing throughout — 22 `pks` plus 5
+saccharide hybrids (`pks+saccharide`, one of them `other+pks+saccharide`) — and
+not a mixed bag. Across the 264 multi-member families, 111 have all members inside
+a single curated compound group and 30 span several. **The remaining 123 have
+no member in any compound group at all**: sequence-coherent families curation
+never named, which is the case for ingesting this that the compound groups
+could not make.
+
+The mix bin was ingested, not the class bins. The run also emitted a
+`Categoryless` bin holding all 2,631 records and the same 282 components —
+MIBiG GenBanks carry no antiSMASH category annotation, so class binning had
+nothing to bin on and produced a duplicate. Nothing is lost by taking mix; a
+run over antiSMASH output would make that bin real.
+
+Recorded as 2.0.3 against the image's own reported version, not the CLI's
+2.0.0 default. The version is on the Source row, the AnalysisRun, and each
+family's `clustering_method`, and a family label is meaningful only within one
+cutoff — so a wrong version here is a wrong provenance claim on all 281.
+
+## A big number can hide a small one
+
+DEPLOY.md told anyone looking for BiG-FAM's families that the bulk download is
+a 189 GB tarball and pointed them back at per-GCF web exports. The number was
+real and the conclusion was wrong: it is three components, and two are not GCF
+data.
+
+    subpfam_sources     144 GB   HMM training material
+    full_input_data      28 GB   the input GenBanks
+    full_run_result      17 GB   the families
+
+Walking the paper-data index down to `data/full_run_result/result/data.db` puts
+the real cost at 17 GB. Recorded with the three things that decide whether it is
+worth paying: it does not plug in (`ingest bigfam` reads BiG-FAM's web export
+TSV, and this is a BiG-SLiCE SQLite — but `bgc.orig_folder`/`orig_filename`
+carries the assembly+region pair the ingest already splits, so the bridge is a
+script, not a second ingest module); the snapshot is July 2020 against GTDB
+R11-RS232 from April 2026, so coverage must be measured before the download,
+not assumed after it; and whether `membership_value` is on the same scale as the
+web export's RADIUS is **unverified**, which is load-bearing because the ingest
+thresholds RADIUS at 900.
+
+## The policies were written for the wrong kind of site
+
+The first production-readiness pass wrote the policy pages for a commercial
+website, because that is what the audit checklist described. This is not one.
+Company registration numbers, VAT numbers, consumer-law liability clauses and a
+choice-of-forum clause are all wrong on a research tool heading for a journal —
+they invite a reader to believe a legal entity stands behind this that does
+not, and they were nineteen fields of friction in front of a submission.
+
+Terms & Conditions became Terms of Use and lost the commercial half entirely.
+What replaces it is what an academic tool actually needs to say: use it freely,
+build on it, cite it. The disclaimer stays, because "as is, no warranty" is
+what the MIT licence the code already ships under says, now applied to the
+hosted instance too. So does the section on what the output claims — the
+prioritisation score is an ordinal ranking aid and not a novelty claim, absence
+is evidence only where a run was recorded — because misreading that is how this
+tool could contribute to a wrong result, which is a scientific risk rather than
+a legal one.
+
+**Every unresolved fact lives in one file.** `web/src/lib/project-info.ts`
+holds affiliation, contact, DOI and citation; a value left as `TODO()` renders
+in the page body as a visible oxblood marker rather than as blank space or an
+invented fact. Filling that file completes the policy pages, the citation block
+and the availability statement together, so nothing can be updated in one place
+and missed in another. Nineteen scattered placeholders became seven distinct
+facts.
+
+Ten tests cover the placeholder mechanism itself, including the two failures
+that would be worst to ship: a `TODO` stringifying to `[object Object]` in the
+middle of a policy page, and an empty string being mistaken for one. Both look
+like finished copy at a glance.
+
+Citation is first-class because it is what actually protects this work.
+`CITATION.cff` gives GitHub its "Cite this repository" button and gives Zenodo
+something to read when minting a DOI; the site carries the same citation in
+copyable form, and the rail footer links it as "Cite this tool" rather than
+"Data sources" — the verb gets clicked by people who skip a label that sounds
+like documentation. GTDB's CC BY-SA 4.0 is called out three times — policy
+page, README, CITATION.cff — because it is the one licence in the chain that
+constrains what the *author* may do, not just what a user may do.
+
+## A front door that states its terms
+
+The explorer shipped as a single route with no policy pages, no favicon, no
+share card, no sitemap, no 404, and no `h1`.
+
+The privacy story is genuinely clean and it is worth recording *why* rather
+than only *that*: no cookies, no localStorage, no analytics, no tag manager, no
+pixel, no embeds, and fonts self-hosted rather than pulled from a CDN — checked
+by grep across `src/` and `e2e/`, not assumed. So the Cookie Policy says there
+are none and explains that this is why no consent banner appears; a banner on a
+site that sets nothing would train readers to dismiss the ones that matter.
+
+**The upload form collected personal data with no notice.** It takes files and
+an organism name and writes them into the SHARED corpus every other visitor
+browses, served back out through a public API — a publication, not a private
+analysis, and the form never said so. It now leads with that and requires an
+unticked consent box. Unticked because consent has to be an act.
+
+**The same form could not be used without a mouse.** The drop zone was a `<div
+onClick>` wrapping a `display:none` file input — a div has no role, no tab stop
+and no keyboard activation, and a `display:none` input is not focusable, so
+between them there was no way to choose a file from the keyboard at all. It is
+a real `<button>` now, with the input moved out and kept `sr-only`. Focus moves
+in on open and back out on close, Tab is trapped, the organism field carries
+`aria-required`/`invalid`/`describedby`, and errors are announced through
+`role="alert"`. The submit button is no longer disabled when the form is
+incomplete — a disabled control announces nothing and gives a reader no way to
+learn why it will not respond.
+
+`ink-faint` carried **2.56:1** on paper against WCAG AA's 4.5:1, and the token
+is used as *text* in 42 places, most at 10–11px where the large-text allowance
+does not apply. Darkened along the same hue to `#6C6E68`: 4.81:1 on paper,
+5.16:1 on card. Changed in `colors.ts` too, because the SVG canvas draws the
+"+N more" counts, the empty-state line and the donut's centre label in that
+copy. The hierarchy is flatter; the alternative was a tier some readers cannot
+see.
+
+The document had no `h1`. The wordmark is an `<img>` and the only headings were
+the `<h2>`s inside two dialogs, so the outline started at level 2 and a screen
+reader landing on the page was told nothing about what it is. Added `sr-only`;
+the canvas region became `<main id="main">`, which is the skip link's target.
+Global `:focus-visible` rings, because several controls set `outline-none` and
+replaced it with a border-colour change; on the near-black chrome the oxblood
+ring is invisible at 1.79:1, so the lifted accent is substituted there.
+
+The favicon is **drawn, not cropped**. The wordmark is a 710x218 landscape
+lockup and reducing it to 16px produced mud. Each `.ico` tier is drawn at its
+own size with detail as a function of size — two tips and no ticks at 16, three
+at 32, four at 48/64 — so nothing is a downscale of a denser drawing. Frames
+are RGBA because Next's ICO decoder rejects RGB ones, which is a build error
+rather than a bad render.
+
+`NEXT_PUBLIC_SITE_URL` is new and load-bearing. Without it `metadataBase` falls
+back to localhost, which makes `og:image` relative — dropped by most crawlers,
+so the share card silently vanishes — and puts localhost in `sitemap.xml`.
+
+## A quarter of the logo was unused alpha
+
+`logo.png` was a 148 KB RGBA file whose alpha channel is fully opaque at every
+pixel, fetched on every page load and displayed at a height of 22–26px.
+Dropped to RGB and quantised to 256 colours: 93,537 bytes, **37% smaller**; the
+Open Graph card went 147 KB to 96 KB.
+
+Quantisation was measured before it was applied. RMSE against the original is
+1.27 on a 0–255 scale, compared at 2x on the crop that could actually band —
+the gene arrows, the only gradients in the mark — alongside the letterform
+anti-aliasing. 64 and 128 colours were cheaper (75 KB / 84 KB) and were **not**
+taken: they cross into RMSE 4.07 and 2.55 on artwork whose whole job is to be
+the brand.
+
+## The renderer was never the hole
+
+The write half of this API is unauthenticated by design and had no ceiling on
+anything: no rate limit, no request-body cap, no security headers, and a
+container running as root.
+
+The correction is the interesting part. `/api/v1/export` renders caller-supplied
+SVG through cairosvg, which reads as an SSRF and local-file-read vector.
+Reading cairosvg's own source rather than trusting the shape of the API: with
+the default `unsafe=False` it parses through defusedxml with `forbid_entities`
+and `forbid_external` set, and substitutes `url.safe_fetch`, which resolves only
+`data:` URLs and returns a blank 1x1 SVG for everything else. No SSRF, no file
+read, no XXE.
+
+**The hole was one layer earlier, in our own code.** `embed_view_config`,
+`add_provenance_caption` and `extract_view_config` each parsed the untrusted SVG
+with stdlib `xml.etree` *before* cairosvg saw it, and stdlib honours internal
+entity declarations. Measured, not asserted: a 359-byte billion-laughs document
+expands to 1,000,000 characters in 0.02s, and each further nesting level
+multiplies by ten. All three now share one `_parse_svg` that goes through
+defusedxml and checks size before building a tree, parametrised over all three
+entry points — because a fix applied to one would have left the other two open,
+which is how this class of bug comes back.
+
+`defusedxml` is a **core** dependency, not part of the `export` extra.
+`inspect-figure` and the metadata embed read SVG on deployments that have no
+Cairo and never install that extra. Depending on another package's transitive
+dependency for a security control is how the control quietly disappears.
+
+Rate limiting states its limits and its honest scope: 20 requests per 5 minutes
+per client over `/api/v1/ingest` and `/api/v1/export`; reads are untouched
+because the tree *is* the product. It is an in-process counter — it resets on
+restart and two containers each get their own allowance. That is honest for one
+free-tier container and it is not a defence against a distributed flood, which
+belongs upstream. Saying so in the module docstring matters more than the code
+does. **It is kept on in tests**: the suite exposed the trade immediately — four
+upload tests failed in the full run and passed alone, because the twenty-first
+request in a shared process is a 429 regardless of which test makes it. An
+autouse fixture clears the counters between tests instead of disabling the
+middleware, so what ships is what is exercised.
+
+CORS is documented as *not* being the control it looks like. Every route is
+unauthenticated and cookieless, so an origin allow-list governs what other pages
+may READ in a browser and stops nothing else; a curl reaches the upload endpoint
+either way. The things that actually bound abuse are the rate limit, the size
+caps and `BGCSCAPE_ALLOW_UPLOADS=0`.
+
+**The frontend CSP was written strict, tested, and loosened on evidence.**
+`script-src 'self'` built fine and broke the app: every route threw React error
+#412 with two violations per page, because Next's App Router ships hydration
+state in inline scripts. The supported fix is a per-request nonce, which Next's
+own docs say requires dynamic rendering — trading static delivery of all eleven
+routes for a server invocation per request. Against an app that renders no
+user-supplied HTML anywhere (no `dangerouslySetInnerHTML`, no `innerHTML`
+outside a test, no `eval`, no d3 `.html()`), `'unsafe-inline'` is the better
+trade, and the reasoning is in the config so the next reader sees a decision
+rather than a default. The directives still doing work are `object-src 'none'`,
+`base-uri 'self'`, `form-action 'self'` and a `connect-src` naming exactly one
+API origin.
+
+The container drops to an unprivileged user (uid 10001). It parses anonymous
+uploads, so the blast radius of a parser bug should not include root. `/app/data`
+is chowned as a **directory**, not just the file — SQLite creates `-wal` and
+`-journal` siblings, and chowning the database alone fails at the first write
+with a misleading "readonly database".
+
+Server-side validation on the two free-text fields: the browser capped organism
+at 200 characters, which protects nothing when the endpoint is reachable without
+the form, and both fields are rendered back to every visitor.
+
+## Authorship is a claim, and the file says which kind
+
+`project-info.ts` and `CITATION.cff` agree on the authors, affiliation, contact
+and wordmark provenance, which is the point of having put them in one place.
+
+Two authors, both with ORCIDs, and both ORCIDs **verified rather than pasted** —
+the identifier carries an ISO 7064 MOD 11-2 check digit, so a transposed pair is
+catchable before it reaches a manuscript. The second author's affiliation is
+recorded as INFERRED from the division named for the first author, at the line
+where it matters: it is the kind of detail that is obviously right or obviously
+wrong to the person concerned and invisible to everyone else, so it is better
+recorded as an assumption than as a fact. The correspondence address is the
+institutional one — it is what verifies the affiliation to a reader, and a
+commercial address has no place on an academic tool.
+
+The wordmark is recorded as "created for this project by Kartik Juyal using
+Google Gemini", which is what is true and is the form that survives being
+questioned. Naming the generating tool is not a hedge: a growing number of
+journals require AI-assisted artwork to be disclosed at submission, and the
+tool's own terms are what govern the output.
+
+Four facts remain unresolved and all four are deferred by construction, not
+overlooked: the Zenodo DOI cannot exist until a release is archived, the paper
+citation until one is published, and the hosting regions and platform-cookie
+check until there is a live domain to check them on.
