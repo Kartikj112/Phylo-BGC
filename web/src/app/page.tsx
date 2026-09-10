@@ -25,7 +25,7 @@ import { SiteFooter } from "@/components/SiteFooter";
 import { WelcomeDialog } from "@/components/WelcomeDialog";
 import { TreeCanvas } from "@/components/TreeCanvas";
 import { useTaxonomyTree } from "@/hooks/useTaxonomyTree";
-import { fetchBgcClasses, search } from "@/lib/api-client";
+import { fetchBgcClasses, search, invalidateApiCache } from "@/lib/api-client";
 import type { BGCFamilySummary, TaxonTreeNode } from "@/lib/api-types";
 import { CLASS_ORDER } from "@/lib/colors";
 import {
@@ -287,6 +287,10 @@ export default function HomePage() {
    * a match and frames the result, which is exactly "take me to my genome"
    * and is code that is already proven rather than a second focus path. */
   function handleIngested(accessions: string[], familyIds: string[]): void {
+    // Before reloadTree(), not after: the cache would otherwise hand the
+    // reload the pre-upload corpus it just cached, and the refetch would
+    // faithfully redraw the tree without the genome that was just added.
+    invalidateApiCache();
     reloadTree();
     if (accessions.length === 0) return;
     setUploaded({ accessions, familyIds });

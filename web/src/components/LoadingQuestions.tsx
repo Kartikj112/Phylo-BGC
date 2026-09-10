@@ -61,6 +61,10 @@ const QUESTIONS: readonly Question[] = [
 /** How long each question holds before the next one starts crossing in. */
 const HOLD_MS = 4000;
 
+/** How long a load has to run before it is worth explaining. Comfortably
+ *  longer than a warm response, comfortably shorter than a cold boot. */
+const SLOW_AFTER_MS = 6_000;
+
 /**
  * Which ground this is sitting on. The splash is the dark chrome; the
  * in-page loading state (a taxonomy switch, once the splash is gone) is
@@ -74,6 +78,21 @@ export function LoadingQuestions({ tone = "paper" }: { tone?: LoadingQuestionsTo
   // The effect corrects it well inside the first question's hold.
   const [reduceMotion, setReduceMotion] = useState(false);
   const [provenance, setProvenance] = useState<DatasetProvenanceResponse | null>(null);
+  const [slow, setSlow] = useState(false);
+
+  /* The wait has two quite different causes and the reader cannot tell them
+     apart. A warm API answers in a few hundred milliseconds; a cold one has
+     to boot a container first, and the deployed API is on a free tier that
+     spins down after ~15 minutes idle. Measured against the live deployment,
+     that cold path took over two minutes — during which this screen said
+     exactly what it says at 300ms, so the honest reading was "it is broken".
+
+     The threshold matters: below it nothing appears, so a warm load is never
+     given a paragraph explaining a delay it did not have. */
+  useEffect(() => {
+    const timer = setTimeout(() => setSlow(true), SLOW_AFTER_MS);
+    return () => clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -159,6 +178,21 @@ export function LoadingQuestions({ tone = "paper" }: { tone?: LoadingQuestionsTo
           actually answered — this is never a skeleton. */}
       {provenanceLine && (
         <p className={`mt-10 text-xs leading-relaxed ${provenanceColor}`}>{provenanceLine}</p>
+      )}
+
+      {/* Announced, unlike the rotating questions: this one IS an
+          instruction — it tells a reader who is about to give up that
+          waiting is the right thing to do. */}
+      {slow && (
+        <p
+          role="status"
+          aria-live="polite"
+          className={`mt-4 max-w-[34rem] text-xs leading-relaxed ${provenanceColor}`}
+        >
+          Still loading. The API sleeps when nobody is using it, so the first
+          visit after a quiet spell has to wake it up — this can take a minute.
+          Nothing is wrong, and it is quick from here on.
+        </p>
       )}
 
       <span role="status" aria-live="polite" className="sr-only">

@@ -1,8 +1,26 @@
 /**
  * Thin typed fetch wrapper over the engine's read-only API
- * (engine/src/bgcscape/api/app.py). No caching/retry layer yet —
- * deliberately minimal until there's a real usage pattern to design
- * around, per the "avoid overengineering" principle.
+ * (engine/src/bgcscape/api/app.py).
+ *
+ * GETs are de-duplicated and briefly cached. This used to say there was no
+ * caching layer "until there's a real usage pattern to design around" —
+ * there is one now, measured against the deployed API rather than guessed
+ * at. Two pairs of identical requests went out on every cold load:
+ * `/provenance?scope=all` from both LoadingQuestions and ExportButton, and
+ * `/bgc-type-counts` from both CorpusStatsBar and BgcTypeDonut. Independent
+ * components asking the same question is the correct shape for those
+ * components; asking it twice over the wire is not, and on a free-tier
+ * backend that cold-starts in minutes each duplicate is a wasted minute.
+ *
+ * Two mechanisms, because they solve different halves:
+ *
+ * - In-flight de-duplication joins callers onto one request. This cannot
+ *   serve stale data: there is exactly one response and everyone gets it.
+ * - A short TTL cache makes going back to a tab already visited instant
+ *   rather than another round trip.
+ *
+ * The corpus only changes when an upload adds to it, so that is the one
+ * place that must invalidate — see `invalidateApiCache`.
  */
 import type {
   AntismashUploadResponse,
@@ -42,12 +60,47 @@ function getBaseUrl(): string {
   return url;
 }
 
+/** How long a GET stays reusable. Short enough that a corpus changed by
+ *  someone else shows up on the next navigation, long enough to cover a
+ *  reader switching tabs back and forth while reading. */
+const CACHE_TTL_MS = 60_000;
+
+const inflight = new Map<string, Promise<unknown>>();
+const cache = new Map<string, { at: number; value: unknown }>();
+
+/** Drop every cached GET. Call after a write — an upload adds genomes, and
+ *  serving the pre-upload corpus back to the page that just uploaded them
+ *  is the stale-render failure `handleIngested` exists to avoid. */
+export function invalidateApiCache(): void {
+  cache.clear();
+  inflight.clear();
+}
+
 async function getJson<T>(path: string): Promise<T> {
-  const res = await fetch(`${getBaseUrl()}${path}`);
-  if (!res.ok) {
-    throw new ApiError(res.status, `${path} responded ${res.status}`);
+  const hit = cache.get(path);
+  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.value as T;
+
+  const pending = inflight.get(path);
+  if (pending) return pending as Promise<T>;
+
+  const request = (async () => {
+    const res = await fetch(`${getBaseUrl()}${path}`);
+    if (!res.ok) {
+      throw new ApiError(res.status, `${path} responded ${res.status}`);
+    }
+    const value = (await res.json()) as T;
+    cache.set(path, { at: Date.now(), value });
+    return value;
+  })();
+
+  inflight.set(path, request);
+  try {
+    return await request;
+  } finally {
+    // Cleared whether it resolved or threw. Leaving a rejected promise here
+    // would make one failed request permanent for every later caller.
+    inflight.delete(path);
   }
-  return res.json() as Promise<T>;
 }
 
 /** POST a FormData body. Never sets Content-Type by hand — the browser has
