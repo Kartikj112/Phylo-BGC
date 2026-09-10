@@ -31,6 +31,7 @@ import {
   nodeVisibleClasses,
   computeLabelSeparations,
   selectLabels,
+  emptyCladeReading,
   rankAbbreviation,
   subtreeBgcCount,
   type FamilyMembershipSets,
@@ -1602,6 +1603,11 @@ function CladeGlyph({
   onToggleCollapse: () => void;
 }) {
   const summary = cladeSummary(node);
+  /* Three-way, not two. A clade with SOME genomes examined and no clusters
+     is neither a finding nor a blank: reporting it as "examined and none
+     found" claims a survey of genomes nobody surveyed, which is the same
+     overclaim coverage.py exists to prevent, one level up the tree. */
+  const reading = summary.bgcCount === 0 ? emptyCladeReading(summary) : null;
   const width = glyphWidth(summary.genomeCount, maxGenomeCount);
   const height = 13;
   const start = trackOffset > 0 ? trackOffset : 6;
@@ -1643,10 +1649,13 @@ function CladeGlyph({
         {/* The sentence that makes an empty glyph readable. Without it a
             clade nobody has examined and a clade examined and found empty
             were the same outlined rectangle. */}
-        {summary.bgcCount === 0 &&
-          (summary.examinedGenomeCount === 0
-            ? " — no genome here has been examined for clusters; this is not a finding that it produces none"
-            : " — examined and none found")}
+        {reading === "unexamined" &&
+          " — no genome here has been examined for clusters; this is not a finding that it produces none"}
+        {reading === "partly-examined" &&
+          ` — none found in the ${summary.examinedGenomeCount} examined; the remaining ${
+            summary.genomeCount - summary.examinedGenomeCount
+          } have not been looked at`}
+        {reading === "examined-empty" && " — examined and none found"}
       </title>
 
       {summary.bgcCount === 0 ? (
@@ -1656,16 +1665,27 @@ function CladeGlyph({
            absence a hue would put it in the same visual vocabulary as a
            finding. */
         <>
-          {summary.examinedGenomeCount === 0 && (
-            <rect
-              x={x}
-              y={-height / 2}
-              width={width}
-              height={height}
-              fill="url(#unexamined-hatch)"
-              stroke="none"
-            />
-          )}
+          {reading !== "examined-empty" &&
+            (() => {
+              /* Hatch the UNEXAMINED fraction, not the whole bar. The bar's
+                 width already encodes genome count, so hatching the share
+                 nobody has looked at states the gap at its real size: a
+                 fully unexamined clade hatches end to end, and one with two
+                 of forty examined hatches almost all of itself. */
+              const unexamined = summary.genomeCount - summary.examinedGenomeCount;
+              const frac = summary.genomeCount > 0 ? unexamined / summary.genomeCount : 1;
+              const hatchWidth = Math.max(1, frac * width);
+              return (
+                <rect
+                  x={x + width - hatchWidth}
+                  y={-height / 2}
+                  width={hatchWidth}
+                  height={height}
+                  fill="url(#unexamined-hatch)"
+                  stroke="none"
+                />
+              );
+            })()}
           <rect
             x={x}
             y={-height / 2}
@@ -1674,7 +1694,10 @@ function CladeGlyph({
             fill="none"
             stroke={COLORS.lineStrong}
             strokeWidth={1}
-            strokeDasharray={summary.examinedGenomeCount === 0 ? "2 2" : undefined}
+            /* Dashed only when nothing at all was examined. A partly
+               examined clade has a real result in it, so it keeps a solid
+               outline and says the rest with the hatch. */
+            strokeDasharray={reading === "unexamined" ? "2 2" : undefined}
             rx={2}
           />
         </>

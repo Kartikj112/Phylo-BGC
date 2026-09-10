@@ -10,7 +10,8 @@ import {
   computeRadialTreeLayout,
   estimateLabelWidth,
   hasRoomForLabel,
-  placeRectangularLabels,
+  computeLabelSeparations,
+  selectLabels,
   BGC_SIZE_TIERS,
   isAnchorRank,
   isHighRank,
@@ -66,6 +67,22 @@ import {
   toDisplayChildren,
   toRootDisplayNode,
 } from "./tree-logic";
+
+/** What TreeCanvas actually does: separations once (they do not depend on
+ *  zoom), threshold per frame. Composed here rather than imported, because
+ *  the wrapper that used to do it shipped to nobody — testing it tested a
+ *  code path the app never took. */
+function placeLabels(
+  nodes: Parameters<typeof computeLabelSeparations>[0],
+  zoomScale: number,
+  options: Parameters<typeof computeLabelSeparations>[1] & { minSeparationPx?: number } = {},
+) {
+  return selectLabels(
+    computeLabelSeparations(nodes, options),
+    zoomScale,
+    options.minSeparationPx ?? MIN_LABEL_ROW_PX,
+  );
+}
 import { FAM_LOCAL, FAM_SHARED, buildFixtureTree, findTaxonByName } from "./test-fixtures";
 import type { GenomeDisplayNode, TaxonTreeNode } from "./api-types";
 
@@ -1302,7 +1319,7 @@ describe("rectangular label placement", () => {
     // every node whenever the tree is not radial.
     // 11px rows against 12-13px text: text taller than its own row.
     const nodes = [row("a", 0, 3), row("b", 11, 3), row("c", 22, 3)];
-    const { visible, suppressed } = placeRectangularLabels(nodes, 1);
+    const { visible, suppressed } = placeLabels(nodes, 1);
 
     expect(visible.size).toBeLessThan(nodes.length);
     expect(suppressed).toBeGreaterThan(0);
@@ -1316,7 +1333,7 @@ describe("rectangular label placement", () => {
 
   it("keeps every label once rows are far enough apart", () => {
     const nodes = [row("a", 0, 3), row("b", 40, 3), row("c", 80, 3)];
-    const { visible, suppressed } = placeRectangularLabels(nodes, 1);
+    const { visible, suppressed } = placeLabels(nodes, 1);
     expect(visible.size).toBe(3);
     expect(suppressed).toBe(0);
   });
@@ -1326,8 +1343,8 @@ describe("rectangular label placement", () => {
     // underneath type that does not grow — which is exactly the room a
     // suppressed label was waiting for. Density varies, size does not.
     const nodes = [row("a", 0, 3), row("b", 8, 3), row("c", 16, 3)];
-    expect(placeRectangularLabels(nodes, 1).visible.size).toBeLessThan(3);
-    expect(placeRectangularLabels(nodes, 4).visible.size).toBe(3);
+    expect(placeLabels(nodes, 1).visible.size).toBeLessThan(3);
+    expect(placeLabels(nodes, 4).visible.size).toBe(3);
   });
 
   it("suppresses more as the reader zooms out", () => {
@@ -1335,8 +1352,8 @@ describe("rectangular label placement", () => {
     // fit-to-view lands near k=0.2 for a default tree, where rows are only
     // a few screen pixels apart and almost nothing can be labelled.
     const nodes = Array.from({ length: 40 }, (_, i) => row(`n${i}`, i * 24, 3));
-    const wide = placeRectangularLabels(nodes, 1).visible.size;
-    const far = placeRectangularLabels(nodes, 0.2).visible.size;
+    const wide = placeLabels(nodes, 1).visible.size;
+    const far = placeLabels(nodes, 0.2).visible.size;
     expect(far).toBeLessThan(wide);
     expect(far).toBeGreaterThan(0);
   });
@@ -1346,14 +1363,14 @@ describe("rectangular label placement", () => {
     // cannot collide however close their rows are. Treating the tree as one
     // flat list would throw away most of the labels for nothing.
     const nodes = [row("a", 0, 1), row("b", 1, 2), row("c", 2, 3)];
-    expect(placeRectangularLabels(nodes, 1).visible.size).toBe(3);
+    expect(placeLabels(nodes, 1).visible.size).toBe(3);
   });
 
   it("drops an ordinary label before an orienting one", () => {
     // Anchor ranks are what tells a reader where they are in the tree, so
     // they win the row when something has to give.
     const nodes = [row("Streptomyces", 0, 3, "genus"), row("Actinomycetota", 4, 3, "phylum")];
-    const { visible } = placeRectangularLabels(nodes, 1);
+    const { visible } = placeLabels(nodes, 1);
     expect(visible.has("Actinomycetota")).toBe(true);
     expect(visible.has("Streptomyces")).toBe(false);
   });
@@ -1362,7 +1379,7 @@ describe("rectangular label placement", () => {
     // A name the reader is actively looking for is the last thing to drop,
     // never the first — otherwise searching hides its own answer.
     const nodes = [row("Actinomycetota", 0, 3, "phylum"), row("Streptomyces", 4, 3, "genus")];
-    const { visible } = placeRectangularLabels(nodes, 1, {
+    const { visible } = placeLabels(nodes, 1, {
       boost: (n) => ((n as never as { data: { name: string } }).data.name === "Streptomyces" ? 5000 : 0),
     });
     expect(visible.has("Streptomyces")).toBe(true);
@@ -1370,8 +1387,8 @@ describe("rectangular label placement", () => {
 
   it("is stable across repeated calls so panning does not reshuffle labels", () => {
     const nodes = [row("a", 0, 3), row("b", 7, 3), row("c", 14, 3), row("d", 21, 3)];
-    const first = [...placeRectangularLabels(nodes, 1).visible].sort();
-    const second = [...placeRectangularLabels(nodes, 1).visible].sort();
+    const first = [...placeLabels(nodes, 1).visible].sort();
+    const second = [...placeLabels(nodes, 1).visible].sort();
     expect(first).toEqual(second);
   });
 
@@ -1379,7 +1396,7 @@ describe("rectangular label placement", () => {
     // Going blank would trade an unreadable state for an empty one, which
     // is not an improvement. Something is always labelled.
     const nodes = [row("a", 0, 3), row("b", 0.5, 3), row("c", 1, 3)];
-    expect(placeRectangularLabels(nodes, 1).visible.size).toBe(1);
+    expect(placeLabels(nodes, 1).visible.size).toBe(1);
   });
 });
 
@@ -1440,7 +1457,7 @@ describe("rank vocabulary spans both trees", () => {
       { x: 0, y: 300, depth: 2, data: { _kind: "taxon", id: "Aspergillus", name: "Aspergillus", rank: "genus", children: [], direct_genomes: [], bgcs: [] } },
       { x: 4, y: 300, depth: 2, data: { _kind: "taxon", id: "Fungi", name: "Fungi", rank: "kingdom", children: [], direct_genomes: [], bgcs: [] } },
     ] as never[];
-    const { visible } = placeRectangularLabels(nodes, 1);
+    const { visible } = placeLabels(nodes, 1);
     expect(visible.has("Fungi")).toBe(true);
     expect(visible.has("Aspergillus")).toBe(false);
   });

@@ -13,8 +13,25 @@ import {
   MIN_LABEL_ROW_PX,
   branchWidth,
   estimateLabelWidth,
-  placeRectangularLabels,
+  computeLabelSeparations,
+  selectLabels,
 } from "./tree-logic";
+
+/** What TreeCanvas actually does: separations once (they do not depend on
+ *  zoom), threshold per frame. Composed here rather than imported, because
+ *  the wrapper that used to do it shipped to nobody — testing it tested a
+ *  code path the app never took. */
+function placeLabels(
+  nodes: Parameters<typeof computeLabelSeparations>[0],
+  zoomScale: number,
+  options: Parameters<typeof computeLabelSeparations>[1] & { minSeparationPx?: number } = {},
+) {
+  return selectLabels(
+    computeLabelSeparations(nodes, options),
+    zoomScale,
+    options.minSeparationPx ?? MIN_LABEL_ROW_PX,
+  );
+}
 
 /** Deterministic PRNG — a failing case is reproducible from its seed. */
 function rng(seed: number) {
@@ -109,7 +126,7 @@ describe("stress: label placement", () => {
       const nodes = Array.from({ length: n }, (_, i) =>
         taxonRow(`t${i}`, Math.round(r() * 2000), depth),
       );
-      const { visible } = placeRectangularLabels(nodes, zoom);
+      const { visible } = placeLabels(nodes, zoom);
       const kept = nodes
         .filter((nd) => visible.has((nd as never as { data: { id: string } }).data.id))
         .map((nd) => (nd as never as { x: number }).x)
@@ -129,7 +146,7 @@ describe("stress: label placement", () => {
         taxonRow(`t${i}`, Math.round(r() * 500), 1 + Math.floor(r() * 3)),
       );
       const ids = new Set(nodes.map((nd) => (nd as never as { data: { id: string } }).data.id));
-      const { visible, suppressed } = placeRectangularLabels(nodes, 0.2 + r() * 2);
+      const { visible, suppressed } = placeLabels(nodes, 0.2 + r() * 2);
       for (const v of visible) expect(ids.has(v)).toBe(true);
       expect(visible.size + suppressed).toBe(n);
     }
@@ -143,8 +160,8 @@ describe("stress: label placement", () => {
       const nodes = Array.from({ length: 30 }, (_, i) =>
         taxonRow(`t${i}`, Math.round(r() * 400), 2),
       );
-      const a = [...placeRectangularLabels(nodes, 0.7).visible].sort();
-      const b = [...placeRectangularLabels(nodes, 0.7).visible].sort();
+      const a = [...placeLabels(nodes, 0.7).visible].sort();
+      const b = [...placeLabels(nodes, 0.7).visible].sort();
       expect(a).toEqual(b);
     }
   });
@@ -157,8 +174,8 @@ describe("stress: label placement", () => {
       const nodes = Array.from({ length: 25 }, (_, i) =>
         taxonRow(`t${i}`, Math.round(r() * 600), 2),
       );
-      const low = placeRectangularLabels(nodes, 0.3).visible;
-      const high = placeRectangularLabels(nodes, 1.5).visible;
+      const low = placeLabels(nodes, 0.3).visible;
+      const high = placeLabels(nodes, 1.5).visible;
       for (const id of low) expect(high.has(id)).toBe(true);
     }
   });
@@ -168,7 +185,7 @@ describe("stress: label placement", () => {
     for (let run = 0; run < RUNS; run++) {
       const n = 1 + Math.floor(r() * 30);
       const nodes = Array.from({ length: n }, (_, i) => taxonRow(`t${i}`, i * 0.01, 2));
-      expect(placeRectangularLabels(nodes, 0.1 + r()).visible.size).toBeGreaterThan(0);
+      expect(placeLabels(nodes, 0.1 + r()).visible.size).toBeGreaterThan(0);
     }
   });
 });

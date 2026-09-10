@@ -261,10 +261,6 @@ export function countBgcClasses(root: TaxonDisplayNode): Record<string, number> 
   return counts;
 }
 
-export function countTotalGenomes(root: TaxonDisplayNode): number {
-  return root.genome_count;
-}
-
 export interface TreeLayout {
   nodes: d3.HierarchyPointNode<DisplayNode>[];
   links: d3.HierarchyPointLink<DisplayNode>[];
@@ -828,23 +824,6 @@ export function selectLabels(
     else suppressed += 1;
   }
   return { visible, suppressed };
-}
-
-export function placeRectangularLabels(
-  nodes: d3.HierarchyPointNode<DisplayNode>[],
-  zoomScale: number,
-  options: {
-    /** Higher wins. Anchor ranks already outrank ordinary nodes. */
-    boost?: (node: d3.HierarchyPointNode<DisplayNode>) => number;
-    /** Screen pixels of separation a label needs. */
-    minSeparationPx?: number;
-  } = {},
-): LabelPlacement {
-  return selectLabels(
-    computeLabelSeparations(nodes, options),
-    zoomScale,
-    options.minSeparationPx ?? MIN_LABEL_ROW_PX,
-  );
 }
 
 /** Ranks that orient a reader, and therefore get label priority.
