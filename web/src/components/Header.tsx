@@ -1,6 +1,7 @@
 "use client";
 
 import { PanelLeft, Search, X } from "lucide-react";
+import { ScrollableToolbar } from "@/components/ScrollableToolbar";
 
 interface HeaderProps {
   query: string;
@@ -136,14 +137,14 @@ export function Header({
           sideways rather than wrapping into three ragged rows or being
           hidden behind another menu — every control stays one swipe away,
           and the strip keeps a fixed height so the tree never reflows. */}
-      <div className="-mx-3 flex min-w-0 items-center gap-2 overflow-x-auto px-3 pb-0.5 sm:-mx-4 sm:px-4 lg:mx-0 lg:flex-1 lg:px-0 lg:pb-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <ScrollableToolbar>
         {children}
         <span className="ml-auto whitespace-nowrap pl-2 font-mono text-[11px] text-chrome-ink-faint lg:hidden">
           {totalGenomes && totalGenomes !== genomeCount
             ? `${genomeCount}/${totalGenomes} genomes`
             : `${genomeCount} genome${genomeCount === 1 ? "" : "s"}`}
         </span>
-      </div>
+      </ScrollableToolbar>
 
       {/* Status, hard right. On a phone this is replaced by the short form
           at the end of the toolbar row above — a viewport that can't fit
