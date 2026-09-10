@@ -86,7 +86,10 @@ export function Header({
           />
         </button>
 
-        <div className="relative min-w-0 flex-1 lg:w-44 lg:flex-none xl:w-52 2xl:w-64">
+        <div
+          data-tour="search"
+          className="relative min-w-0 flex-1 lg:w-44 lg:flex-none xl:w-52 2xl:w-64"
+        >
           <Search
             size={13}
             className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-chrome-ink-faint"

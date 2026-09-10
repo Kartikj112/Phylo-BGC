@@ -91,7 +91,10 @@ export function CorpusStatsBar({
         : "the corpus";
 
   return (
-    <div className="flex flex-shrink-0 flex-wrap items-center gap-x-4 gap-y-1.5 border-b border-chrome-line bg-chrome px-3 py-1.5 sm:gap-y-2 sm:gap-x-6 sm:px-4 sm:py-2">
+    <div
+      data-tour="stats"
+      className="flex flex-shrink-0 flex-wrap items-center gap-x-4 gap-y-1.5 border-b border-chrome-line bg-chrome px-3 py-1.5 sm:gap-y-2 sm:gap-x-6 sm:px-4 sm:py-2"
+    >
       <div className="-mx-3 flex w-full flex-nowrap items-center gap-x-4 overflow-x-auto px-3 sm:mx-0 sm:w-auto sm:flex-wrap sm:gap-x-5 sm:px-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {/* "N of M" on clusters and taxa, where M is the whole corpus: it is
             the only thing on screen that says a tab is a SLICE rather than

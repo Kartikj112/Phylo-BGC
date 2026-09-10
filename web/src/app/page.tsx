@@ -23,6 +23,7 @@ import { LoadingOverlay } from "@/components/LoadingOverlay";
 import { LoadingQuestions } from "@/components/LoadingQuestions";
 import { SiteFooter } from "@/components/SiteFooter";
 import { WelcomeDialog } from "@/components/WelcomeDialog";
+import { QuickTour } from "@/components/QuickTour";
 import { TreeCanvas } from "@/components/TreeCanvas";
 import { useTaxonomyTree } from "@/hooks/useTaxonomyTree";
 import { fetchBgcClasses, search, invalidateApiCache } from "@/lib/api-client";
@@ -137,7 +138,7 @@ export default function HomePage() {
   // The welcome fork, shown once the splash clears. "welcome" until the
   // reader picks a side; the upload dialog is reachable again afterwards
   // from the toolbar, so choosing "browse" is not a one-way door.
-  const [gate, setGate] = useState<"welcome" | "upload" | "none">("welcome");
+  const [gate, setGate] = useState<"welcome" | "upload" | "tour" | "none">("welcome");
   // What the last upload added, so the tree can show it. Accessions rather
   // than ids because that is what the response carries and what survives the
   // tree re-fetch; families come from the optional BiG-SCAPE file and are
@@ -527,8 +528,17 @@ export default function HomePage() {
       {/* Only after the splash has fully gone: two stacked covers would put
           the reader through a dialog they cannot see the consequences of. */}
       {splashDone && gate === "welcome" && (
-        <WelcomeDialog onBrowse={() => setGate("none")} onUpload={() => setGate("upload")} />
+        <WelcomeDialog
+          onBrowse={() => setGate("none")}
+          onUpload={() => setGate("upload")}
+          onTour={() => setGate("tour")}
+        />
       )}
+      {/* Rendered outside the welcome dialog, not inside it: the tour
+          spotlights the real toolbar and rail, which are behind that
+          dialog's backdrop and dimmed by it. */}
+      {gate === "tour" && <QuickTour onClose={() => setGate("none")} />}
+
       {gate === "upload" && (
         <AntismashUploadDialog
           onClose={() => setGate("none")}
@@ -543,7 +553,10 @@ export default function HomePage() {
         onToggleRail={() => setRailOpen((v) => !v)}
         onHome={() => setGate("welcome")}
         taxonomyLabel={taxonomy === "eukaryote" ? "NCBI Taxonomy" : "GTDB"}>
-        <div className="flex flex-shrink-0 overflow-hidden rounded border border-chrome-line">
+        <div
+          data-tour="taxonomy"
+          className="flex flex-shrink-0 overflow-hidden rounded border border-chrome-line"
+        >
           {(
             [
               ["prokaryote", "Prokaryotes", "Bacteria and archaea, on the GTDB backbone"],
@@ -565,7 +578,10 @@ export default function HomePage() {
           ))}
         </div>
 
-        <div className="flex flex-shrink-0 overflow-hidden rounded border border-chrome-line">
+        <div
+          data-tour="views"
+          className="flex flex-shrink-0 overflow-hidden rounded border border-chrome-line"
+        >
           {(
             [
               ["tree", "Tree", "The taxonomic tree, with BGCs on each tip"],
@@ -665,6 +681,7 @@ export default function HomePage() {
             to it would be a page reload, since the welcome fork is shown
             once per visit. */}
         <button
+          data-tour="upload"
           onClick={() => setGate("upload")}
           title="Upload antiSMASH result JSON files and place those genomes on the tree"
           className="flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap rounded border border-chrome-line px-2 py-1.5 text-xs text-chrome-ink-muted hover:bg-chrome-soft hover:text-chrome-ink"
@@ -725,6 +742,7 @@ export default function HomePage() {
         )}
 
         <aside
+          data-tour="filters"
           aria-label="Controls"
           className={`chrome-scroll absolute inset-y-0 left-0 z-40 w-[17rem] max-w-[86vw] flex-shrink-0 overflow-y-auto overscroll-contain border-r border-chrome-line bg-chrome p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-2xl transition-transform duration-200 ease-out lg:static lg:z-auto lg:w-56 lg:translate-x-0 lg:shadow-none ${
             railOpen ? "translate-x-0" : "-translate-x-full"
