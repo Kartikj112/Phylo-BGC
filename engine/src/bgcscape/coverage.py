@@ -64,6 +64,10 @@ ABSENCE_NOTES: dict[CoverageState, str] = {
         "a result — including a count of zero, which means none were found rather than that "
         "nobody looked."
     ),
+    # Keyed on state alone, and kept that way for callers that only have a
+    # state. `absence_note` below is the one to use where a session is
+    # available: EXAMINED covers two quite different situations, and this
+    # entry silently describes only the stronger of them.
     CoverageState.CURATED_ONLY: (
         "Clusters are recorded for this genome from curated literature, but no cluster-detection "
         "run has covered it. The count is a floor, not a census: how many clusters this genome "
@@ -75,6 +79,50 @@ ABSENCE_NOTES: dict[CoverageState, str] = {
         "(`bgcscape ingest antismash`) to make its cluster content answerable."
     ),
 }
+
+
+#: What EXAMINED means when the covering run was *declared* rather than
+#: ingested. `record-analysis-run` writes `evidence_level=HYPOTHESIZED`
+#: precisely because nobody here parsed the tool's output — an operator
+#: asserted the run happened. The state is the same and the confidence is
+#: not, and until this existed both produced the identical sentence "its
+#: cluster count is a result", which is the strongest reading of the
+#: weakest evidence the schema can hold.
+DECLARED_EXAMINED_NOTE = (
+    "A cluster-detection run over this genome has been DECLARED — recorded by an operator "
+    "rather than ingested from the tool's own output, so nothing here parsed a result file. "
+    "Its cluster count, including a count of zero, rests on that declaration: it is stronger "
+    "than never having looked and weaker than a run whose output this database holds."
+)
+
+
+def absence_note(
+    session: Session,
+    genome_id: uuid.UUID,
+    state: CoverageState,
+) -> str:
+    """The sentence to show beside this genome's cluster count.
+
+    Keyed on the coverage state **and** the evidence behind it. A genome is
+    EXAMINED whether its run was ingested from antiSMASH output or declared
+    after the fact with `record-analysis-run`, and those are not the same
+    claim. The evidence level was already in the API payload; it was absent
+    from the one sentence a reader actually quotes.
+
+    A genome covered by several runs takes the strongest: one real ingested
+    run is not weakened by an additional declaration beside it.
+    """
+    if state is not CoverageState.EXAMINED:
+        return ABSENCE_NOTES[state]
+
+    levels = {
+        run.evidence_level
+        for run in runs_covering(session, genome_id)
+        if run.analysis_type is AnalysisType.BGC_DETECTION
+    }
+    if levels and levels <= {EvidenceLevel.HYPOTHESIZED}:
+        return DECLARED_EXAMINED_NOTE
+    return ABSENCE_NOTES[CoverageState.EXAMINED]
 
 
 def examined_genome_ids(

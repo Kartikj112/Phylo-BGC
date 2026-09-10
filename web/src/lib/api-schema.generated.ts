@@ -877,6 +877,16 @@ export interface components {
              */
             unexamined_genome_count: number;
             /**
+             * Unplaced Genome Count
+             * @default 0
+             */
+            unplaced_genome_count: number;
+            /**
+             * Placed Genome Count
+             * @default 0
+             */
+            placed_genome_count: number;
+            /**
              * Coverage Note
              * @default
              */

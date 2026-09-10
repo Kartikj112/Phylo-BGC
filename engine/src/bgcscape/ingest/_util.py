@@ -130,6 +130,11 @@ class IngestReport:
     updated: int = 0
     skipped: int = 0
     errors: list[tuple[str, str]] = field(default_factory=list)  # (identifier, message)
+    #: Decisions a reader needs to see that are not counts — which genome an
+    #: accession resolved to and how, whether a new genome was created for
+    #: it. Counts alone made "created=0, updated=3" the entire report of an
+    #: ingest that had just moved three regions onto the wrong genome.
+    notes: list[str] = field(default_factory=list)
 
     def record_error(self, identifier: str, message: str) -> None:
         self.errors.append((identifier, message))

@@ -92,6 +92,12 @@ of this repo.
   - **antiSMASH's JSON has no assembly-accession field at all.** Its
     output is organized per-run over input sequences, not per-assembly.
     Linking a run back to a `GCA_`/`GCF_` accession is the caller's job;
+    The accession is resolved through `ingest/accession.py` (exact,
+    version-insensitive, then GCF/GCA-folded) and an accession matching
+    nothing is **refused** rather than turned into a genome stub — a typo
+    used to move the run's regions onto a new row and leave the real genome
+    marked as surveyed-and-empty. `--create-genome` is the explicit opt-in
+    for a genome the corpus has genuinely never seen.
     `bgcscape ingest antismash` therefore requires `--genome-accession`
     explicitly rather than guessing.
   - Per-region GenBank filename convention:

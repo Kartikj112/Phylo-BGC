@@ -91,6 +91,7 @@ from bgcscape.api.tree_builder import (
 from bgcscape.ingest.link import PLACEMENT_METHOD_LABELS, placement_of
 from bgcscape.coverage import (
     ABSENCE_NOTES,
+    absence_note,
     CoverageState,
     corpus_coverage_summary,
     coverage_state,
@@ -387,7 +388,7 @@ def get_genome(genome_id: uuid.UUID, session: Session = Depends(get_session)) ->
             for b in genome.bgcs
         ],
         coverage=state,
-        coverage_note=ABSENCE_NOTES[state],
+        coverage_note=absence_note(session, genome.id, state),
         analysis_runs=[
             AnalysisRunSummary(
                 id=run.id,
@@ -911,6 +912,10 @@ def get_provenance(
     corpus_genomes = session.query(Genome).count()
     corpus_bgcs = session.query(BGC).count()
     corpus_taxa = session.query(Taxon).count()
+    # Genomes no tree can show, because `genomes_by_taxon` keys on taxon_id.
+    # Counted here so the figure's own provenance record states the gap
+    # rather than leaving a reader to discover that two endpoints disagree.
+    unplaced_genomes = session.query(Genome).filter(Genome.taxon_id.is_(None)).count()
 
     # Corpus-wide, not scoped: coverage is a property of the whole database,
     # and reporting it per taxonomy tab would invite "this half was
@@ -948,11 +953,13 @@ def get_provenance(
         examined_genome_count=coverage["examined"],
         curated_only_genome_count=coverage["curated_only"],
         unexamined_genome_count=coverage["unexamined"],
-        coverage_note=_coverage_note(coverage, corpus_genomes),
+        unplaced_genome_count=unplaced_genomes,
+        placed_genome_count=corpus_genomes - unplaced_genomes,
+        coverage_note=_coverage_note(coverage, corpus_genomes, unplaced_genomes),
     )
 
 
-def _coverage_note(coverage: dict[str, int], total: int) -> str:
+def _coverage_note(coverage: dict[str, int], total: int, unplaced: int = 0) -> str:
     """One sentence a figure caption can carry verbatim.
 
     Phrased differently at zero coverage on purpose. "0 of 1,542 genomes
@@ -963,17 +970,30 @@ def _coverage_note(coverage: dict[str, int], total: int) -> str:
     examined = coverage["examined"]
     if total == 0:
         return "This database holds no genomes."
+
+    # Stated whenever it is non-zero, because the count above is over the
+    # database and the tree beside it is over the placed genomes only. A
+    # reader comparing the two without this sentence finds a discrepancy and
+    # no explanation, in the one record that is supposed to make the figure
+    # checkable.
+    placement = ""
+    if unplaced:
+        placement = (
+            f" {unplaced} of these {total} genomes carry no taxon and therefore appear on no "
+            f"tree, so a tree drawn from this database shows {total - unplaced}."
+        )
+
     if examined == 0:
         return (
             f"No cluster-detection run has covered any of these {total} genomes. Every cluster "
             "shown is a curated report, not a survey result, and no absence anywhere in this "
-            "figure is evidence that a clade lacks a class — nothing has looked."
+            f"figure is evidence that a clade lacks a class — nothing has looked.{placement}"
         )
     return (
         f"{examined} of {total} genomes have been examined for clusters by a recorded analysis "
         f"run; {coverage['curated_only']} carry curated clusters without a covering run, and "
         f"{coverage['unexamined']} have never been examined. Absence is only evidence within "
-        "the examined set."
+        f"the examined set.{placement}"
     )
 
 
