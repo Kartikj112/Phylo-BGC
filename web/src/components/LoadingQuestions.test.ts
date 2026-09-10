@@ -38,6 +38,8 @@ function provenance(over: Partial<DatasetProvenanceResponse> = {}): DatasetProve
     examined_genome_count: 0,
     curated_only_genome_count: 0,
     unexamined_genome_count: 0,
+    unplaced_genome_count: 0,
+    placed_genome_count: 0,
     coverage_note: "",
     ...over,
   };

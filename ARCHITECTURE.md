@@ -2244,3 +2244,124 @@ Four facts remain unresolved and all four are deferred by construction, not
 overlooked: the Zenodo DOI cannot exist until a release is archived, the paper
 citation until one is published, and the hosting regions and platform-cookie
 check until there is a live domain to check them on.
+
+## A typo moved the clusters, and the coverage row stayed behind
+
+`BGC` identity is `(source_id, external_ref)`, and `genome_id` is an ordinary
+mutable column. So `ingest antismash --genome-accession` with a mistyped
+accession did not add an orphan, which is what it looked like. It **moved every
+region off the genome that held them**, reported `created=0, updated=3`, and
+left the original genome's `AnalysisRunCoverage` row untouched.
+
+The consequence is the reason this was worth stopping rather than documenting.
+The genome the run was actually performed on then read:
+
+    coverage     : examined
+    clusters     : 0
+    coverage_note: This genome has been examined for biosynthetic gene clusters,
+                   so its cluster count is a result — including a count of zero,
+                   which means none were found rather than that nobody looked.
+
+A one-character slip turned a correct result into the tool asserting a survey
+had found a barren genome — the exact claim the whole coverage model exists to
+make unsayable. Measured, not reasoned about: on a three-genome fixture the
+typo left two orphan stubs, moved three regions onto the wrong genome, and
+`/api/v1/provenance` went on reporting "5 of 5 genomes have been examined"
+over a tree that could draw three.
+
+**The fix is to refuse, not to widen the key.** Adding `genome_id` to BGC
+identity was the obvious alternative and is wrong here, for three reasons:
+
+- `external_ref` is `{record_id}.region{NNN:03d}` and record ids are globally
+  unique NCBI nucleotide accessions. One region is one physical locus on one
+  genome — the key is correct, and a caller-supplied accession contradicting it
+  is not a second row, it is a contradiction.
+- It converts corruption-by-move into corruption-by-duplication, which is worse
+  because it is quieter: `ingest/bigscape.py` joins with
+  `filter_by(external_ref=...).one_or_none()`, so two rows sharing a ref raise
+  `MultipleResultsFound` and break family ingestion outright, while duplicated
+  rows inflate `family_sizes` — the denominators the prioritization scorer
+  depends on.
+- It leaves the typo silent. The point is that the mistake becomes an error.
+
+So `AntismashIngestConflict` is raised and nothing is written. **Ordering is
+load-bearing**: the conflict is decided against the genome the result *would*
+go to, before that genome exists. The first version created the genome and
+checked second, which left a flushed stub in the caller's session on every
+refusal — a caller that caught the exception and committed unrelated work later
+persisted the very orphan the refusal existed to prevent. `lookup_genome` is
+split out from `resolve_genome_for_result` for exactly that reason.
+
+Refusing the regions is also not sufficient on its own. **The coverage row is
+what makes the false claim**, so a refused ingest records no coverage either;
+and when a reassignment IS authorised, `_withdraw_emptied_coverage` removes the
+donor's coverage for that source. Otherwise the escape hatch would recreate the
+bug on request: move every region off a genome and it reads examined-and-empty
+again. The withdrawal is scoped to the source, because coverage recorded by a
+different run is somebody else's evidence.
+
+The two escape hatches are explicit and separate. `--create-genome` allows an
+accession that matches nothing (antiSMASH-first ingestion is a supported
+workflow and stays possible); `--reassign` allows moving regions that already
+sit elsewhere. Both are **off by default at the CLI**, because that is where a
+human types the string and a typo is far likelier than a genome the corpus has
+never seen. The library defaults differ — `allow_create_genome=True` — because
+a caller passing an accession programmatically has already decided, and because
+`test_load_creates_genome_stub_when_none_exists` pins that contract.
+
+When a typo both fails to match and conflicts, the **conflict is reported
+first**. Both statements are true, but only that one names the genome the
+regions are already on, which is almost always the one the operator meant.
+
+## The resolver existed and this module was not using it
+
+`ingest/accession.py` has provided `normalize_accession`,
+`build_genome_accession_index` and `resolve_genome` — with typed `GenomeMatch`
+results — since the BiG-FAM work. `ingest/gtdb.py` and `ingest/bigfam.py` used
+it. `ingest/antismash.py` did a bare equality lookup on the raw string.
+
+Two of the three spellings it understands were live defects here. `GCF_X.1` and
+`GCF_X` created two separate genomes for one assembly, and a GenBank accession
+never matched its RefSeq twin. Both now resolve, and **the match type is
+reported** rather than assumed — `resolved 'GCF_TEST900001.1' by
+version_insensitive match` — because a match that depended on folding the
+RefSeq/GenBank namespaces rests on NCBI's pairing rule, and a reader is
+entitled to know that before quoting the result. `AMBIGUOUS` refuses: picking
+one would fabricate the association the module exists to record.
+
+`IngestReport` gained `notes` for this. Counts alone made
+`created=0, updated=3` the entire report of an ingest that had just moved three
+regions onto the wrong genome.
+
+## Two endpoints, two populations, one number
+
+`/api/v1/provenance` counts the database; the taxonomy tree counts what it can
+draw, because `tree_builder.genomes_by_taxon` keys on `taxon_id` and skips
+every genome without one. With two stubs present those disagreed by two
+genomes, silently, in the record that is embedded in every exported figure.
+
+Making them agree is not available: excluding unplaced genomes would hide real
+data, and putting them on the tree is impossible — they have no taxon. So the
+endpoint states the gap instead. `placed_genome_count` and
+`unplaced_genome_count` are reported, they sum to `corpus_genome_count` by
+construction, and the caption sentence says it in words: *"1 of these 4 genomes
+carry no taxon and therefore appear on no tree, so a tree drawn from this
+database shows 3."* A reader comparing the two now finds an explanation rather
+than a discrepancy.
+
+## "Examined" was one word for two different claims
+
+`record-analysis-run` writes `evidence_level = HYPOTHESIZED` precisely because
+nobody parsed a result file — an operator asserted the run happened. A genome
+covered that way is `EXAMINED`, exactly like one whose antiSMASH output was
+ingested. `ABSENCE_NOTES` was keyed on `CoverageState` alone, so both produced
+the identical sentence: *"its cluster count is a result."* The evidence level
+was in the payload and absent from the one sentence a reader actually quotes —
+the strongest reading of the weakest evidence the schema can hold.
+
+`absence_note(session, genome_id, state)` keys on both. A declared run now says
+so, and says what it is worth: *"stronger than never having looked and weaker
+than a run whose output this database holds."* A genome covered by several runs
+takes the strongest — one real ingested run is not weakened by a declaration
+beside it. `ABSENCE_NOTES` remains for callers that only hold a state, with a
+comment saying it describes the stronger case.

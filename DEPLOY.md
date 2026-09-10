@@ -153,7 +153,7 @@ open in production.
 | Variable | Needed? | Effect |
 |---|---|---|
 | `NEXT_PUBLIC_API_URL` | yes | The API origin. Also named in the page's `connect-src` CSP directive, so it must be the real origin or every fetch is blocked. |
-| `NEXT_PUBLIC_SITE_URL` | yes in production | The site's own origin, e.g. `https://phylo-bgc.vercel.app`. Without it `og:image` is emitted relative (and dropped by most crawlers, so the share card silently disappears) and `sitemap.xml` advertises `localhost`. On Vercel it falls back to `VERCEL_PROJECT_PRODUCTION_URL`. |
+| `NEXT_PUBLIC_SITE_URL` | yes in production | The site's own origin, e.g. `https://phylo-bgc.vercel.app`. Without it `og:image` is emitted relative (and dropped by most crawlers, so the share card silently disappears) and `sitemap.xml` advertises `localhost`. On Vercel it falls back to `VERCEL_PROJECT_PRODUCTION_URL`. If neither is set, `robots.txt` serves `Disallow: /` rather than advertise a `localhost` sitemap no crawler can fetch — so a forgotten variable shows up as a site that will not index, instead of one that indexes wrongly. |
 
 **Uploads do not survive a restart on Render or Hugging Face.** The image
 copies the bundled SQLite file to a container-local path (`/app/data/`), so
@@ -332,6 +332,39 @@ Two changes are visible immediately and are *not* faults:
   run (or declaring one with `bgcscape record-analysis-run`) is what makes
   rarity answerable again — see ARCHITECTURE.md, "The scorer's denominators
   were 'rows somebody loaded'".
+
+### The accession is checked now, and an unknown one is refused
+
+`bgcscape ingest antismash --genome-accession` used to accept anything. A
+mistyped accession did not create a harmless orphan: because BGC identity is
+`(source_id, external_ref)` with `genome_id` as an ordinary column, it **moved
+every region off the genome that held them** and left that genome's coverage
+row in place — so the genome the run was really performed on reported
+"examined ... none were found rather than that nobody looked". A survey result
+that never happened, from one wrong character.
+
+Two things changed, and both can surprise a script that worked before:
+
+- **An accession matching no ingested genome is refused** (exit 1). Pass
+  `--create-genome` if the genome is genuinely new to the corpus — which is a
+  supported workflow, just no longer a silent side effect of a typo.
+- **Regions already recorded on a different genome are refused.** Pass
+  `--reassign` only when deliberately correcting where they belong; the donor
+  genome's coverage claim for that source is then withdrawn with them, so it
+  does not sit there reading as surveyed-and-empty.
+
+The accession is matched through `ingest/accession.py`, so `GCF_X` now resolves
+to `GCF_X.1` instead of creating a second genome for the same assembly, and the
+report says how it matched:
+
+```
+Done: created=0, updated=3, skipped=0
+  resolved 'GCF_TEST900001.1' by version_insensitive match
+```
+
+Uploads through the API create genomes as before (an upload *is* a genome's
+first appearance) but cannot reassign, which matters more there: the accession
+is untrusted free text from an anonymous caller.
 
 To record a run whose output you already have, `bgcscape ingest antismash`
 registers coverage automatically. For genomes the run examined and found

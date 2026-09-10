@@ -387,6 +387,29 @@ def test_provenance_endpoint_reports_real_database_state(api_client):
     assert gtdb["version"] == "R11-RS232"
 
 
+def test_provenance_states_how_many_genomes_no_tree_can_show(api_client):
+    """`/provenance` counts the database; the tree counts what it can draw.
+
+    Those are different populations, and when they differ the record
+    embedded in every exported figure has to say so — otherwise a reader
+    comparing "N genomes" against the tree beside it finds a discrepancy
+    and no explanation. This is the endpoint that used to report "5 of 5
+    genomes have been examined" over a tree showing three.
+    """
+    body = api_client.get("/api/v1/provenance").json()
+
+    assert body["placed_genome_count"] + body["unplaced_genome_count"] == body["corpus_genome_count"]
+
+    tree = api_client.get("/api/v1/taxonomy-tree").json()
+
+    def genomes_on_tree(node):
+        return node.get("genome_count") or 0
+
+    assert genomes_on_tree(tree) == body["placed_genome_count"]
+    if body["unplaced_genome_count"]:
+        assert "appear on no tree" in body["coverage_note"]
+
+
 def _view_config_from_provenance(api_client, **tree_state):
     prov = api_client.get("/api/v1/provenance").json()
     return {

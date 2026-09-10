@@ -37,7 +37,7 @@ from typing import Any, Literal
 
 from sqlalchemy.orm import Session
 
-from bgcscape.ingest.antismash import ingest_antismash_result
+from bgcscape.ingest.antismash import AntismashIngestConflict, ingest_antismash_result
 from bgcscape.ingest.bigscape import ingest_bigscape_clustering, parse_cutoff_from_filename
 from bgcscape.ingest.graft import genus_token, normalize_genus
 from bgcscape.models import BGC, Genome, Source, SourceType, Taxon, TaxonRank
@@ -176,7 +176,25 @@ def ingest_uploaded_antismash(
     """
     result = UploadedGenome(filename=filename, accession=genome_accession)
 
-    report = ingest_antismash_result(session, source, raw, genome_accession=genome_accession)
+    try:
+        report = ingest_antismash_result(
+            session,
+            source,
+            raw,
+            genome_accession=genome_accession,
+            # An upload is a genome's first appearance here, so creating one
+            # is the normal case. Reassignment is refused, and on this path
+            # that matters more than on the CLI: the accession is untrusted
+            # free text from an anonymous caller, and without this guard
+            # naming an existing genome's accession would move that genome's
+            # clusters onto the upload and leave it reading as surveyed-empty.
+            allow_create_genome=True,
+            allow_reassign=False,
+        )
+    except AntismashIngestConflict as exc:
+        session.rollback()
+        result.errors.append(str(exc))
+        return result
     result.regions_created = report.created
     result.regions_updated = report.updated
     for identifier, message in report.errors:

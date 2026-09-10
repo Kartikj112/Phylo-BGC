@@ -14,6 +14,7 @@ import pytest
 
 from bgcscape.coverage import (
     ABSENCE_NOTES,
+    absence_note,
     AnalysisType,
     CoverageState,
     corpus_coverage_summary,
@@ -288,3 +289,80 @@ def test_coverage_enum_is_enforced_by_the_database(session, antismash_tool_sourc
             },
         )
     session.rollback()
+
+
+# --- the sentence a reader quotes must match the evidence behind it -------------
+#
+# `record-analysis-run` writes HYPOTHESIZED precisely because nobody parsed a
+# result file; an operator asserted the run happened. Both kinds of run make a
+# genome EXAMINED, and until `absence_note` existed both produced the identical
+# sentence "its cluster count is a result" — the strongest reading of the
+# weakest evidence the schema can hold.
+
+
+def _covering_run(session, source, genome, *, evidence_level, tool_version):
+    run = get_or_create_analysis_run(
+        session,
+        source=source,
+        analysis_type=AnalysisType.BGC_DETECTION,
+        tool="antiSMASH",
+        tool_version=tool_version,
+        evidence_level=evidence_level,
+    )
+    record_coverage(session, run, genome, bgcs_recorded=0)
+    session.commit()
+    return run
+
+
+def test_declared_and_observed_runs_produce_different_prose(session, antismash_tool_source):
+    declared = _genome(session, antismash_tool_source, "GCF_DECLARED001.1")
+    observed = _genome(session, antismash_tool_source, "GCF_OBSERVED001.1")
+    session.commit()
+
+    _covering_run(
+        session, antismash_tool_source, declared,
+        evidence_level=EvidenceLevel.HYPOTHESIZED, tool_version="7.1.0",
+    )
+    _covering_run(
+        session, antismash_tool_source, observed,
+        evidence_level=EvidenceLevel.COMPUTED, tool_version="7.1.0-parsed",
+    )
+
+    declared_note = absence_note(session, declared.id, CoverageState.EXAMINED)
+    observed_note = absence_note(session, observed.id, CoverageState.EXAMINED)
+
+    assert declared_note != observed_note
+    assert "DECLARED" in declared_note
+    assert "rather than ingested from the tool's own output" in declared_note
+    assert "none were found rather than that nobody looked" in observed_note
+    assert "DECLARED" not in observed_note
+
+
+def test_an_ingested_run_is_not_weakened_by_a_declaration_beside_it(session, antismash_tool_source):
+    """A genome covered by both takes the stronger claim: adding an operator's
+    declaration next to a parsed run does not downgrade the parsed run."""
+    genome = _genome(session, antismash_tool_source, "GCF_BOTH0001.1")
+    session.commit()
+
+    _covering_run(
+        session, antismash_tool_source, genome,
+        evidence_level=EvidenceLevel.HYPOTHESIZED, tool_version="7.1.0",
+    )
+    _covering_run(
+        session, antismash_tool_source, genome,
+        evidence_level=EvidenceLevel.COMPUTED, tool_version="7.1.0-parsed",
+    )
+
+    note = absence_note(session, genome.id, CoverageState.EXAMINED)
+    assert "none were found rather than that nobody looked" in note
+    assert "DECLARED" not in note
+
+
+def test_non_examined_states_keep_their_wording(session, antismash_tool_source):
+    genome = _genome(session, antismash_tool_source, "GCF_NOTHING001.1")
+    session.commit()
+    assert absence_note(session, genome.id, CoverageState.UNEXAMINED) == ABSENCE_NOTES[CoverageState.UNEXAMINED]
+    assert (
+        absence_note(session, genome.id, CoverageState.CURATED_ONLY)
+        == ABSENCE_NOTES[CoverageState.CURATED_ONLY]
+    )

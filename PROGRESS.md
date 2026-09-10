@@ -2,10 +2,11 @@
 
 **Read this file first when resuming work in a new chunk.**
 
-_Last updated: the pre-submission pass — a real BiG-SCAPE run ingested, the
-placement grades re-audited against GTDB's own NCBI column, and the production
-readiness work (legal, accessibility, discoverability, security, citation)
-that stands between this and a journal submission._
+_Last updated: the ingest-integrity pass — a mistyped `--genome-accession` was
+silently MOVING clusters between genomes and leaving the emptied genome
+claiming it had been surveyed. Preceded by the pre-submission pass (policy,
+a11y, security, citation), the placement re-grade, and the first real BiG-SCAPE
+run._
 
 ## Status at a glance
 
@@ -20,10 +21,11 @@ that stands between this and a journal submission._
 | 5 | User uploads + BGC prioritization scoring | ✅ Done |
 | — | Pre-submission: policy, a11y, SEO, security, citation | ✅ Done, 4 facts deferred |
 
-**Tests, as re-run this pass:** 398 engine tests pass on SQLite (4 skipped —
-the Cairo/PDF paths, which have no libcairo2 on this machine) · 190 frontend
-unit tests across 7 files · 69 Playwright specs in 11 files, **not re-run since
-the production-readiness pass** (see "still unverified" item 1).
+**Tests, as re-run this pass:** 415 engine tests on SQLite (4 skipped — the
+Cairo/PDF paths, no libcairo2 on this machine) and **414 on real Postgres 16**
+(5 skipped) · 190 frontend unit tests, typecheck and production build clean ·
+69 Playwright specs in 11 files, **still not re-run since the
+production-readiness pass** (see "still unverified" item 1).
 
 Real data is ingested and shipped: `engine/gtdb_mibig_bundled.db` holds all
 2,437 active MIBiG 4.0 clusters mapped onto GTDB R11-RS232 — 1,542 genomes,
@@ -32,6 +34,34 @@ Real data is ingested and shipped: `engine/gtdb_mibig_bundled.db` holds all
 `e2b6c04f8a13`.
 
 ## What this pass changed
+
+**A typo corrupted the corpus, and the tool then vouched for the result**
+
+- `BGC` identity is `(source_id, external_ref)` with `genome_id` as an ordinary
+  column, so `ingest antismash --genome-accession GCF_TEST9000001.1` (one extra
+  digit) did not create a harmless orphan — it **moved all three regions off the
+  genome that held them**, reported `created=0, updated=3`, and left that
+  genome's coverage row in place. The genome then read `coverage: examined`,
+  0 clusters, *"none were found rather than that nobody looked"*.
+- Now refused, with nothing written and no coverage recorded. `--reassign` is
+  the explicit escape hatch, and it withdraws the donor's coverage claim so the
+  authorised path cannot recreate the falsehood either. Widening BGC identity to
+  include `genome_id` was rejected: it trades a silent move for a silent
+  duplicate, and `ingest/bigscape.py` joins on `external_ref` with
+  `.one_or_none()`, which would then raise.
+- **`ingest/accession.py` is finally used here.** It had been available since
+  the BiG-FAM work and `gtdb`/`bigfam` used it; antiSMASH did a bare string
+  lookup. `GCF_X` and `GCF_X.1` had been creating two genomes for one assembly.
+  The match type is now reported (`resolved '...' by version_insensitive
+  match`), and `AMBIGUOUS` refuses rather than picking.
+- **`/provenance` and the tree no longer disagree silently.** They count
+  different populations — the database, versus what `genomes_by_taxon` can
+  draw — so the endpoint reports `placed_genome_count` and
+  `unplaced_genome_count` and says it in the caption sentence.
+- **"Examined" no longer means one thing and says another.** A run declared with
+  `record-analysis-run` (HYPOTHESIZED) produced the same sentence as a parsed
+  antiSMASH run. `absence_note` keys on state *and* evidence level; a genome
+  covered by both takes the stronger.
 
 **The corpus finally distinguishes "same compound" from "same sequence"**
 
@@ -115,9 +145,13 @@ run remains the single highest-value thing to add.
 
 ## What is verified, and how
 
-- **Engine suite on SQLite: 398 passed, 4 skipped** (Cairo absent locally).
-  Postgres 16 was **not** re-run this pass — the last full dual-dialect run
-  predates the security and placement work.
+- **Engine suite on both dialects**: 415 passed / 4 skipped on SQLite, 414
+  passed / 5 skipped on real Postgres 16.
+- **The ingest-integrity pass, verified by reproducing the bug first.** Each of
+  the four defects was demonstrated by hand against the shipped code, then
+  pinned. The assertions were run against the pre-fix code and 5 of them failed
+  there; against the fix, none do. See ARCHITECTURE.md, "A typo moved the
+  clusters, and the coverage row stayed behind".
 - The placement re-grade against the real bundle: 989 genomes compared, 6
   conflicted, 32 demotions, and the 31 Sorangium/Chondromyces placements under
   `Myxococcota_A` correctly left alone.
@@ -153,9 +187,10 @@ run remains the single highest-value thing to add.
    The four policy pages, the 404, the consent checkbox and the rebuilt upload
    button have **no e2e coverage at all**, and the CSP and security headers are
    new since the last green run. This is the largest verification gap.
-2. **Postgres has not been re-run this pass.** The new migration
-   (`e2b6c04f8a13`) round-trips on SQLite here; the dual-dialect claim is
-   inherited, not re-observed.
+2. ~~**Postgres has not been re-run this pass.**~~ **Closed.** The full suite
+   runs on real Postgres 16 (414 passed, 5 skipped), and migrations round-trip
+   empty → head → base → head on **both** dialects with 18 CHECK constraints
+   intact and head at `e2b6c04f8a13`.
 3. **Four facts are deferred by construction**, and render as visible markers
    until supplied: the Zenodo DOI (needs an archived release), the paper
    citation (needs a paper), the hosting providers/regions and the

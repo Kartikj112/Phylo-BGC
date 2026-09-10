@@ -11,7 +11,11 @@ import bgcscape.models as models  # noqa: F401 - ensures all models are register
 from bgcscape import __version__
 from bgcscape.db.session import get_engine, session_scope
 from bgcscape.ingest._util import IngestReport
-from bgcscape.ingest.antismash import ingest_antismash_result, read_antismash_result
+from bgcscape.ingest.antismash import (
+    AntismashIngestConflict,
+    ingest_antismash_result,
+    read_antismash_result,
+)
 from bgcscape.ingest.bigfam import (
     DEFAULT_CORE_RADIUS,
     BigfamExportError,
@@ -156,6 +160,8 @@ def _get_or_create_source(
 
 def _echo_report(report: IngestReport) -> None:
     typer.echo(f"Done: {report}")
+    for note in report.notes:
+        typer.echo(f"  {note}")
     if report.errors:
         typer.echo("Errors:")
         for identifier, message in report.errors[:20]:
@@ -205,6 +211,24 @@ def ingest_antismash_cmd(
         ),
     ),
     version: str = typer.Option("7.1.0", help="antiSMASH version label to record on the Source row."),
+    create_genome: bool = typer.Option(
+        False,
+        "--create-genome",
+        help=(
+            "Create a genome for this accession if none matches. Off by default: at this "
+            "prompt a typo is far more likely than a genome the corpus has never seen, and "
+            "an unrecognised accession used to become a stub silently."
+        ),
+    ),
+    reassign: bool = typer.Option(
+        False,
+        "--reassign",
+        help=(
+            "Allow moving regions that are already recorded on a different genome. Off by "
+            "default — an unintended move leaves the original genome marked examined with "
+            "nothing on it, which reads as a survey that found a barren genome."
+        ),
+    ),
 ) -> None:
     """Ingest predicted BGC regions from an antiSMASH result JSON."""
     with session_scope() as session:
@@ -212,7 +236,19 @@ def ingest_antismash_cmd(
             session, name="antiSMASH", source_type=SourceType.TOOL_RUN, version=version
         )
         raw = read_antismash_result(path)
-        report = ingest_antismash_result(session, source, raw, genome_accession=genome_accession)
+        try:
+            report = ingest_antismash_result(
+                session,
+                source,
+                raw,
+                genome_accession=genome_accession,
+                allow_create_genome=create_genome,
+                allow_reassign=reassign,
+            )
+        except AntismashIngestConflict as exc:
+            session.rollback()
+            typer.secho(f"Refused: {exc}", fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=1) from exc
     _echo_report(report)
 
 
@@ -235,7 +271,23 @@ def ingest_upload_cmd(
             session, name=label, source_type=SourceType.USER_UPLOAD, version=None
         )
         raw = read_antismash_result(path)
-        report = ingest_antismash_result(session, source, raw, genome_accession=genome_accession)
+        try:
+            report = ingest_antismash_result(
+                session,
+                source,
+                raw,
+                genome_accession=genome_accession,
+                # An upload IS the genome's first appearance — "any stable
+                # string" is the documented contract here, so creating is
+                # the normal case rather than a suspicious one. Reassignment
+                # is still refused: an upload naming an existing genome's
+                # accession must not move that genome's clusters.
+                allow_create_genome=True,
+            )
+        except AntismashIngestConflict as exc:
+            session.rollback()
+            typer.secho(f"Refused: {exc}", fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=1) from exc
 
         if is_mag:
             from bgcscape.models import Genome

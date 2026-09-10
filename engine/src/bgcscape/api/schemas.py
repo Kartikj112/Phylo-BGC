@@ -405,6 +405,17 @@ class DatasetProvenanceResponse(BaseModel):
     examined_genome_count: int = 0
     curated_only_genome_count: int = 0
     unexamined_genome_count: int = 0
+
+    #: Genomes counted above that appear on NO tree, because they carry no
+    #: taxon. `tree_builder.genomes_by_taxon` skips them by construction, so
+    #: without this field `/provenance` and the tree disagree silently — this
+    #: endpoint would report "5 of 5 genomes examined" over a tree showing
+    #: three. The counts are not wrong; they are over different populations,
+    #: and a record embedded in every exported figure has to say which.
+    unplaced_genome_count: int = 0
+    #: `corpus_genome_count - unplaced_genome_count`: what the tree can show.
+    placed_genome_count: int = 0
+
     coverage_note: str = ""
     """One sentence a caption can carry verbatim, stating what fraction of
     this corpus was actually examined and therefore what its absences mean."""
