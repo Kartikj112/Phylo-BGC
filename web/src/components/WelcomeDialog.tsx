@@ -19,9 +19,11 @@ import { useEffect, useRef } from "react";
 export function WelcomeDialog({
   onBrowse,
   onUpload,
+  onTour,
 }: {
   onBrowse: () => void;
   onUpload: () => void;
+  onTour: () => void;
 }) {
   const browseRef = useRef<HTMLButtonElement | null>(null);
 
@@ -89,7 +91,17 @@ export function WelcomeDialog({
         </div>
 
         <p className="mt-4 text-[11px] text-chrome-ink-faint">
-          You can switch at any time — the upload button stays in the toolbar.
+          You can switch at any time — the upload button stays in the toolbar. First
+          time here?{" "}
+          {/* Offered, never forced. A tour that runs itself on arrival spends
+              the reader's attention before they have decided to give it. */}
+          <button
+            onClick={onTour}
+            className="text-chrome-accent underline underline-offset-2 hover:opacity-80 focus:outline-none focus-visible:ring-1 focus-visible:ring-chrome-accent"
+          >
+            Take the 60-second tour
+          </button>
+          .
         </p>
       </div>
     </div>
