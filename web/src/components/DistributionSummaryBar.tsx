@@ -2,12 +2,16 @@
 
 import { GitCompareArrows, Layers, Maximize2, Minimize2, X } from "lucide-react";
 import type { BGCFamilySummary } from "@/lib/api-types";
-import type { FamilyDistribution } from "@/lib/tree-logic";
-import { BGC_CLASS_COLORS, BGC_CLASS_LABELS } from "@/lib/colors";
+import type { FamilyDistribution, SurveyBasis } from "@/lib/tree-logic";
+import { BGC_CLASS_COLORS, BGC_CLASS_LABELS, COLORS } from "@/lib/colors";
 
 interface DistributionSummaryBarProps {
   family: BGCFamilySummary | undefined;
   distribution: FamilyDistribution | null;
+  /** How much looking stands behind the footprint. See tree-logic's
+   * surveyBasis: the pattern line alone reads as a claim about biology when
+   * it is a claim about a database. */
+  surveyBasis: SurveyBasis | null;
   autoFramed: boolean;
   onToggleFraming: () => void;
   onCompareEnclosing: () => void;
@@ -23,10 +27,17 @@ interface DistributionSummaryBarProps {
  * Every number is paired with the biological question it answers (genomes /
  * species / genera / phyla / prevalence), and the pattern line is strictly
  * descriptive — see tree-logic.ts's familyDistribution.
+ *
+ * The pattern line is followed by its SURVEY BASIS, and the pair is the
+ * point. "Confined to Amycolatopsis" on its own reads as a finding about
+ * biology — that the family is absent everywhere else. On this corpus it is
+ * a statement about a literature-curated database in which no genome has
+ * been surveyed for clusters at all, and the second line is what says so.
  */
 export function DistributionSummaryBar({
   family,
   distribution,
+  surveyBasis,
   autoFramed,
   onToggleFraming,
   onCompareEnclosing,
@@ -94,6 +105,23 @@ export function DistributionSummaryBar({
           ) : (
             <span className="text-chrome-ink">{distribution.patternLabel}</span>
           )}
+          {/* The second sentence. Deliberately in the same paragraph and the
+              same size as the pattern it qualifies: set smaller or tucked
+              into a tooltip it would read as a footnote to the finding,
+              which is the opposite of the relationship between them. */}
+          {surveyBasis?.footprintSentence && (
+            <>
+              {" "}
+              <span style={surveyBasis.noSurveyHere ? { color: COLORS.chromeAccent } : undefined}>
+                {surveyBasis.footprintSentence}
+              </span>
+            </>
+          )}
+          {/* Only when it is not already standing at the top of the screen:
+              CorpusStatsBar announces a wholly unsurveyed corpus in its own
+              notice, and saying it twice on one screen would spend the
+              emphasis it needs. */}
+          {surveyBasis?.corpusSurveyed && <> {surveyBasis.corpusSentence}</>}
         </p>
       </div>
 

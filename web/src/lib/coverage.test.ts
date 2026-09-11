@@ -8,13 +8,21 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+  EMPTY_COVERAGE_ROLLUP,
   EMPTY_FILTERS,
   cladeSummary,
+  coverageAt,
+  coverageRollupIndex,
   emptyCladeReading,
   filtersAreActive,
   genomePassesFilters,
   matchesQuery,
+  pruneToBgcBearing,
+  surveyBasis,
   toRootDisplayNode,
+  unsurveyedCount,
+  type CoverageRollup,
+  type FamilyDistribution,
 } from "./tree-logic";
 import type { CoverageState, GenomeSummary, TaxonTreeNode } from "./api-types";
 
@@ -181,5 +189,196 @@ describe("genome filters", () => {
   it("an unknown MAG status does not answer a 'mag' search", () => {
     expect(matchesQuery(g({ is_mag: true }), "mag")).toBe(true);
     expect(matchesQuery(g({ is_mag: null }), "mag")).toBe(false);
+  });
+});
+
+/**
+ * The three-state rollup, recomputed from the genome rows on screen.
+ *
+ * Two things the tree could not previously do: tell `curated_only` from
+ * `unexamined` at clade level, and stay correct once a filter has changed
+ * which genomes are in the tree. Both are pinned here.
+ */
+describe("coverageRollupIndex", () => {
+  it("separates curated-only from unexamined, which the rolled-up count cannot", () => {
+    const root = toRootDisplayNode(
+      clade([
+        genome("a", "curated_only", 2),
+        genome("b", "curated_only", 1),
+        genome("c", "unexamined"),
+        genome("d", "examined"),
+      ]),
+    );
+    const index = coverageRollupIndex(root);
+    const here = coverageAt(index, root);
+
+    expect(here).toEqual({ genomeCount: 4, examined: 1, curatedOnly: 2, unexamined: 1 });
+    // The number the old field carried collapses two of those three.
+    expect(root.examined_genome_count).toBe(1);
+    expect(unsurveyedCount(here)).toBe(3);
+  });
+
+  it("rolls up through children and keys every genome too", () => {
+    const child = { ...clade([genome("b", "examined"), genome("c", "unexamined")]), id: "child" };
+    const parent: TaxonTreeNode = {
+      id: "p",
+      name: "Parentfamily",
+      rank: "family",
+      genome_count: 3,
+      examined_genome_count: 2,
+      bgc_class_counts: {},
+      direct_genomes: [genome("a", "curated_only", 1)],
+      children: [child],
+    };
+    const index = coverageRollupIndex(toRootDisplayNode(parent));
+
+    expect(index.get("p")).toEqual({
+      genomeCount: 3,
+      examined: 1,
+      curatedOnly: 1,
+      unexamined: 1,
+    });
+    expect(index.get("child")).toEqual({
+      genomeCount: 2,
+      examined: 1,
+      curatedOnly: 0,
+      unexamined: 1,
+    });
+    // Genomes are in the index as rollups of one, so a caller never has to
+    // branch on node kind.
+    expect(index.get("a")).toEqual({
+      genomeCount: 1,
+      examined: 0,
+      curatedOnly: 1,
+      unexamined: 0,
+    });
+  });
+
+  it("survives the prune that leaves examined_genome_count describing another tree", () => {
+    /* The latent bug this function exists to remove. `pruneToBgcBearing`
+     * recomputes genome_count and not examined_genome_count, so after a
+     * prune the pair describes two different populations — and the glyph's
+     * unexamined fraction could go negative. */
+    const root = toRootDisplayNode(
+      clade(
+        [
+          genome("keeps", "examined", 2),
+          genome("dropped1", "examined"),
+          genome("dropped2", "examined"),
+        ],
+        // The clade has to hold clusters or the prune declines to run at
+        // all, which is its own (correct) fallback and not what this covers.
+        { nrps: 2 },
+      ),
+    );
+    const { root: pruned } = pruneToBgcBearing(root, true);
+
+    expect(pruned.genome_count).toBe(1);
+    // Stale by construction: three examined genomes claimed over one genome.
+    expect(pruned.examined_genome_count).toBe(3);
+
+    const here = coverageAt(coverageRollupIndex(pruned), pruned);
+    expect(here.genomeCount).toBe(1);
+    expect(here.examined).toBe(1);
+    expect(here.genomeCount - here.examined).toBeGreaterThanOrEqual(0);
+  });
+
+  it("returns an empty rollup for a node it has never seen", () => {
+    expect(coverageAt(new Map(), toRootDisplayNode(clade([])))).toEqual(EMPTY_COVERAGE_ROLLUP);
+    expect(coverageAt(null, toRootDisplayNode(clade([])))).toEqual(EMPTY_COVERAGE_ROLLUP);
+  });
+});
+
+/**
+ * The second sentence — the one the reframe turns on.
+ *
+ * A footprint without its survey basis reads as a claim about biology when
+ * it is a claim about a database.
+ */
+describe("surveyBasis", () => {
+  const corpus = (over: Partial<CoverageRollup> = {}): CoverageRollup => ({
+    genomeCount: 0,
+    examined: 0,
+    curatedOnly: 0,
+    unexamined: 0,
+    ...over,
+  });
+
+  it("states the corpus basis even with no family selected", () => {
+    const basis = surveyBasis(null, null, corpus({ genomeCount: 1113, curatedOnly: 1113 }));
+    expect(basis.footprintSentence).toBeNull();
+    expect(basis.corpusSentence).toContain("None of the 1,113 genomes");
+    expect(basis.corpusSentence).toContain("gap, not a finding");
+    expect(basis.noSurveyHere).toBe(true);
+  });
+
+  it("counts curated-only genomes as never surveyed, because nobody surveyed them", () => {
+    const basis = surveyBasis(null, null, corpus({ genomeCount: 100, examined: 10, curatedOnly: 80, unexamined: 10 }));
+    expect(basis.corpusSentence).toBe(
+      "90 of the 100 genomes in this view have never been surveyed for clusters.",
+    );
+  });
+
+  it("says so plainly when everything has been surveyed", () => {
+    const basis = surveyBasis(null, null, corpus({ genomeCount: 40, examined: 40 }));
+    expect(basis.corpusSentence).toContain("All 40 genomes");
+    expect(basis.noSurveyHere).toBe(false);
+  });
+
+  it("refuses a 'N of M surveyed' denominator when nothing in the clade was surveyed", () => {
+    const distribution = {
+      memberGenomeCount: 3,
+      commonAncestor: { key: "amyco", name: "Amycolatopsis", rank: "genus", memberGenomes: 3 },
+    } as FamilyDistribution;
+    const index = new Map([["amyco", corpus({ genomeCount: 11, curatedOnly: 11 })]]);
+
+    const basis = surveyBasis(distribution, index, corpus({ genomeCount: 1113, curatedOnly: 1113 }));
+    expect(basis.footprintSentence).toBe(
+      "No genome in Amycolatopsis has been surveyed for clusters, so its 3 occurrences are curated records rather than a census of 11 genomes.",
+    );
+    // The thing that must never appear: a fraction of zero surveyed genomes.
+    expect(basis.footprintSentence).not.toContain("of the 0");
+    expect(basis.noSurveyHere).toBe(true);
+  });
+
+  it("gives the real fraction once the clade has been surveyed", () => {
+    const distribution = {
+      memberGenomeCount: 3,
+      commonAncestor: { key: "amyco", name: "Amycolatopsis", rank: "genus", memberGenomes: 3 },
+    } as FamilyDistribution;
+    const index = new Map([["amyco", corpus({ genomeCount: 11, examined: 8, curatedOnly: 3 })]]);
+
+    const basis = surveyBasis(distribution, index, corpus({ genomeCount: 50, examined: 20, curatedOnly: 30 }));
+    expect(basis.footprintSentence).toBe(
+      "3 of the 8 surveyed genomes in Amycolatopsis carry it; 3 more there have never been surveyed.",
+    );
+    expect(basis.noSurveyHere).toBe(false);
+  });
+
+  it("drops the trailing clause when the whole clade is surveyed", () => {
+    const distribution = {
+      memberGenomeCount: 2,
+      commonAncestor: { key: "k", name: "Kitasatospora", rank: "genus", memberGenomes: 2 },
+    } as FamilyDistribution;
+    const index = new Map([["k", corpus({ genomeCount: 4, examined: 4 })]]);
+    const basis = surveyBasis(distribution, index, corpus({ genomeCount: 4, examined: 4 }));
+    expect(basis.footprintSentence).toBe("2 of the 4 surveyed genomes in Kitasatospora carry it.");
+  });
+
+  it("quantifies over no clade when the family spans disjoint lineages", () => {
+    /* With no common ancestor there is no honest denominator: summing the
+     * separate lineages would merge populations the tree draws apart. */
+    const distribution = {
+      memberGenomeCount: 5,
+      commonAncestor: null,
+    } as FamilyDistribution;
+    const basis = surveyBasis(distribution, new Map(), corpus({ genomeCount: 50, curatedOnly: 50 }));
+    expect(basis.footprintSentence).toBeNull();
+    expect(basis.corpusSentence).toContain("None of the 50 genomes");
+  });
+
+  it("says nothing about a footprint that has none", () => {
+    const distribution = { memberGenomeCount: 0, commonAncestor: null } as FamilyDistribution;
+    expect(surveyBasis(distribution, new Map(), corpus({ genomeCount: 9, examined: 9 })).footprintSentence).toBeNull();
   });
 });
