@@ -33,6 +33,9 @@ import {
   bgcFamilyIndex,
   collapseToFamily,
   collapseToLevel,
+  coverageAt,
+  coverageRollupIndex,
+  surveyBasis,
   initialCollapseLevel,
   collectMatchKeys,
   countBgcClasses,
@@ -232,6 +235,31 @@ export default function HomePage() {
   const familyEnclosingKeys = useMemo(
     () => new Set((familyDist?.enclosingClades ?? []).map((c) => c.key)),
     [familyDist],
+  );
+
+  // ----- Coverage: what has actually been surveyed --------------------------
+  // Two indices, because they answer two different questions and must not be
+  // swapped. The canvas needs coverage for the tree ON SCREEN — a glyph has
+  // to describe the genomes under it after pruning and filtering, and the
+  // API's rolled-up examined count describes the tree before them. The
+  // survey-basis sentence sits beside `familyDist`, which is computed over
+  // the FULL tree so its numbers are dataset properties rather than
+  // artefacts of the current view; its coverage denominator has to be the
+  // same population or the sentence would divide one tree by another.
+  const displayedCoverage = useMemo(
+    () => (root ? coverageRollupIndex(root) : null),
+    [root],
+  );
+  const fullCoverage = useMemo(
+    () => (fullRoot ? coverageRollupIndex(fullRoot) : null),
+    [fullRoot],
+  );
+  const familySurveyBasis = useMemo(
+    () =>
+      fullRoot
+        ? surveyBasis(familyDist, fullCoverage, coverageAt(fullCoverage, fullRoot))
+        : null,
+    [familyDist, fullCoverage, fullRoot],
   );
   const selectedFamily = useMemo(
     () => familiesList.find((f) => f.id === selectedFamilyId),
@@ -716,6 +744,7 @@ export default function HomePage() {
         <DistributionSummaryBar
           family={selectedFamily}
           distribution={familyDist}
+          surveyBasis={familySurveyBasis}
           autoFramed={autoFramed}
           onToggleFraming={toggleFraming}
           onCompareEnclosing={compareEnclosing}
@@ -939,6 +968,7 @@ export default function HomePage() {
               familyMembership={familyMembership}
               uploadHighlight={uploadHighlight}
               familyEnclosingKeys={familyEnclosingKeys}
+              coverageIndex={displayedCoverage}
               familyLabel={selectedFamily?.label ?? null}
               fitSignal={fitSignal}
               onFocusNode={focusNode}

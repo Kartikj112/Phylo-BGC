@@ -1045,6 +1045,124 @@ export interface CladeSummary {
   composition: { bgcClass: string; count: number; fraction: number }[];
 }
 
+/**
+ * The three-state coverage rollup, computed over the tree ACTUALLY ON SCREEN.
+ *
+ * `TaxonTreeNode.examined_genome_count` arrives from the API describing the
+ * whole subtree, and every view transform this module applies —
+ * `pruneToBgcBearing`, `applyGenomeFilters`, `applyFocus` — recomputes
+ * `genome_count` and leaves `examined_genome_count` untouched. So the pair
+ * describes two different populations the moment any filter is on: with the
+ * default BGC-bearing prune, a clade could report more genomes examined than
+ * it contains, and the glyph's unexamined fraction would go negative. Nothing
+ * shows today only because the corpus has no detection coverage at all.
+ *
+ * Recomputing from the genome rows themselves fixes that by construction, and
+ * costs one post-order walk rather than one per glyph — the reason this is an
+ * index built once per tree rather than a function called per node.
+ *
+ * It also recovers the state the tree could not previously express.
+ * `CoverageState` has THREE values and the rolled-up count carries one, so
+ * `CURATED_ONLY` — clusters recorded from literature, genome never surveyed —
+ * was indistinguishable from `UNEXAMINED` on the tree. That is not a corner
+ * case here: it is 1,521 of the 1,542 genomes in the shipped corpus.
+ */
+export interface CoverageRollup {
+  genomeCount: number;
+  /** A cluster-detection run covers these. The only state in which an
+   * absence is evidence. */
+  examined: number;
+  /** Clusters recorded from curated literature, no run. The count is a
+   * floor, not a census. */
+  curatedOnly: number;
+  /** No run, no clusters. The zero is about this database. */
+  unexamined: number;
+}
+
+/** Genomes whose cluster content nobody has surveyed — `curatedOnly` plus
+ * `unexamined`. The single number the reframe turns on, so it is named once
+ * here rather than re-added at each call site. */
+export function unsurveyedCount(r: CoverageRollup): number {
+  return r.curatedOnly + r.unexamined;
+}
+
+export const EMPTY_COVERAGE_ROLLUP: CoverageRollup = {
+  genomeCount: 0,
+  examined: 0,
+  curatedOnly: 0,
+  unexamined: 0,
+};
+
+/**
+ * Coverage rollups for every node in `root`, keyed by `nodeKey`.
+ *
+ * Genomes are keyed too, each as a rollup of one, so a caller never has to
+ * branch on node kind to ask the same question.
+ */
+export function coverageRollupIndex(root: TaxonDisplayNode): Map<string, CoverageRollup> {
+  const index = new Map<string, CoverageRollup>();
+
+  function add(into: CoverageRollup, from: CoverageRollup): void {
+    into.genomeCount += from.genomeCount;
+    into.examined += from.examined;
+    into.curatedOnly += from.curatedOnly;
+    into.unexamined += from.unexamined;
+  }
+
+  function walk(node: TaxonTreeNode): CoverageRollup {
+    const here: CoverageRollup = { genomeCount: 0, examined: 0, curatedOnly: 0, unexamined: 0 };
+    for (const genome of node.direct_genomes) {
+      // An unrecognised state counts as a genome and as nothing else, so a
+      // future fourth state widens the "not surveyed" gap rather than
+      // silently inflating "examined".
+      const one: CoverageRollup = {
+        genomeCount: 1,
+        examined: genome.coverage === "examined" ? 1 : 0,
+        curatedOnly: genome.coverage === "curated_only" ? 1 : 0,
+        unexamined: genome.coverage === "unexamined" ? 1 : 0,
+      };
+      index.set(nodeKey({ ...genome, _kind: "genome" }), one);
+      add(here, one);
+    }
+    for (const child of node.children) add(here, walk(child));
+    index.set(nodeKey({ ...node, _kind: "taxon" }), here);
+    return here;
+  }
+
+  walk(root);
+  return index;
+}
+
+/** Lookup that never returns undefined, so a glyph for a node the index has
+ * not seen renders as "nothing known" rather than throwing. */
+export function coverageAt(
+  index: ReadonlyMap<string, CoverageRollup> | null | undefined,
+  node: DisplayNode,
+): CoverageRollup {
+  return index?.get(nodeKey(node)) ?? EMPTY_COVERAGE_ROLLUP;
+}
+
+/**
+ * The clause a clade glyph's tooltip needs to make its bar readable.
+ *
+ * Lives here rather than in the canvas because it is the same judgement
+ * `bgcscape.coverage.ABSENCE_NOTES` makes in the engine — what a count
+ * licenses — and that judgement is unit-tested, not re-derived in JSX.
+ */
+export function cladeCoverageSentence(r: CoverageRollup): string {
+  if (r.genomeCount === 0) return "no genomes here";
+  if (r.examined === r.genomeCount) {
+    return `all ${r.genomeCount} surveyed for clusters`;
+  }
+  if (r.examined === 0) {
+    return r.curatedOnly > 0
+      ? `none of the ${r.genomeCount} surveyed for clusters — every cluster shown is a curated record, not a survey result`
+      : `none of the ${r.genomeCount} surveyed for clusters; nothing has looked`;
+  }
+  const rest = unsurveyedCount(r);
+  return `${r.examined} of ${r.genomeCount} surveyed for clusters; ${rest} never looked at`;
+}
+
 /** Whether an empty glyph means "we looked and found nothing" or "nothing
  * has looked". Only meaningful when `bgcCount` is 0; a clade with clusters
  * is drawn from its composition either way. */
@@ -1776,6 +1894,117 @@ export function familyDistribution(
     phylumBreadth,
     isolatedOccurrences,
     patternLabel,
+  };
+}
+
+/** Grouped digits without dragging the reader's locale into a figure
+ * caption — an exported SVG has to read the same everywhere. */
+function fmtCount(n: number): string {
+  return n.toLocaleString("en-US");
+}
+
+/**
+ * What a footprint's SURVEY BASIS is: the sentence that says how much
+ * looking stands behind the pattern.
+ *
+ * `patternLabel` answers "where is this family". On its own that reads as a
+ * finished statement about biology — "Confined to Amycolatopsis" sounds like
+ * a claim that it is absent everywhere else. It is not: on this corpus it is
+ * a claim about a literature-curated database in which no genome has been
+ * surveyed for clusters at all. This is the other half of the sentence, and
+ * on a corpus with no detection coverage it is the more important half.
+ *
+ * Deliberately two separate sentences rather than one hedged clause. The
+ * footprint is a real result about the records that exist, and burying it in
+ * caveats would understate it; the basis is a fact about the database, and
+ * folding it into the footprint would overstate that. They are different
+ * claims, so they get different sentences.
+ */
+export interface SurveyBasis {
+  /** How much of the enclosing clade was surveyed. Null when the family has
+   * no occurrences, or when it is spread across disjoint lineages with no
+   * single clade to quantify over — the corpus sentence carries it then. */
+  footprintSentence: string | null;
+  /** How much of the loaded corpus was surveyed. Always present: it is true
+   * of the figure whether or not a family is selected. */
+  corpusSentence: string;
+  /** Nothing in the described scope has been surveyed, so every absence in
+   * it is a gap rather than a finding. Callers use this to decide emphasis,
+   * never to decide whether to show the sentence. */
+  noSurveyHere: boolean;
+  /** Some part of the corpus HAS been surveyed.
+   *
+   * False is the state `CorpusStatsBar` already announces in a standing
+   * notice, so a caller sitting on the same screen uses this to avoid
+   * printing the corpus sentence twice. It is not permission to hide the
+   * fact — it means the fact is already on screen. */
+  corpusSurveyed: boolean;
+}
+
+export function surveyBasis(
+  distribution: FamilyDistribution | null,
+  coverageIndex: ReadonlyMap<string, CoverageRollup> | null | undefined,
+  corpus: CoverageRollup,
+): SurveyBasis {
+  const corpusUnsurveyed = unsurveyedCount(corpus);
+  const corpusSentence =
+    corpus.genomeCount === 0
+      ? "No genomes are loaded, so nothing here describes a survey."
+      : corpusUnsurveyed === 0
+        ? `All ${fmtCount(corpus.genomeCount)} genomes in this view have been surveyed for clusters.`
+        : corpusUnsurveyed === corpus.genomeCount
+          ? `None of the ${fmtCount(corpus.genomeCount)} genomes in this view has been surveyed for clusters — every absence here is a gap, not a finding.`
+          : `${fmtCount(corpusUnsurveyed)} of the ${fmtCount(corpus.genomeCount)} genomes in this view have never been surveyed for clusters.`;
+
+  const corpusSurveyed = corpus.examined > 0;
+
+  if (!distribution || distribution.memberGenomeCount === 0) {
+    return {
+      footprintSentence: null,
+      corpusSentence,
+      noSurveyHere: !corpusSurveyed,
+      corpusSurveyed,
+    };
+  }
+
+  const members = distribution.memberGenomeCount;
+  // Only a single enclosing clade gives the sentence an honest denominator.
+  // Across disjoint lineages "N of M surveyed" would quietly pick one of
+  // them, or sum populations the tree draws apart.
+  const clade = distribution.commonAncestor;
+  const scope = clade ? coverageIndex?.get(clade.key) : undefined;
+
+  if (!clade || !scope || scope.genomeCount === 0) {
+    return {
+      footprintSentence: null,
+      corpusSentence,
+      noSurveyHere: !corpusSurveyed,
+      corpusSurveyed,
+    };
+  }
+
+  const here = unsurveyedCount(scope);
+  let footprintSentence: string;
+  if (scope.examined === 0) {
+    footprintSentence =
+      `No genome in ${clade.name} has been surveyed for clusters, so its ` +
+      `${fmtCount(members)} occurrence${members === 1 ? "" : "s"} ` +
+      `${members === 1 ? "is a curated record" : "are curated records"} rather than a census of ` +
+      `${fmtCount(scope.genomeCount)} genome${scope.genomeCount === 1 ? "" : "s"}.`;
+  } else {
+    footprintSentence =
+      `${fmtCount(members)} of the ${fmtCount(scope.examined)} surveyed ` +
+      `genome${scope.examined === 1 ? "" : "s"} in ${clade.name} carry it` +
+      (here > 0
+        ? `; ${fmtCount(here)} more there ${here === 1 ? "has" : "have"} never been surveyed.`
+        : ".");
+  }
+
+  return {
+    footprintSentence,
+    corpusSentence,
+    noSurveyHere: scope.examined === 0,
+    corpusSurveyed,
   };
 }
 

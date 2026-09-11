@@ -10,7 +10,9 @@ import {
   bgcMatchesQuery,
   bgcSizeTier,
   branchWidth,
+  cladeCoverageSentence,
   cladeSummary,
+  coverageAt,
   computeRadialTreeLayout,
   computeTreeLayout,
   dominantBgcClass,
@@ -34,6 +36,8 @@ import {
   emptyCladeReading,
   rankAbbreviation,
   subtreeBgcCount,
+  unsurveyedCount,
+  type CoverageRollup,
   type FamilyMembershipSets,
   type TreeOrientation,
 } from "@/lib/tree-logic";
@@ -85,6 +89,16 @@ interface TreeCanvasProps {
    * consulted by anything that computes a statistic — see onNodeDrag. */
   nodeOffsets?: ReadonlyMap<string, { dx: number; dy: number }>;
   onNodeDrag?: (key: string, dx: number, dy: number) => void;
+  /** Three-state coverage for every node on screen, keyed by nodeKey (see
+   * tree-logic's coverageRollupIndex).
+   *
+   * Passed in rather than derived here for two reasons. It has to be
+   * computed over the tree ACTUALLY being drawn — the `examined_genome_count`
+   * each node carries describes the unfiltered subtree and goes stale the
+   * moment a prune runs — and one walk per tree beats one per glyph.
+   * Optional, so a caller that has not built it degrades to no coverage
+   * texture rather than to a wrong one. */
+  coverageIndex?: ReadonlyMap<string, CoverageRollup> | null;
   /** Draw the subtle taxonomic-nesting regions behind the tree. */
   showRegions?: boolean;
   /** Put cluster glyphs on one aligned track instead of hanging them off
@@ -184,6 +198,7 @@ export function TreeCanvas({
   uploadHighlight,
   familyEnclosingKeys,
   familyLabel,
+  coverageIndex,
   fitSignal,
   nodeOffsets,
   onNodeDrag,
@@ -740,6 +755,10 @@ export function TreeCanvas({
   );
 
   const dimAll = activeClasses.size < Object.keys(BGC_CLASS_COLORS).length;
+  // What the key needs to know: which states are present at all. Taken from
+  // the root's own rollup rather than scanned separately — it is already the
+  // sum of every genome on screen.
+  const corpusCoverage = coverageAt(coverageIndex, root);
   const familyActive = selectedFamilyId !== null;
 
   const isFamilyMember = useCallback(
@@ -970,6 +989,23 @@ export function TreeCanvas({
               strokeWidth={1}
             />
           </pattern>
+          {/* The third state, which the tree could not previously draw.
+              `curated_only` is 1,521 of the 1,542 genomes in the shipped
+              corpus: clusters recorded from literature, genome never
+              surveyed. Rendered as a sparse stipple rather than a second
+              hatch so it reads as a lighter qualification of the same
+              axis — records exist, a survey does not — and never as a
+              different quantity. Colour is not available: it is fully
+              allocated to BGC class, and spending a hue on absence would
+              put a gap in the same visual vocabulary as a finding. */}
+          <pattern
+            id="curated-stipple"
+            patternUnits="userSpaceOnUse"
+            width={3}
+            height={3}
+          >
+            <circle cx={1.5} cy={1.5} r={0.55} fill={COLORS.lineStrong} />
+          </pattern>
         </defs>
         <rect
           data-canvas-bg="true"
@@ -1194,6 +1230,7 @@ export function TreeCanvas({
                   {!isGenome && (
                     <TaxonNode
                       node={node}
+                      coverage={coverageAt(coverageIndex, node)}
                       isRadial={isRadial}
                       angle={n.x}
                       showLabel={
@@ -1268,6 +1305,26 @@ export function TreeCanvas({
           </text>
         )}
       </svg>
+
+      {/* A texture with no key is decoration. Shown only when the tree
+          actually contains a state that draws one, so a fully surveyed
+          corpus is not handed a legend to nothing. */}
+      {(corpusCoverage.curatedOnly > 0 || corpusCoverage.unexamined > 0) && (
+        <div className="pointer-events-none absolute bottom-2 left-2 rounded border border-line bg-card/95 px-2 py-1.5 text-[10px] leading-tight text-ink-muted shadow-sm sm:bottom-3 sm:left-3">
+          <div className="mb-1 uppercase tracking-wider text-ink-faint">Survey coverage</div>
+          <div className="flex flex-col gap-1">
+            {corpusCoverage.examined > 0 && (
+              <KeyRow kind="solid" label="surveyed — a count here is a result" />
+            )}
+            {corpusCoverage.curatedOnly > 0 && (
+              <KeyRow kind="stipple" label="curated records only — never surveyed" />
+            )}
+            {corpusCoverage.unexamined > 0 && (
+              <KeyRow kind="hatch" label="nothing has looked" />
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="pointer-events-none absolute right-2 top-2 flex flex-col items-end gap-1.5 sm:right-3 sm:top-3">
         <button
@@ -1381,6 +1438,7 @@ function MenuItem({
 
 function TaxonNode({
   node,
+  coverage,
   isRadial,
   angle,
   showLabel,
@@ -1399,6 +1457,8 @@ function TaxonNode({
   onOpenMenu,
 }: {
   node: Extract<DisplayNode, { _kind: "taxon" }>;
+  /** Passed straight through to the collapsed-clade glyph. */
+  coverage: CoverageRollup;
   isRadial: boolean;
   angle: number;
   showLabel: boolean;
@@ -1454,6 +1514,7 @@ function TaxonNode({
       {hiddenCount > 0 ? (
         <CladeGlyph
           node={node}
+          coverage={coverage}
           maxGenomeCount={maxGenomeCount}
           flip={isRadial && isLeftHalf(angle)}
           trackOffset={trackOffset}
@@ -1583,8 +1644,114 @@ function TaxonNode({
   );
 }
 
+/** One line of the coverage key. Each swatch carries its own pattern
+ * definition rather than reaching into the tree's `<defs>` by fragment id:
+ * cross-`<svg>` references resolve inconsistently, and a key whose swatch
+ * silently renders blank is worse than no key. */
+function KeyRow({ kind, label }: { kind: "solid" | "stipple" | "hatch"; label: string }) {
+  const id = `key-${kind}`;
+  return (
+    <div className="flex items-center gap-1.5">
+      <svg width={18} height={10} aria-hidden className="flex-shrink-0">
+        {kind !== "solid" && (
+          <defs>
+            {kind === "stipple" ? (
+              <pattern id={id} patternUnits="userSpaceOnUse" width={3} height={3}>
+                <circle cx={1.5} cy={1.5} r={0.55} fill={COLORS.lineStrong} />
+              </pattern>
+            ) : (
+              <pattern
+                id={id}
+                patternUnits="userSpaceOnUse"
+                width={4}
+                height={4}
+                patternTransform="rotate(45)"
+              >
+                <line x1={0} y1={0} x2={0} y2={4} stroke={COLORS.lineStrong} strokeWidth={1} />
+              </pattern>
+            )}
+          </defs>
+        )}
+        <rect
+          x={0.5}
+          y={0.5}
+          width={17}
+          height={9}
+          fill={kind === "solid" ? COLORS.lineStrong : `url(#${id})`}
+          stroke={COLORS.line}
+          strokeWidth={1}
+          rx={1.5}
+        />
+      </svg>
+      <span>{label}</span>
+    </div>
+  );
+}
+
+/**
+ * The coverage layer, drawn over a clade bar.
+ *
+ * Ordered along the bar by how much looking stands behind it: the surveyed
+ * share is left and untextured, then `curated_only` stipple, then
+ * `unexamined` hatch hard against the far edge. Width is the encoding — the
+ * bar's width is already genome count, so a share of it is that share of
+ * genomes, and a wholly unsurveyed clade textures end to end.
+ *
+ * Texture rather than colour, throughout. Every hue in this tree means a BGC
+ * class, and an absence drawn in colour would read as one more finding.
+ */
+function CoverageTexture({
+  x,
+  width,
+  height,
+  genomeCount,
+  curatedCount,
+  unexaminedCount,
+}: {
+  x: number;
+  width: number;
+  height: number;
+  genomeCount: number;
+  curatedCount: number;
+  unexaminedCount: number;
+}) {
+  if (genomeCount <= 0) return null;
+  const unexaminedW = (unexaminedCount / genomeCount) * width;
+  const curatedW = (curatedCount / genomeCount) * width;
+  // A share that rounds below a pixel still gets one: "almost none of this
+  // was surveyed" and "none of it was" must not render as the same bar, and
+  // at these widths the difference is sub-pixel for a genus of 300.
+  const unexaminedDrawn = unexaminedCount > 0 ? Math.max(1, unexaminedW) : 0;
+  const curatedDrawn = curatedCount > 0 ? Math.max(1, curatedW) : 0;
+  return (
+    <>
+      {curatedDrawn > 0 && (
+        <rect
+          x={x + width - unexaminedDrawn - curatedDrawn}
+          y={-height / 2}
+          width={curatedDrawn}
+          height={height}
+          fill="url(#curated-stipple)"
+          stroke="none"
+        />
+      )}
+      {unexaminedDrawn > 0 && (
+        <rect
+          x={x + width - unexaminedDrawn}
+          y={-height / 2}
+          width={unexaminedDrawn}
+          height={height}
+          fill="url(#unexamined-hatch)"
+          stroke="none"
+        />
+      )}
+    </>
+  );
+}
+
 function CladeGlyph({
   node,
+  coverage,
   maxGenomeCount,
   flip,
   trackOffset,
@@ -1592,6 +1759,11 @@ function CladeGlyph({
   onToggleCollapse,
 }: {
   node: Extract<DisplayNode, { _kind: "taxon" }>;
+  /** Three-state coverage for this clade, recomputed over the tree on
+   * screen. An all-zero rollup means the caller supplied no index, and the
+   * glyph falls back to the node's own (possibly stale) rolled-up count
+   * rather than drawing a texture it cannot stand behind. */
+  coverage: CoverageRollup;
   maxGenomeCount: number;
   flip: boolean;
   touchMode: boolean;
@@ -1603,12 +1775,28 @@ function CladeGlyph({
   onToggleCollapse: () => void;
 }) {
   const summary = cladeSummary(node);
+  /* Prefer the rollup over `summary.examinedGenomeCount`. The latter comes
+     from the API describing the whole subtree, and every view transform
+     recomputes genome_count without it — so under the default prune the two
+     describe different populations and the unexamined fraction below could
+     come out negative. The fallback keeps a caller that passes no index
+     working exactly as before. */
+  const hasRollup = coverage.genomeCount > 0;
+  const genomeCount = hasRollup ? coverage.genomeCount : summary.genomeCount;
+  const examinedCount = hasRollup ? coverage.examined : summary.examinedGenomeCount;
+  const curatedCount = hasRollup ? coverage.curatedOnly : 0;
+  const unexaminedCount = hasRollup
+    ? coverage.unexamined
+    : Math.max(0, summary.genomeCount - summary.examinedGenomeCount);
   /* Three-way, not two. A clade with SOME genomes examined and no clusters
      is neither a finding nor a blank: reporting it as "examined and none
      found" claims a survey of genomes nobody surveyed, which is the same
      overclaim coverage.py exists to prevent, one level up the tree. */
-  const reading = summary.bgcCount === 0 ? emptyCladeReading(summary) : null;
-  const width = glyphWidth(summary.genomeCount, maxGenomeCount);
+  const reading =
+    summary.bgcCount === 0
+      ? emptyCladeReading({ ...summary, genomeCount, examinedGenomeCount: examinedCount })
+      : null;
+  const width = glyphWidth(genomeCount, maxGenomeCount);
   const height = 13;
   const start = trackOffset > 0 ? trackOffset : 6;
   const x = flip ? -width - start : start;
@@ -1638,24 +1826,29 @@ function CladeGlyph({
       )}
 
       <title>
-        {node.name}: {summary.genomeCount} genome{summary.genomeCount === 1 ? "" : "s"}
-        {` (${summary.examinedGenomeCount} examined)`}, {summary.bgcCount} BGC
+        {node.name}: {genomeCount} genome{genomeCount === 1 ? "" : "s"}, {summary.bgcCount} BGC
         {summary.bgcCount === 1 ? "" : "s"}
         {summary.composition.length > 0 &&
           ` — ${summary.composition
             .slice(0, 4)
             .map((c) => `${BGC_CLASS_LABELS[c.bgcClass] ?? c.bgcClass} ${c.count}`)
             .join(", ")}`}
-        {/* The sentence that makes an empty glyph readable. Without it a
-            clade nobody has examined and a clade examined and found empty
-            were the same outlined rectangle. */}
+        {/* The survey basis, on every glyph rather than only the empty
+            ones. A clade with clusters needs it MORE, not less: a bar built
+            from three curated records over two hundred genomes nobody
+            surveyed looks exactly like a survey result unless the tooltip
+            says otherwise. */}
+        {hasRollup && ` · ${cladeCoverageSentence(coverage)}`}
+        {/* What an EMPTY bar means, which the sentence above cannot carry:
+            a clade nobody has looked at and one looked at and found empty
+            are both a bar with nothing in it. */}
         {reading === "unexamined" &&
-          " — no genome here has been examined for clusters; this is not a finding that it produces none"}
+          " — this is not a finding that it produces none"}
         {reading === "partly-examined" &&
-          ` — none found in the ${summary.examinedGenomeCount} examined; the remaining ${
-            summary.genomeCount - summary.examinedGenomeCount
+          ` — none found in the ${examinedCount} surveyed; the remaining ${
+            genomeCount - examinedCount
           } have not been looked at`}
-        {reading === "examined-empty" && " — examined and none found"}
+        {reading === "examined-empty" && " — surveyed, and none found"}
       </title>
 
       {summary.bgcCount === 0 ? (
@@ -1665,27 +1858,16 @@ function CladeGlyph({
            absence a hue would put it in the same visual vocabulary as a
            finding. */
         <>
-          {reading !== "examined-empty" &&
-            (() => {
-              /* Hatch the UNEXAMINED fraction, not the whole bar. The bar's
-                 width already encodes genome count, so hatching the share
-                 nobody has looked at states the gap at its real size: a
-                 fully unexamined clade hatches end to end, and one with two
-                 of forty examined hatches almost all of itself. */
-              const unexamined = summary.genomeCount - summary.examinedGenomeCount;
-              const frac = summary.genomeCount > 0 ? unexamined / summary.genomeCount : 1;
-              const hatchWidth = Math.max(1, frac * width);
-              return (
-                <rect
-                  x={x + width - hatchWidth}
-                  y={-height / 2}
-                  width={hatchWidth}
-                  height={height}
-                  fill="url(#unexamined-hatch)"
-                  stroke="none"
-                />
-              );
-            })()}
+          {reading !== "examined-empty" && (
+            <CoverageTexture
+              x={x}
+              width={width}
+              height={height}
+              genomeCount={genomeCount}
+              curatedCount={curatedCount}
+              unexaminedCount={unexaminedCount}
+            />
+          )}
           <rect
             x={x}
             y={-height / 2}
@@ -1702,21 +1884,38 @@ function CladeGlyph({
           />
         </>
       ) : (
-        summary.composition.map((segment) => {
-          const segWidth = Math.max(1, segment.fraction * width);
-          const segX = x + offset;
-          offset += segWidth;
-          return (
-            <rect
-              key={segment.bgcClass}
-              x={segX}
-              y={-height / 2}
-              width={segWidth}
-              height={height}
-              fill={BGC_CLASS_COLORS[segment.bgcClass] ?? COLORS.inkFaint}
-            />
-          );
-        })
+        <>
+          {summary.composition.map((segment) => {
+            const segWidth = Math.max(1, segment.fraction * width);
+            const segX = x + offset;
+            offset += segWidth;
+            return (
+              <rect
+                key={segment.bgcClass}
+                x={segX}
+                y={-height / 2}
+                width={segWidth}
+                height={height}
+                fill={BGC_CLASS_COLORS[segment.bgcClass] ?? COLORS.inkFaint}
+              />
+            );
+          })}
+          {/* The change that matters most. Coverage used to be drawn ONLY on
+              clades with no clusters, so a genus with one curated record
+              over two hundred genomes nobody surveyed rendered as a solid
+              bar — visually identical to a surveyed one. The texture now
+              runs over the composition too, stating the survey gap at the
+              same width as the bar that encodes the genomes it is a gap in.
+              Class colour is untouched underneath it. */}
+          <CoverageTexture
+            x={x}
+            width={width}
+            height={height}
+            genomeCount={genomeCount}
+            curatedCount={curatedCount}
+            unexaminedCount={unexaminedCount}
+          />
+        </>
       )}
 
       <rect
@@ -1738,7 +1937,7 @@ function CladeGlyph({
         className="font-mono"
         transform={flip ? "rotate(180)" : undefined}
       >
-        {summary.genomeCount}g · {summary.bgcCount}b
+        {genomeCount}g · {summary.bgcCount}b
       </text>
     </g>
   );
@@ -1826,9 +2025,23 @@ function GenomeNode({
     : barcodeStart + node.bgcs.length * BARCODE_TICK_WIDTH;
   const dominant = dominantBgcClass(node);
   const dominantColor = dominant ? (BGC_CLASS_COLORS[dominant] ?? COLORS.inkMuted) : COLORS.inkMuted;
+  /* Only `unexamined` gets the hollow dash. `curated_only` is not a blank —
+     somebody published clusters found in this organism — so drawing it as
+     one would understate a real record; its qualification is that the count
+     is a floor, which the tooltip and the detail panel state in words. */
+  const unsurveyed = node.coverage === "unexamined";
   return (
     <g className="cursor-pointer" onClick={onSelectGenome} opacity={dimmedBySelection ? 0.55 : 1}>
       <g transform={flip ? "rotate(180)" : undefined}>
+        <title>
+          {node.accession}: {node.bgcs.length} cluster
+          {node.bgcs.length === 1 ? "" : "s"}
+          {node.coverage === "examined"
+            ? " — surveyed for clusters, so this count is a result"
+            : node.coverage === "curated_only"
+              ? " — recorded from curated literature; this genome has never been surveyed, so the count is a floor"
+              : " — nothing has surveyed this genome for clusters"}
+        </title>
         {/* Finger-sized hit area for the tip. A `tier.radius` of 2.5–6px is
             a comfortable mouse target and an unreachable touch one; the halo
             is transparent, so nothing about the drawn figure changes. */}
@@ -1841,12 +2054,20 @@ function GenomeNode({
             strokeWidth={1.75 * gls}
           />
         )}
+        {/* The tip's own coverage, which it could not previously state.
+            `coverage` appeared nowhere in this component, so a genome
+            nobody has looked at and a genome surveyed and found empty were
+            the same muted dot — the tip-level form of exactly the conflation
+            the clade glyph was built to end. Dashed and hollow for "nothing
+            has looked"; the solid muted dot keeps its old meaning of a real
+            result with nothing in it. */}
         <circle
           r={tier.radius * gls}
-          fill={tier.muted ? COLORS.line : dominantColor}
-          stroke={tier.muted ? COLORS.lineStrong : COLORS.ink}
-          strokeWidth={(tier.muted ? 0.75 : 1) * gls}
-          opacity={tier.muted ? 0.65 : 1}
+          fill={unsurveyed ? COLORS.paper : tier.muted ? COLORS.line : dominantColor}
+          stroke={tier.muted || unsurveyed ? COLORS.lineStrong : COLORS.ink}
+          strokeWidth={(tier.muted && !unsurveyed ? 0.75 : 1) * gls}
+          strokeDasharray={unsurveyed ? `${1.5 * gls} ${1.5 * gls}` : undefined}
+          opacity={tier.muted && !unsurveyed ? 0.65 : 1}
         />
         {matched && showLabel && (
           <rect
