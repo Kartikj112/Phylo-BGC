@@ -129,3 +129,10 @@ high-value step.
 
 See `PROGRESS.md` for what remains genuinely unverified, and `ARCHITECTURE.md`
 for design rationale.
+
+## Acknowledgements
+
+The author gratefully acknowledges the Director, CSIR–National Institute of
+Oceanography (CSIR-NIO), Goa, for institutional support and access to
+facilities, and Dr. Narsinh L. Thakur for his guidance, encouragement and
+support throughout the development of this work.
