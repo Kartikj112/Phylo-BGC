@@ -37,6 +37,8 @@ import type {
   SearchResponse,
   BGCClassVocabulary,
   TaxonTreeNode,
+  BackboneStatus,
+  BackboneTreeNode,
 } from "./api-types";
 
 export class ApiError extends Error {
@@ -133,6 +135,25 @@ export type TreeScope = "all" | "prokaryote" | "eukaryote";
 
 export function fetchTaxonomyTree(scope: TreeScope = "all"): Promise<TaxonTreeNode> {
   return getJson<TaxonTreeNode>(`/api/v1/taxonomy-tree?scope=${scope}`);
+}
+
+/** Whether the whole-taxonomy backbone is loaded for `scope`. It is an
+ * optional load, so the interface asks before offering it. */
+export function fetchBackboneStatus(scope: TreeScope): Promise<BackboneStatus> {
+  return getJson<BackboneStatus>(`/api/v1/backbone/status?scope=${scope}`);
+}
+
+/** One clade of the reference backbone (the root when `parent` is omitted)
+ * and `depth` levels below it, with the corpus laid over it. `parent` is a
+ * node's `backbone_id`, not its `id`. */
+export function fetchBackboneTree(
+  scope: TreeScope,
+  parent?: string | null,
+  depth = 1,
+): Promise<BackboneTreeNode> {
+  const params = new URLSearchParams({ scope, depth: String(depth) });
+  if (parent) params.set("parent", parent);
+  return getJson<BackboneTreeNode>(`/api/v1/backbone/tree?${params}`);
 }
 
 /** Both BGC-class vocabularies, plus the note explaining how they differ.

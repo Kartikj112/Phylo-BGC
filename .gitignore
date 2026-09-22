@@ -36,3 +36,32 @@ engine/openapi.json
 # specs in web/e2e/ are checked in; their run artifacts are not.
 web/test-results/
 web/playwright-report/
+
+# The shipped corpus is tracked on purpose, despite the *.db rule above: the
+# API serves it as-is. Other local databases (real.db, *.backup.db) stay out.
+!engine/gtdb_mibig_bundled.db
+
+# Hypothesis example database (property-based test cache)
+.hypothesis/
+
+# Any other local env file; only the committed *.example templates are tracked
+.env.*
+!.env*.example
+
+# Logs and caches
+*.log
+npm-debug.log*
+.eslintcache
+coverage/
+
+# Deployment CLI state
+.vercel/
+.fly/
+
+# Editor and OS clutter
+.vscode/
+.idea/
+*.swp
+*~
+Thumbs.db
+desktop.ini

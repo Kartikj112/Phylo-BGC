@@ -26,6 +26,8 @@ import { WelcomeDialog } from "@/components/WelcomeDialog";
 import { QuickTour } from "@/components/QuickTour";
 import { TreeCanvas } from "@/components/TreeCanvas";
 import { useTaxonomyTree } from "@/hooks/useTaxonomyTree";
+import { useBackboneTree } from "@/hooks/useBackboneTree";
+import { asTaxonTree, isComparable } from "@/lib/backbone";
 import { fetchBgcClasses, search, invalidateApiCache } from "@/lib/api-client";
 import type { BGCFamilySummary, TaxonTreeNode } from "@/lib/api-types";
 import { CLASS_ORDER } from "@/lib/colors";
@@ -46,7 +48,9 @@ import {
   familyMembershipSets,
   familyMembershipSetsForAny,
   familyTreeIndex,
+  filtersAreActive,
   findMibigEntry,
+  findNodeByKey,
   findTaxonKeyByName,
   groupUnplacedTaxa,
   pruneToBgcBearing,
@@ -88,7 +92,30 @@ export default function HomePage() {
   const [view, setView] = useState<"tree" | "flow" | "heatmap">("tree");
   const isTreeView = view === "tree";
   const treeScope = taxonomy;
-  const { tree, loading, error, reload: reloadTree } = useTaxonomyTree(treeScope);
+  const { tree: corpusTree, loading, error, reload: reloadTree } = useTaxonomyTree(treeScope);
+  // "All GTDB genomes": the whole reference taxonomy behind the corpus,
+  // loaded a clade at a time (see lib/backbone.ts). Off by default, offered
+  // only where a backbone is loaded (GTDB, so prokaryotes), and deep-linkable
+  // with ?backbone=1.
+  const [showAllGenomes, setShowAllGenomes] = useState(false);
+  useEffect(() => {
+    if (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("backbone") === "1") {
+      setShowAllGenomes(true);
+    }
+  }, []);
+  const backbone = useBackboneTree(treeScope, showAllGenomes && treeScope === "prokaryote");
+  const backboneOn = showAllGenomes && backbone.tree !== null;
+  const backboneOffered = taxonomy === "prokaryote" && backbone.status?.available === true;
+  const referenceSource =
+    backboneOn && backbone.status?.source_name
+      ? `${backbone.status.source_name} ${backbone.status.source_version ?? ""}`.trim()
+      : null;
+  // The corpus tree stays on screen until the backbone arrives, and is what
+  // every view falls back to when no backbone is loaded.
+  const tree = useMemo(
+    () => (backboneOn && backbone.tree ? asTaxonTree(backbone.tree) : corpusTree),
+    [backboneOn, backbone.tree, corpusTree],
+  );
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [activeClasses, setActiveClasses] = useState<Set<string>>(new Set(CLASS_ORDER));
   const [query, setQuery] = useState("");
@@ -160,6 +187,11 @@ export default function HomePage() {
   }, []);
 
   function toggleComparisonTaxon(taxonId: string): void {
+    // Clade comparison reads corpus taxa. A clade that is only in the
+    // backbone has nothing for it to compare, and would come back as an
+    // error from the endpoint.
+    const node = fullRoot ? findNodeByKey(fullRoot, taxonId) : null;
+    if (node && !isComparable(node)) return;
     setComparisonTaxonIds((prev) =>
       prev.includes(taxonId) ? prev.filter((id) => id !== taxonId) : [...prev, taxonId],
     );
@@ -170,12 +202,12 @@ export default function HomePage() {
     [tree],
   );
   const pruned = useMemo(
-    () => (fullRoot ? pruneToBgcBearing(fullRoot, onlyWithBgcs) : null),
-    [fullRoot, onlyWithBgcs],
+    () => (fullRoot ? pruneToBgcBearing(fullRoot, onlyWithBgcs, backboneOn) : null),
+    [fullRoot, onlyWithBgcs, backboneOn],
   );
   const filtered = useMemo(
-    () => (pruned ? applyGenomeFilters(pruned.root, filters) : null),
-    [pruned, filters],
+    () => (pruned ? applyGenomeFilters(pruned.root, filters, backboneOn) : null),
+    [pruned, filters, backboneOn],
   );
   const focused = useMemo(
     () => (filtered ? applyFocus(filtered.root, focusKey) : null),
@@ -288,7 +320,7 @@ export default function HomePage() {
     setSelectedFamilyId(null);
     setComparisonTaxonIds([]);
     setNodeOffsets(new Map());
-  }, [treeScope]);
+  }, [treeScope, backboneOn]);
 
 
   // Open on a readable summary, not on every leaf at once.
@@ -321,6 +353,7 @@ export default function HomePage() {
     // faithfully redraw the tree without the genome that was just added.
     invalidateApiCache();
     reloadTree();
+    backbone.reload();
     if (accessions.length === 0) return;
     setUploaded({ accessions, familyIds });
     // A focus left over from earlier browsing would crop the tree to a clade
@@ -509,6 +542,20 @@ export default function HomePage() {
   }
 
   function toggleCollapse(key: string): void {
+    // A backbone clade that has not been fetched opens by fetching it. A
+    // level preset may have put its key in `collapsed`; take it out, or the
+    // children would arrive into a clade that stays shut.
+    if (backboneOn && backbone.expand(key)) {
+      setActiveLevel(null);
+      setAutoFramed(false);
+      setCollapsed((prev) => {
+        if (!prev.has(key)) return prev;
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+      return;
+    }
     // Once a node is toggled by hand the tree no longer matches the
     // preset, so the highlight is cleared rather than left claiming a
     // depth that isn't true any more.
@@ -605,6 +652,33 @@ export default function HomePage() {
             </button>
           ))}
         </div>
+
+        {backboneOffered && (
+          <button
+            onClick={() => setShowAllGenomes((v) => !v)}
+            aria-pressed={showAllGenomes}
+            title={
+              showAllGenomes && backbone.error
+                ? `Could not load the backbone (${backbone.error.message}). Click to switch it off.`
+                : showAllGenomes
+                ? "Back to the corpus alone: only genomes this database records something for."
+                : `Draw all ${backbone.status?.reference_genome_count.toLocaleString("en-US") ?? ""} ${
+                    backbone.status?.source_name ?? ""
+                  } genomes behind the corpus, a clade at a time. None of them has been examined for clusters.`
+            }
+            className={`flex-shrink-0 whitespace-nowrap rounded border border-chrome-line px-2.5 py-1.5 text-xs ${
+              showAllGenomes
+                ? "bg-chrome-accent-wash text-chrome-accent"
+                : "text-chrome-ink-muted hover:bg-chrome-soft hover:text-chrome-ink"
+            }`}
+          >
+            {showAllGenomes && backbone.error
+              ? `${backbone.status?.source_name ?? "Backbone"} failed to load`
+              : showAllGenomes && backbone.loading
+                ? `Loading ${backbone.status?.source_name ?? ""}…`
+                : `All ${backbone.status?.source_name ?? ""} genomes`}
+          </button>
+        )}
 
         <div
           data-tour="views"
@@ -738,6 +812,15 @@ export default function HomePage() {
         shownGenomes={genomeCount}
         totalGenomes={pruned?.totalGenomes ?? 0}
         scope={treeScope}
+        reference={
+          referenceSource && backbone.status
+            ? {
+                source: referenceSource,
+                genomes: backbone.status.reference_genome_count,
+                species: backbone.status.reference_species_count,
+              }
+            : null
+        }
       />
 
       {isTreeView && selectedFamilyId && familyDist && (
@@ -869,6 +952,12 @@ export default function HomePage() {
               total={pruned?.shownGenomes ?? 0}
               filteredEverythingOut={filtered?.filteredEverythingOut ?? false}
             />
+            {backboneOn && filtersAreActive(filters) && (
+              <p className="mt-2 text-xs leading-relaxed text-chrome-ink-faint">
+                Filters test genomes, so they apply only to clades that have been opened. An
+                unopened clade is drawn whole until you open it.
+              </p>
+            )}
           </RailSection>
           <SiteFooter />
           </div>
@@ -976,6 +1065,8 @@ export default function HomePage() {
               onNodeDrag={nudgeNode}
               showRegions={showRegions}
               alignedGlyphs={alignedGlyphs}
+              referenceSource={referenceSource}
+              expandingKeys={backbone.expanding}
             />
           )}
         </main>

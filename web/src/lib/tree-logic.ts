@@ -13,6 +13,7 @@
  */
 import * as d3 from "d3";
 import type { BGCSummary, DisplayNode, GenomeDisplayNode, TaxonDisplayNode, TaxonTreeNode } from "./api-types";
+import { bgcGenomeCount, curatedOnlyCount, isUnloadedClade, referenceGenomeCount } from "./backbone";
 
 export function toRootDisplayNode(tree: TaxonTreeNode): TaxonDisplayNode {
   return { ...tree, _kind: "taxon" };
@@ -983,7 +984,17 @@ export interface PrunedTree {
   fellBackToFull: boolean;
 }
 
-export function pruneToBgcBearing(root: TaxonDisplayNode, enabled: boolean): PrunedTree {
+/**
+ * `keepReferenceClades`: with the backbone on, a clade that exists only in the
+ * reference taxonomy has no clusters by construction, since nothing examined
+ * it. Pruning it would turn "show all genomes" back into the corpus view, so
+ * such clades are kept; corpus genomes without clusters are still dropped.
+ */
+export function pruneToBgcBearing(
+  root: TaxonDisplayNode,
+  enabled: boolean,
+  keepReferenceClades = false,
+): PrunedTree {
   const totalGenomes = root.genome_count;
 
   if (!enabled) {
@@ -999,10 +1010,22 @@ export function pruneToBgcBearing(root: TaxonDisplayNode, enabled: boolean): Pru
   let shown = 0;
 
   function prune(node: TaxonTreeNode): TaxonTreeNode {
+    // An unloaded backbone clade has nothing on the client to prune, and
+    // recounting it from its (empty) children would report zero genomes.
+    // It is drawn whole; the "shown" figure takes the server's count of its
+    // genomes with clusters, which is what this prune would have kept.
+    if (isUnloadedClade(node)) {
+      shown += bgcGenomeCount(node);
+      return node;
+    }
     const genomes = node.direct_genomes.filter((g) => g.bgcs.length > 0);
     shown += genomes.length;
     const children = node.children
-      .filter((c) => subtreeHasBgcs({ ...c, _kind: "taxon" }))
+      .filter(
+        (c) =>
+          subtreeHasBgcs({ ...c, _kind: "taxon" }) ||
+          (keepReferenceClades && referenceGenomeCount(c) > 0),
+      )
       .map(prune);
     return {
       ...node,
@@ -1110,6 +1133,21 @@ export function coverageRollupIndex(root: TaxonDisplayNode): Map<string, Coverag
   }
 
   function walk(node: TaxonTreeNode): CoverageRollup {
+    if (isUnloadedClade(node)) {
+      // Its genomes are not on the client, so take the server's split of
+      // the whole clade. Whatever is not examined or curated-only is
+      // unexamined, the same residual rule as for single genomes above.
+      const examined = node.examined_genome_count;
+      const curatedOnly = curatedOnlyCount(node);
+      const rollup: CoverageRollup = {
+        genomeCount: node.genome_count,
+        examined,
+        curatedOnly,
+        unexamined: Math.max(0, node.genome_count - examined - curatedOnly),
+      };
+      index.set(nodeKey({ ...node, _kind: "taxon" }), rollup);
+      return rollup;
+    }
     const here: CoverageRollup = { genomeCount: 0, examined: 0, curatedOnly: 0, unexamined: 0 };
     for (const genome of node.direct_genomes) {
       // An unrecognised state counts as a genome and as nothing else, so a
@@ -1415,6 +1453,7 @@ export function genomePassesFilters(genome: GenomeDisplayNode, f: GenomeFilters)
 export function applyGenomeFilters(
   root: TaxonDisplayNode,
   filters: GenomeFilters,
+  keepReferenceClades = false,
 ): { root: TaxonDisplayNode; matched: number; filteredEverythingOut: boolean } {
   if (!filtersAreActive(filters)) {
     return { root, matched: root.genome_count, filteredEverythingOut: false };
@@ -1422,11 +1461,17 @@ export function applyGenomeFilters(
 
   let matched = 0;
   function prune(node: TaxonTreeNode): TaxonTreeNode {
+    // Filters test genomes, and an unloaded backbone clade's genomes are not
+    // on the client. It passes through untested until it is opened, and is
+    // not counted as matched.
+    if (isUnloadedClade(node)) return node;
     const genomes = node.direct_genomes.filter((g) =>
       genomePassesFilters({ ...g, _kind: "genome" }, filters),
     );
     matched += genomes.length;
-    const children = node.children.map(prune).filter((c) => c.genome_count > 0);
+    const children = node.children
+      .map(prune)
+      .filter((c) => c.genome_count > 0 || (keepReferenceClades && referenceGenomeCount(c) > 0));
     return {
       ...node,
       direct_genomes: genomes,

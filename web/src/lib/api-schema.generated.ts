@@ -72,6 +72,56 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/backbone/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Backbone Status
+         * @description Whether the whole-taxonomy backbone is loaded for `scope`.
+         *
+         *     The interface asks this before offering "show all genomes": the backbone
+         *     is an optional load, and a toggle that fails when pressed is worse than
+         *     one that is not there.
+         */
+        get: operations["get_backbone_status_api_v1_backbone_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/backbone/tree": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Backbone Tree
+         * @description The reference taxonomy, one clade at a time, with the corpus over it.
+         *
+         *     Without `parent`, the root and `depth` levels below it; with it, that
+         *     backbone node (its `backbone_id`) and `depth` levels below. Corpus
+         *     fields keep their `/taxonomy-tree` meaning; `reference_*` fields count
+         *     the reference release, none of whose genomes has been examined. See
+         *     api/backbone_tree.py.
+         */
+        get: operations["get_backbone_tree_api_v1_backbone_tree_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/bgc-classes": {
         parameters: {
             query?: never;
@@ -657,6 +707,109 @@ export interface components {
             bgc_class: string;
             /** Count */
             count: number;
+        };
+        /**
+         * BackboneStatus
+         * @description Whether a backbone is loaded for a taxonomy, and what it holds.
+         */
+        BackboneStatus: {
+            /** Scope */
+            scope: string;
+            /** Available */
+            available: boolean;
+            /** Reason */
+            reason?: string | null;
+            /** Source Name */
+            source_name?: string | null;
+            /** Source Version */
+            source_version?: string | null;
+            /**
+             * Clade Count
+             * @default 0
+             */
+            clade_count: number;
+            /**
+             * Reference Genome Count
+             * @default 0
+             */
+            reference_genome_count: number;
+            /**
+             * Reference Species Count
+             * @default 0
+             */
+            reference_species_count: number;
+        };
+        /**
+         * BackboneTreeNode
+         * @description A clade of the reference backbone, with the corpus laid over it.
+         *
+         *     Deliberately a superset of `TaxonTreeNode`: every field the tree
+         *     renderer already reads means exactly what it means there, and describes
+         *     the **corpus** under this clade. `genome_count` is still "corpus genomes
+         *     here", so no coverage glyph, filter or statistic changes meaning when the
+         *     backbone is switched on. What the backbone adds is in the `reference_*`
+         *     fields, which describe the reference release, and none of whose genomes
+         *     has been examined for clusters.
+         *
+         *     `id` is the corpus taxon's id when the clade is in the corpus (so
+         *     comparison, search and family highlighting keep working), otherwise the
+         *     backbone node's. `backbone_id` is what to ask for this clade's children.
+         */
+        BackboneTreeNode: {
+            /** Id */
+            id: string | null;
+            /** Name */
+            name: string;
+            rank: components["schemas"]["TaxonRank"] | null;
+            /** Genome Count */
+            genome_count: number;
+            /**
+             * Examined Genome Count
+             * @default 0
+             */
+            examined_genome_count: number;
+            /** Bgc Class Counts */
+            bgc_class_counts: {
+                [key: string]: number;
+            };
+            /** Direct Genomes */
+            direct_genomes: components["schemas"]["GenomeSummary"][];
+            /** Children */
+            children: components["schemas"]["BackboneTreeNode"][];
+            /** Backbone Id */
+            backbone_id: string | null;
+            /** Corpus Taxon Id */
+            corpus_taxon_id: string | null;
+            /**
+             * Curated Only Genome Count
+             * @default 0
+             */
+            curated_only_genome_count: number;
+            /**
+             * Bgc Genome Count
+             * @default 0
+             */
+            bgc_genome_count: number;
+            /** Reference Genome Count */
+            reference_genome_count: number;
+            /** Reference Species Count */
+            reference_species_count: number;
+            /** Representative Accession */
+            representative_accession?: string | null;
+            /** Child Count */
+            child_count: number;
+            /** Children Loaded */
+            children_loaded: boolean;
+            /**
+             * Omitted Child Count
+             * @default 0
+             */
+            omitted_child_count: number;
+            /**
+             * Omitted Reference Genome Count
+             * @default 0
+             */
+            omitted_reference_genome_count: number;
         };
         /** Body_ingest_antismash_upload_api_v1_ingest_antismash_post */
         Body_ingest_antismash_upload_api_v1_ingest_antismash_post: {
@@ -1490,6 +1643,71 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LazyTreeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_backbone_status_api_v1_backbone_status_get: {
+        parameters: {
+            query?: {
+                scope?: "all" | "prokaryote" | "eukaryote";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackboneStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_backbone_tree_api_v1_backbone_tree_get: {
+        parameters: {
+            query?: {
+                scope?: "all" | "prokaryote" | "eukaryote";
+                parent?: string | null;
+                depth?: number;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackboneTreeNode"];
                 };
             };
             /** @description Validation Error */

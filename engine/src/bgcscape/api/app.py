@@ -35,6 +35,13 @@ from bgcscape.api.security import (
     RateLimitMiddleware,
     SecurityHeadersMiddleware,
 )
+from bgcscape.api.backbone_tree import (
+    DEFAULT_LIMIT as BACKBONE_DEFAULT_LIMIT,
+    BackboneNodeNotFound,
+    BackboneUnavailable,
+    backbone_status,
+    build_backbone_tree,
+)
 from bgcscape.api.lazy_tree import LazyTreeError, build_lazy_tree
 from bgcscape.api.uploads import (
     get_or_create_upload_source,
@@ -50,6 +57,8 @@ from bgcscape.api.comparison import (
 from bgcscape.api.schemas import (
     AnalysisRunSummary,
     AntismashUploadResponse,
+    BackboneStatus,
+    BackboneTreeNode,
     ClusteringOutcomeOut,
     BGCDetail,
     BGCFamilyDetail,
@@ -289,6 +298,46 @@ def get_lazy_tree(
     except LazyTreeError as exc:
         detail = str(exc)
         raise HTTPException(status_code=404 if "not found" in detail else 422, detail=detail) from exc
+
+
+@app.get("/api/v1/backbone/status", response_model=BackboneStatus)
+def get_backbone_status(
+    scope: TreeScope = "prokaryote",
+    session: Session = Depends(get_session),
+) -> BackboneStatus:
+    """Whether the whole-taxonomy backbone is loaded for `scope`.
+
+    The interface asks this before offering "show all genomes": the backbone
+    is an optional load, and a toggle that fails when pressed is worse than
+    one that is not there.
+    """
+    return backbone_status(session, scope)
+
+
+@app.get("/api/v1/backbone/tree", response_model=BackboneTreeNode)
+def get_backbone_tree(
+    scope: TreeScope = "prokaryote",
+    parent: uuid.UUID | None = None,
+    depth: int = 1,
+    limit: int = BACKBONE_DEFAULT_LIMIT,
+    session: Session = Depends(get_session),
+) -> BackboneTreeNode:
+    """The reference taxonomy, one clade at a time, with the corpus over it.
+
+    Without `parent`, the root and `depth` levels below it; with it, that
+    backbone node (its `backbone_id`) and `depth` levels below. Corpus
+    fields keep their `/taxonomy-tree` meaning; `reference_*` fields count
+    the reference release, none of whose genomes has been examined. See
+    api/backbone_tree.py.
+    """
+    try:
+        return build_backbone_tree(session, scope, parent=parent, depth=depth, limit=limit)
+    except BackboneUnavailable as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except BackboneNodeNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.get("/api/v1/bgc-classes", response_model=BGCClassVocabulary)

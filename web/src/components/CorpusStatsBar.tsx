@@ -15,6 +15,14 @@ interface CorpusStatsBarProps {
   totalGenomes: number;
   /** Which taxonomy is on screen. Every figure in this bar is scoped to it. */
   scope: TreeScope;
+  /** Set while the reference backbone is drawn behind the corpus. None of
+   * the bar's figures changes (they describe the corpus); this says what
+   * else is on screen and what it does not license. */
+  reference?: {
+    source: string;
+    genomes: number;
+    species: number;
+  } | null;
 }
 
 /**
@@ -49,6 +57,7 @@ export function CorpusStatsBar({
   shownGenomes,
   totalGenomes,
   scope,
+  reference = null,
 }: CorpusStatsBarProps) {
   const [counts, setCounts] = useState<BGCTypeCount[] | null>(null);
   const [provenance, setProvenance] = useState<DatasetProvenanceResponse | null>(null);
@@ -224,6 +233,17 @@ export function CorpusStatsBar({
           No genome in this corpus has been examined for clusters. Every cluster shown is a
           curated report, not a survey result — an empty clade here is not evidence that it
           produces nothing.
+        </p>
+      )}
+
+      {reference && (
+        <p className="w-full text-[10px] leading-tight text-chrome-ink-faint sm:text-[11px]">
+          Showing all of {reference.source} behind the corpus:{" "}
+          {reference.genomes.toLocaleString("en-US")} genomes in{" "}
+          {reference.species.toLocaleString("en-US")} species. Faint, dashed clades are in{" "}
+          {reference.source} only, and none of its genomes has been examined for clusters.
+          Open a clade to load what is inside it. The figures above still count this corpus
+          only.
         </p>
       )}
     </div>

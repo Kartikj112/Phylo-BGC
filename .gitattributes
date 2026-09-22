@@ -1,0 +1,7 @@
+# Shell scripts must keep LF endings everywhere: with Windows' default
+# core.autocrlf=true, Git would check start.sh out with CRLF, and bash then
+# fails on the stray \r in every line.
+*.sh text eol=lf
+
+# The bundled SQLite corpus is binary; never let Git touch its bytes.
+*.db binary

@@ -35,11 +35,6 @@ RUN pip install ".[api,export]"
 
 COPY . .
 
-# Serve the pre-built GTDB + MIBiG database (checked in, see header).
-ENV BGCSCAPE_DATABASE_URL=sqlite+pysqlite:////app/data/bgcscape.db \
-    BGCSCAPE_ENVIRONMENT=production
-RUN mkdir -p /app/data && cp gtdb_mibig_bundled.db /app/data/bgcscape.db
-
 # Drop root.
 #
 # The container ran as root, which is the default and is worth changing here
@@ -51,11 +46,45 @@ RUN mkdir -p /app/data && cp gtdb_mibig_bundled.db /app/data/bgcscape.db
 # to the SQLite file, and SQLite also needs to create `-wal`/`-journal`
 # siblings in the same DIRECTORY, so chowning the file alone would fail at
 # the first write with a confusing "readonly database".
+#
+# The user and directory are made BEFORE the database is written, and the
+# database is then written as that user. Chowning it afterwards, as this
+# file used to, copies the whole database into one more image layer, which
+# measured 300 MB extra once the GTDB backbone was in it.
 RUN useradd --create-home --uid 10001 bgcscape \
-    && chown -R bgcscape:bgcscape /app/data
+    && mkdir -p /app/data \
+    && chown bgcscape:bgcscape /app/data
 USER bgcscape
+
+# Serve the pre-built GTDB + MIBiG database (checked in, see header), brought
+# to the current schema. The bundled file is committed at whatever revision
+# it was built with; without the upgrade, a newer API would query tables
+# that file does not have (the backbone tables, most recently) and answer
+# 500.
+#
+# Optional: bake the whole GTDB taxonomy into the image, which turns on the
+# "All GTDB genomes" toggle. Off by default because it downloads ~300 MB
+# from GTDB at build time, needs ~500 MB of memory to load, and grows the
+# database from 17 MB to ~140 MB. Enable with
+#   docker build --build-arg WITH_GTDB_BACKBONE=1 ...
+# (or `docker compose build --build-arg WITH_GTDB_BACKBONE=1 api`).
+#
+# One RUN on purpose: every step that rewrites the database in a separate
+# layer leaves a full copy of it behind in the image.
+ENV BGCSCAPE_DATABASE_URL=sqlite+pysqlite:////app/data/bgcscape.db \
+    BGCSCAPE_ENVIRONMENT=production
+ARG WITH_GTDB_BACKBONE=0
+RUN cp gtdb_mibig_bundled.db /app/data/bgcscape.db \
+    && alembic upgrade head \
+    && if [ "$WITH_GTDB_BACKBONE" = "1" ]; then \
+        bgcscape fetch-gtdb-backbone --cache-dir /tmp/gtdb && rm -rf /tmp/gtdb; \
+    fi
 
 # Listen on $PORT when the platform provides one (Render sets it; Hugging
 # Face Spaces expects 7860 — set a PORT=7860 Space variable), else 8080.
 EXPOSE 8080
-CMD ["sh", "-c", "uvicorn bgcscape.api.app:app --host 0.0.0.0 --port ${PORT:-8080}"]
+#
+# Migrate again at start: a Docker volume mounted over /app/data keeps the
+# database from whichever image first created it, so the build-time upgrade
+# above never reaches it. A no-op when already current.
+CMD ["sh", "-c", "alembic upgrade head && uvicorn bgcscape.api.app:app --host 0.0.0.0 --port ${PORT:-8080}"]
