@@ -165,6 +165,40 @@ managed Postgres and run `bgcscape init-db` against it once.
 
 ---
 
+## 4c. The "All GTDB genomes" view
+
+The website has an **All GTDB genomes** button that draws GTDB's whole
+taxonomy (~900,000 genomes, ~250,000 clades) behind the corpus. It needs a
+separate, optional load, so **a default deployment does not have it**, and
+the button is simply not shown. Nothing else changes, and nothing breaks:
+`/api/v1/backbone/status` answers `available: false` and the site behaves
+exactly as before.
+
+The API image migrates its database at build time and again at start
+(`alembic upgrade head` in `engine/Dockerfile`). A new API version therefore
+never meets a database that lacks its tables, and an older database still
+answers `available: false` with a reason instead of an error.
+
+**To turn it on for a deployment**, build the API image with the build
+argument `WITH_GTDB_BACKBONE=1`. At build time it downloads ~300 MB from
+GTDB, checks it against GTDB's MD5s, and loads it into the image's database.
+Budget for this:
+
+| | |
+|---|---|
+| Build time | about 3–10 minutes more (mostly the download) |
+| Build memory | about 450 MB peak for the load |
+| Image | the database grows from 17 MB to ~140 MB |
+| Runtime | no extra memory worth measuring. Each clade opened is one query of about 0.05 s. |
+
+How you pass a build argument depends on the host. Locally it is
+`docker build --build-arg WITH_GTDB_BACKBONE=1 engine`. On a host that cannot
+pass one, load it into a running deployment's database instead:
+`bgcscape fetch-gtdb-backbone` against the same `BGCSCAPE_DATABASE_URL`. On
+Render's and Hugging Face's free tiers that database is ephemeral, so the
+load would be lost at the next restart, and the build argument is the way to
+go there. Check the free tier's build memory before relying on it.
+
 ## 5. Redeploys
 
 - **Frontend**: push to `main` → Vercel auto-deploys.

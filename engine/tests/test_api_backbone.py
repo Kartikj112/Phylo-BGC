@@ -81,7 +81,7 @@ def test_status_reports_what_is_loaded(session, corpus_and_backbone):
 def test_status_without_a_backbone_says_how_to_build_one(session, gtdb_source):
     status = backbone_status(session, "prokaryote")
     assert not status.available
-    assert "bgcscape ingest gtdb-backbone" in status.reason
+    assert "bgcscape fetch-gtdb-backbone" in status.reason
     with pytest.raises(BackboneUnavailable):
         build_backbone_tree(session, "prokaryote")
 
@@ -234,3 +234,22 @@ def test_http_without_a_backbone(api_client):  # noqa: F811
     assert response.status_code == 404
     assert "gtdb-backbone" in response.json()["detail"]
     assert api_client.get("/api/v1/backbone/tree?depth=9").status_code in (404, 422)
+
+
+def test_a_database_without_the_backbone_tables_reports_unavailable():
+    """A deployment still serving a pre-backbone database must say "no
+    backbone", not answer 500 from a missing table."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session as OrmSession
+
+    from bgcscape.models import Base
+
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    tables = [t for name, t in Base.metadata.tables.items() if not name.startswith("backbone_")]
+    Base.metadata.create_all(engine, tables=tables)
+    with OrmSession(engine) as old_session:
+        status = backbone_status(old_session, "prokaryote")
+        assert not status.available
+        assert "alembic upgrade head" in status.reason
+        with pytest.raises(BackboneUnavailable):
+            build_backbone_tree(old_session, "prokaryote")

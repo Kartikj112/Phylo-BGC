@@ -4,8 +4,12 @@
 .gitignore
 **/__pycache__
 **/*.pyc
-*.db
-*.sqlite3
+# `**/` matters: a bare `*.db` only matches the context root, and let
+# data/local.db (the start scripts' working copy, uploads and all) into
+# the image.
+**/*.db
+**/*.db-*
+**/*.sqlite3
 !gtdb_mibig_bundled.db
 .pytest_cache
 .mypy_cache

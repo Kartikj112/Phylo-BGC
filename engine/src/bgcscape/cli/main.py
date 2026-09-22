@@ -221,11 +221,56 @@ def ingest_gtdb_backbone_cmd(
     clusters, and nothing that computes over the corpus reads it. Loading
     the same release again replaces it.
     """
-    from bgcscape.ingest.backbone import build_backbone
-
     for path in paths:
         if not path.exists():
             raise typer.BadParameter(f"{path} not found")
+    _load_gtdb_backbone(paths, version, all_genomes)
+
+
+#: GTDB's own labels for the releases this project has been run against.
+#: Anything else is recorded as "RS<release>" unless --version is given.
+_GTDB_RELEASE_LABELS = {"220": "R09-RS220", "226": "R10-RS226", "232": "R11-RS232"}
+
+
+@app.command("fetch-gtdb-backbone")
+def fetch_gtdb_backbone_cmd(
+    release: str = typer.Option("232", help="GTDB release number."),
+    version: str | None = typer.Option(
+        None, help="Label for the Source row. Defaults to GTDB's own, e.g. R11-RS232 for 232."
+    ),
+    cache_dir: Path = typer.Option(
+        Path.home() / ".cache" / "bgcscape" / "gtdb",
+        help="Where downloaded files are kept. A file already there with the right checksum "
+        "is not downloaded again.",
+    ),
+    all_genomes: bool = typer.Option(False, "--all-genomes", help="See `ingest gtdb-backbone`."),
+    base_url: str = typer.Option(
+        "https://data.gtdb.ecogenomic.org/releases", help="GTDB release server (a mirror, if needed)."
+    ),
+) -> None:
+    """Download GTDB's metadata files and load the backbone, in one step.
+
+    Fetches about 300 MB (bacteria and archaea), checks each file against
+    GTDB's published MD5, then does what `ingest gtdb-backbone` does. Needs
+    about 500 MB of memory and a few minutes. This is what turns on the
+    "All GTDB genomes" toggle in the website.
+    """
+    from bgcscape.ingest.gtdb_download import GtdbDownloadError, fetch_release_metadata
+
+    label = version or _GTDB_RELEASE_LABELS.get(release, f"RS{release}")
+    typer.echo(f"Fetching GTDB release {release} metadata into {cache_dir} ...")
+    try:
+        paths = fetch_release_metadata(release, cache_dir, base_url=base_url)
+    except GtdbDownloadError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo("Loading the backbone (a few minutes) ...")
+    _load_gtdb_backbone(paths, label, all_genomes)
+
+
+def _load_gtdb_backbone(paths: list[Path], version: str, all_genomes: bool) -> None:
+    """Shared by `ingest gtdb-backbone` and `fetch-gtdb-backbone`."""
+    from bgcscape.ingest.backbone import build_backbone
 
     with session_scope() as session:
         source = _get_or_create_source(session, name="GTDB", source_type=SourceType.REFERENCE_DATABASE, version=version)

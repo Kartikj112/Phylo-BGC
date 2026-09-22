@@ -163,9 +163,11 @@ def build_backbone(
 
         evidence = EvidenceLevel.OBSERVED_CURATED
         # Parents first, so the self-referencing foreign key holds on
-        # databases that check it per statement.
-        node_rows = [
-            {
+        # databases that check it per statement. Rows are built one chunk
+        # at a time: materialising all ~250,000 (or ~900,000 genome) dicts
+        # at once was the largest single cost in a load's peak memory.
+        def node_row(node: _Node) -> dict:
+            return {
                 "id": node.id,
                 "parent_id": nodes[node.parent_key].id if node.parent_key else None,
                 "name": node.name,
@@ -176,23 +178,23 @@ def build_backbone(
                 "source_id": source.id,
                 "evidence_level": evidence,
             }
-            for _, node in ordered
-        ]
-        for start in range(0, len(node_rows), _CHUNK):
-            session.execute(insert(BackboneNode), node_rows[start : start + _CHUNK])
 
-        genome_rows = [
-            {
-                "accession": accession,
-                "node_id": nodes[key].id,
-                "is_species_representative": representative,
-                "source_id": source.id,
-                "evidence_level": evidence,
-            }
-            for accession, key, representative in genomes
-        ]
-        for start in range(0, len(genome_rows), _CHUNK):
-            session.execute(insert(BackboneGenome), genome_rows[start : start + _CHUNK])
+        for start in range(0, len(ordered), _CHUNK):
+            chunk = [node_row(node) for _, node in ordered[start : start + _CHUNK]]
+            session.execute(insert(BackboneNode), chunk)
+
+        for start in range(0, len(genomes), _CHUNK):
+            chunk = [
+                {
+                    "accession": accession,
+                    "node_id": nodes[key].id,
+                    "is_species_representative": representative,
+                    "source_id": source.id,
+                    "evidence_level": evidence,
+                }
+                for accession, key, representative in genomes[start : start + _CHUNK]
+            ]
+            session.execute(insert(BackboneGenome), chunk)
         session.commit()
     except Exception:
         session.rollback()

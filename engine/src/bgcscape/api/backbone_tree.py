@@ -38,7 +38,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import exists, func
+from sqlalchemy import exists, func, inspect
 from sqlalchemy.orm import Session
 
 from bgcscape.api.schemas import BackboneStatus, BackboneTreeNode, TaxonTreeNode
@@ -69,10 +69,20 @@ class BackboneNodeNotFound(LookupError):
 # ----- source and status ----------------------------------------------------
 
 
+def _schema_has_backbone(session: Session) -> bool:
+    """Whether the database has been migrated to include the backbone tables.
+
+    A deployment serving a database built before them (the bundled corpus
+    was, until its image started running migrations) must answer "no
+    backbone" rather than a 500 from querying a table that is not there.
+    """
+    return inspect(session.get_bind()).has_table(BackboneNode.__tablename__)
+
+
 def backbone_source(session: Session, scope: TreeScope) -> Source | None:
     """The most recently loaded release with a backbone for `scope`."""
     name = _SOURCE_FOR_SCOPE.get(scope)
-    if name is None:
+    if name is None or not _schema_has_backbone(session):
         return None
     return (
         session.query(Source)
@@ -82,22 +92,24 @@ def backbone_source(session: Session, scope: TreeScope) -> Source | None:
     )
 
 
-def _unavailable_reason(scope: TreeScope) -> str:
+def _unavailable_reason(scope: TreeScope, session: Session | None = None) -> str:
+    if session is not None and not _schema_has_backbone(session):
+        return "This database predates the backbone. Run `alembic upgrade head`, then load one."
     if scope not in _SOURCE_FOR_SCOPE:
         return (
             "No reference backbone exists for this taxonomy yet. The GTDB backbone covers "
             "bacteria and archaea only."
         )
     return (
-        "No GTDB backbone is loaded. Build it with `bgcscape ingest gtdb-backbone "
-        "bac120_metadata.tsv.gz ar53_metadata.tsv.gz`."
+        "No GTDB backbone is loaded. Load it with `bgcscape fetch-gtdb-backbone` (downloads "
+        "about 300 MB from GTDB), or from local files with `bgcscape ingest gtdb-backbone`."
     )
 
 
 def backbone_status(session: Session, scope: TreeScope) -> BackboneStatus:
     source = backbone_source(session, scope)
     if source is None:
-        return BackboneStatus(scope=scope, available=False, reason=_unavailable_reason(scope))
+        return BackboneStatus(scope=scope, available=False, reason=_unavailable_reason(scope, session))
     clades = session.query(func.count(BackboneNode.id)).filter(BackboneNode.source_id == source.id).scalar()
     genomes, species = (
         session.query(func.sum(BackboneNode.genome_count), func.sum(BackboneNode.species_count))
@@ -340,7 +352,7 @@ def build_backbone_tree(
         raise ValueError(f"limit must be between 1 and {MAX_LIMIT}")
     source = backbone_source(session, scope)
     if source is None:
-        raise BackboneUnavailable(_unavailable_reason(scope))
+        raise BackboneUnavailable(_unavailable_reason(scope, session))
 
     builder = _Builder(session, source, _corpus_index(session, scope), limit)
 
