@@ -1,6 +1,48 @@
+# Run the whole tool with Docker, nothing else installed:
+#
+#     docker compose up --build        then open http://localhost:3000
+#
+# `api` serves the bundled dataset (engine/gtdb_mibig_bundled.db); `web` is
+# the website. Uploads you make are kept in the `phylo_data` volume between
+# runs. `docker compose down -v` deletes it and starts again from the bundled
+# data (do that after a `git pull` that changed the dataset).
+#
+# Developers: Postgres + Adminer are here too, off by default. Start them with
+#     docker compose up -d postgres        (Adminer: docker compose up -d adminer)
+# naming a service starts it even though it sits behind the `postgres` profile.
+
 services:
+  api:
+    build: ./engine
+    environment:
+      PORT: "8000"
+      BGCSCAPE_CORS_ALLOW_ORIGINS: "http://localhost:3000,http://127.0.0.1:3000"
+    ports:
+      - "8000:8000"
+    volumes:
+      # A fresh named volume is filled from the image's /app/data (the copied
+      # bundled database) the first time, so this keeps uploads without
+      # hiding the dataset.
+      - phylo_data:/app/data
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./web
+      args:
+        # The address the VIEWER'S BROWSER uses to reach the API, so the
+        # published port on localhost, not the compose service name.
+        NEXT_PUBLIC_API_URL: "http://localhost:8000"
+        NEXT_PUBLIC_SITE_URL: "http://localhost:3000"
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+    restart: unless-stopped
+
   postgres:
     image: postgres:16
+    profiles: ["postgres"]
     restart: unless-stopped
     environment:
       POSTGRES_USER: bgcscape
@@ -18,6 +60,7 @@ services:
 
   adminer:
     image: adminer
+    profiles: ["postgres"]
     restart: unless-stopped
     ports:
       - "8081:8080"
@@ -25,4 +68,5 @@ services:
       - postgres
 
 volumes:
+  phylo_data:
   bgcscape_pgdata:
