@@ -574,6 +574,75 @@ class LazyTreeResponse(BaseModel):
     total_genomes: int
     total_bgcs: int
 
+class BackboneTreeNode(BaseModel):
+    """A clade of the reference backbone, with the corpus laid over it.
+
+    Deliberately a superset of `TaxonTreeNode`: every field the tree
+    renderer already reads means exactly what it means there, and describes
+    the **corpus** under this clade. `genome_count` is still "corpus genomes
+    here", so no coverage glyph, filter or statistic changes meaning when the
+    backbone is switched on. What the backbone adds is in the `reference_*`
+    fields, which describe the reference release, and none of whose genomes
+    has been examined for clusters.
+
+    `id` is the corpus taxon's id when the clade is in the corpus (so
+    comparison, search and family highlighting keep working), otherwise the
+    backbone node's. `backbone_id` is what to ask for this clade's children.
+    """
+
+    id: str | None
+    name: str
+    rank: TaxonRank | None
+    genome_count: int
+    examined_genome_count: int = 0
+    bgc_class_counts: dict[str, int]
+    direct_genomes: list[GenomeSummary]
+    children: list["BackboneTreeNode"]
+
+    backbone_id: uuid.UUID | None
+    """None for a corpus clade the reference taxonomy does not contain (a
+    MIBiG organism grafted under a GTDB genus under its own name, say). Such
+    a clade arrives whole, with `children_loaded` true."""
+    corpus_taxon_id: uuid.UUID | None
+    curated_only_genome_count: int = 0
+    """Of `genome_count`, how many carry curated clusters with no detection
+    run behind them (see `bgcscape.coverage`). Sent because a client cannot
+    roll the three coverage states up from genomes it has not loaded; with
+    `examined_genome_count` it completes the split for an unloaded clade."""
+    reference_genome_count: int
+    """Genomes in the reference release under this clade. Never examined."""
+    reference_species_count: int
+    representative_accession: str | None = None
+    """Species only: the reference's representative genome for it."""
+    child_count: int
+    """Children this clade has in total, loaded or not."""
+    children_loaded: bool
+    """Whether `children` is the full set that will be shown (ask the
+    endpoint with `parent=backbone_id` when it is not)."""
+    omitted_child_count: int = 0
+    """Children left out because the clade has more than `limit`. Never
+    corpus clades: those are always included. The omitted ones are
+    reference-only, and are summarised rather than listed."""
+    omitted_reference_genome_count: int = 0
+
+
+BackboneTreeNode.model_rebuild()
+
+
+class BackboneStatus(BaseModel):
+    """Whether a backbone is loaded for a taxonomy, and what it holds."""
+
+    scope: str
+    available: bool
+    reason: str | None = None
+    """Why not, in words a reader can act on, when `available` is false."""
+    source_name: str | None = None
+    source_version: str | None = None
+    clade_count: int = 0
+    reference_genome_count: int = 0
+    reference_species_count: int = 0
+
+
 class UploadedGenomeOut(BaseModel):
     """What became of one uploaded antiSMASH result file.
 

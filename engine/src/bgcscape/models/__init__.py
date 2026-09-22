@@ -7,6 +7,7 @@ import models via `bgcscape.models` (or ensure it has been imported)
 rather than reaching into individual submodules first.
 """
 from bgcscape.models.analysis import AnalysisRun, AnalysisRunCoverage, AnalysisType
+from bgcscape.models.backbone import BackboneGenome, BackboneNode
 from bgcscape.models.base import Base, EvidenceLevel, ProvenanceMixin, TimestampMixin
 from bgcscape.models.bgc import BGC, BGCClass
 from bgcscape.models.bgc_family import BGCFamily, BGCFamilyMembership, FamilyKind
@@ -45,6 +46,8 @@ __all__ = [
     "AnalysisRun",
     "AnalysisRunCoverage",
     "AnalysisType",
+    "BackboneNode",
+    "BackboneGenome",
     "BGCOrganismPlacement",
     "PlacementMethod",
     "PlacementConfidence",

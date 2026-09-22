@@ -26,6 +26,8 @@ import { WelcomeDialog } from "@/components/WelcomeDialog";
 import { QuickTour } from "@/components/QuickTour";
 import { TreeCanvas } from "@/components/TreeCanvas";
 import { useTaxonomyTree } from "@/hooks/useTaxonomyTree";
+import { useBackboneTree } from "@/hooks/useBackboneTree";
+import { asTaxonTree } from "@/lib/backbone";
 import { fetchBgcClasses, search, invalidateApiCache } from "@/lib/api-client";
 import type { BGCFamilySummary, TaxonTreeNode } from "@/lib/api-types";
 import { CLASS_ORDER } from "@/lib/colors";
@@ -88,7 +90,25 @@ export default function HomePage() {
   const [view, setView] = useState<"tree" | "flow" | "heatmap">("tree");
   const isTreeView = view === "tree";
   const treeScope = taxonomy;
-  const { tree, loading, error, reload: reloadTree } = useTaxonomyTree(treeScope);
+  const { tree: corpusTree, loading, error, reload: reloadTree } = useTaxonomyTree(treeScope);
+  // "Show all genomes": the whole reference taxonomy behind the corpus,
+  // loaded a clade at a time (see lib/backbone.ts). Off by default, and only
+  // GTDB has a backbone so far. Until the toggle lands it is switched on
+  // with ?backbone=1.
+  const [showAllGenomes, setShowAllGenomes] = useState(false);
+  useEffect(() => {
+    if (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("backbone") === "1") {
+      setShowAllGenomes(true);
+    }
+  }, []);
+  const backbone = useBackboneTree(treeScope, showAllGenomes && treeScope === "prokaryote");
+  const backboneOn = showAllGenomes && backbone.tree !== null;
+  // The corpus tree stays on screen until the backbone arrives, and is what
+  // every view falls back to when no backbone is loaded.
+  const tree = useMemo(
+    () => (backboneOn && backbone.tree ? asTaxonTree(backbone.tree) : corpusTree),
+    [backboneOn, backbone.tree, corpusTree],
+  );
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [activeClasses, setActiveClasses] = useState<Set<string>>(new Set(CLASS_ORDER));
   const [query, setQuery] = useState("");
@@ -170,12 +190,12 @@ export default function HomePage() {
     [tree],
   );
   const pruned = useMemo(
-    () => (fullRoot ? pruneToBgcBearing(fullRoot, onlyWithBgcs) : null),
-    [fullRoot, onlyWithBgcs],
+    () => (fullRoot ? pruneToBgcBearing(fullRoot, onlyWithBgcs, backboneOn) : null),
+    [fullRoot, onlyWithBgcs, backboneOn],
   );
   const filtered = useMemo(
-    () => (pruned ? applyGenomeFilters(pruned.root, filters) : null),
-    [pruned, filters],
+    () => (pruned ? applyGenomeFilters(pruned.root, filters, backboneOn) : null),
+    [pruned, filters, backboneOn],
   );
   const focused = useMemo(
     () => (filtered ? applyFocus(filtered.root, focusKey) : null),
@@ -288,7 +308,7 @@ export default function HomePage() {
     setSelectedFamilyId(null);
     setComparisonTaxonIds([]);
     setNodeOffsets(new Map());
-  }, [treeScope]);
+  }, [treeScope, backboneOn]);
 
 
   // Open on a readable summary, not on every leaf at once.
@@ -321,6 +341,7 @@ export default function HomePage() {
     // faithfully redraw the tree without the genome that was just added.
     invalidateApiCache();
     reloadTree();
+    backbone.reload();
     if (accessions.length === 0) return;
     setUploaded({ accessions, familyIds });
     // A focus left over from earlier browsing would crop the tree to a clade
@@ -509,6 +530,20 @@ export default function HomePage() {
   }
 
   function toggleCollapse(key: string): void {
+    // A backbone clade that has not been fetched opens by fetching it. A
+    // level preset may have put its key in `collapsed`; take it out, or the
+    // children would arrive into a clade that stays shut.
+    if (backboneOn && backbone.expand(key)) {
+      setActiveLevel(null);
+      setAutoFramed(false);
+      setCollapsed((prev) => {
+        if (!prev.has(key)) return prev;
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+      return;
+    }
     // Once a node is toggled by hand the tree no longer matches the
     // preset, so the highlight is cleared rather than left claiming a
     // depth that isn't true any more.
