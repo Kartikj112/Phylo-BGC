@@ -24,5 +24,15 @@ services:
     envVars:
       - key: BGCSCAPE_ENVIRONMENT
         value: production
+      # Turns on the "All GTDB genomes" view. Render hands environment
+      # variables to the Docker build as build arguments, and
+      # engine/Dockerfile's WITH_GTDB_BACKBONE then downloads GTDB's metadata
+      # (~300 MB, MD5-checked) and loads the backbone into the image's
+      # database. It adds a few minutes to a build whose engine files
+      # changed (Docker's layer cache skips it otherwise), about 125 MB to
+      # the image, and ~80 MB to the running API's memory. Set it to "0" to
+      # turn the view off again.
+      - key: WITH_GTDB_BACKBONE
+        value: "1"
       # - key: BGCSCAPE_CORS_ALLOW_ORIGINS
       #   value: https://your-project.vercel.app
