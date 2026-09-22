@@ -124,6 +124,8 @@ class _CorpusIndex:
     by_path: dict[Path, TaxonTreeNode]
     #: Curated-only genomes under each corpus clade, keyed by id(node).
     curated_only: dict[int, int]
+    #: Genomes with at least one cluster under each corpus clade, same keys.
+    with_bgcs: dict[int, int]
 
 
 _corpus_cache: dict[tuple, _CorpusIndex] = {}
@@ -164,7 +166,17 @@ def _corpus_index(session: Session, scope: TreeScope) -> _CorpusIndex:
         return n
 
     count_curated(root)
-    index = _CorpusIndex(root=root, by_path=by_path, curated_only=curated_only)
+
+    with_bgcs: dict[int, int] = {}
+
+    def count_with_bgcs(node: TaxonTreeNode) -> int:
+        n = sum(1 for g in node.direct_genomes if g.bgcs)
+        n += sum(count_with_bgcs(c) for c in node.children)
+        with_bgcs[id(node)] = n
+        return n
+
+    count_with_bgcs(root)
+    index = _CorpusIndex(root=root, by_path=by_path, curated_only=curated_only, with_bgcs=with_bgcs)
     # One corpus per database in practice; keep the latest only.
     _corpus_cache.clear()
     _corpus_cache[key] = index
@@ -184,7 +196,7 @@ _NODE_COLUMNS = (
 )
 
 
-def _corpus_only_node(corpus: TaxonTreeNode, curated_only: dict[int, int]) -> BackboneTreeNode:
+def _corpus_only_node(corpus: TaxonTreeNode, index: _CorpusIndex) -> BackboneTreeNode:
     """A corpus clade the reference does not contain, with its whole subtree."""
     return BackboneTreeNode(
         id=str(corpus.id) if corpus.id else None,
@@ -194,8 +206,9 @@ def _corpus_only_node(corpus: TaxonTreeNode, curated_only: dict[int, int]) -> Ba
         examined_genome_count=corpus.examined_genome_count,
         bgc_class_counts=corpus.bgc_class_counts,
         direct_genomes=corpus.direct_genomes,
-        children=[_corpus_only_node(c, curated_only) for c in corpus.children],
-        curated_only_genome_count=curated_only.get(id(corpus), 0),
+        children=[_corpus_only_node(c, index) for c in corpus.children],
+        curated_only_genome_count=index.curated_only.get(id(corpus), 0),
+        bgc_genome_count=index.with_bgcs.get(id(corpus), 0),
         backbone_id=None,
         corpus_taxon_id=corpus.id,
         reference_genome_count=0,
@@ -263,7 +276,7 @@ class _Builder:
         omitted = reference_only[room:]
 
         nodes = self._build_many(shown, depth)
-        nodes.extend(_corpus_only_node(c, self.index.curated_only) for c in corpus_only)
+        nodes.extend(_corpus_only_node(c, self.index) for c in corpus_only)
         nodes.sort(key=lambda n: n.name)
         return nodes, len(omitted), sum(m[0].genome_count for m in omitted)
 
@@ -294,6 +307,7 @@ class _Builder:
                     genome_count=corpus.genome_count if corpus else 0,
                     examined_genome_count=corpus.examined_genome_count if corpus else 0,
                     curated_only_genome_count=self.index.curated_only.get(id(corpus), 0) if corpus else 0,
+                    bgc_genome_count=self.index.with_bgcs.get(id(corpus), 0) if corpus else 0,
                     bgc_class_counts=corpus.bgc_class_counts if corpus else {},
                     direct_genomes=corpus.direct_genomes if corpus else [],
                     children=children,
@@ -341,6 +355,7 @@ def build_backbone_tree(
             genome_count=corpus_root.genome_count,
             examined_genome_count=corpus_root.examined_genome_count,
             curated_only_genome_count=builder.index.curated_only.get(id(corpus_root), 0),
+            bgc_genome_count=builder.index.with_bgcs.get(id(corpus_root), 0),
             bgc_class_counts=corpus_root.bgc_class_counts,
             direct_genomes=[],
             children=children,

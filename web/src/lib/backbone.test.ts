@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest";
 import type { BackboneTreeNode, GenomeSummary } from "./api-types";
-import { asTaxonTree, findBackboneNode, isUnloaded, referenceGenomeCount, spliceBackboneNode } from "./backbone";
+import {
+  asTaxonTree,
+  findBackboneNode,
+  isComparable,
+  isOmittedSummary,
+  isReferenceOnly,
+  isUnloaded,
+  referenceGenomeCount,
+  spliceBackboneNode,
+  unloadedChildCount,
+} from "./backbone";
 import {
   EMPTY_FILTERS,
   applyGenomeFilters,
@@ -21,6 +31,7 @@ function node(
     genome_count: 0,
     examined_genome_count: 0,
     curated_only_genome_count: 0,
+    bgc_genome_count: 0,
     bgc_class_counts: {},
     direct_genomes: [],
     children,
@@ -132,6 +143,7 @@ describe("unloaded clades keep the server's whole-clade counts", () => {
       genome_count: 40,
       examined_genome_count: 5,
       curated_only_genome_count: 30,
+      bgc_genome_count: 32,
       bgc_class_counts: { nrps: 12 },
     });
     return tree;
@@ -142,6 +154,9 @@ describe("unloaded clades keep the server's whole-clade counts", () => {
     const bacillus = pruned.root.children[0]!.children.find((c) => c.name === "Bacillus")!;
     expect(bacillus.genome_count).toBe(40);
     expect(pruned.root.children[0]!.genome_count).toBe(41); // Streptomyces 1 + Bacillus 40
+    // The header's "shown" counts what the prune would keep: genomes with
+    // clusters, 1 loaded + 32 the server counted in Bacillus.
+    expect(pruned.shownGenomes).toBe(33);
   });
 
   it("genome filters pass it through untested", () => {
@@ -163,5 +178,77 @@ describe("unloaded clades keep the server's whole-clade counts", () => {
     expect(index.get("id-Bacillus")).toEqual({ genomeCount: 40, examined: 5, curatedOnly: 30, unexamined: 5 });
     // And it rolls up into the parent like any other child.
     expect(index.get("id-Bacteria")?.genomeCount).toBe(41);
+  });
+});
+
+describe("GTDB-only clades, unopened clades and comparison", () => {
+  it("a clade is GTDB-only when it has reference genomes and no corpus taxon", () => {
+    const root = asTaxonTree(sample());
+    const bacteria = root.children[0]!;
+    // Bacteria in the sample has no corpus taxon id either, so give it one.
+    const corpusClade = { ...bacteria, corpus_taxon_id: "taxon-1" } as unknown as typeof bacteria;
+    expect(isReferenceOnly(corpusClade)).toBe(false);
+    expect(isReferenceOnly(bacteria.children.find((c) => c.name === "Bacillus")!)).toBe(true);
+    // A plain corpus node (no backbone fields at all) never is.
+    expect(isReferenceOnly({ ...bacteria, reference_genome_count: undefined } as unknown as typeof bacteria)).toBe(false);
+  });
+
+  it("an unopened clade reports its server-side child count, an opened one none", () => {
+    const root = asTaxonTree(sample());
+    const bacillus = root.children[0]!.children.find((c) => c.name === "Bacillus")!;
+    const strep = root.children[0]!.children.find((c) => c.name === "Streptomyces")!;
+    expect(unloadedChildCount(bacillus)).toBe(40);
+    expect(unloadedChildCount(strep)).toBe(0);
+  });
+
+  it("only corpus clades can be compared", () => {
+    const root = asTaxonTree(sample());
+    const bacillus = root.children[0]!.children.find((c) => c.name === "Bacillus")!;
+    expect(isComparable(bacillus)).toBe(false);
+    expect(isComparable({ ...bacillus, corpus_taxon_id: "taxon-2" } as unknown as typeof bacillus)).toBe(true);
+    // Outside the backbone view, any real taxon can be compared.
+    const plain = { ...bacillus, reference_genome_count: undefined } as unknown as typeof bacillus;
+    expect(isComparable(plain)).toBe(true);
+  });
+});
+
+describe("asTaxonTree adds a row for children the server summarised", () => {
+  it("names the count and rank, carries the omitted genomes, and comes last", () => {
+    const tree = sample();
+    const bacteria = tree.children[0]!;
+    bacteria.children = bacteria.children.map((c) => ({ ...c, rank: "genus" as const }));
+    bacteria.omitted_child_count = 2080;
+    bacteria.omitted_reference_genome_count = 9431;
+    const out = asTaxonTree(tree).children[0]!;
+    const last = out.children[out.children.length - 1]!;
+    expect(isOmittedSummary(last)).toBe(true);
+    expect(last.name).toBe("2,080 more genera");
+    expect(last.rank).toBe("genus");
+    expect(referenceGenomeCount(last)).toBe(9431);
+    expect(isReferenceOnly(last)).toBe(true);
+    expect(last.id).toBe("id-Bacteria::more");
+  });
+
+  it("adds nothing when nothing was omitted, or when the clade is not loaded", () => {
+    const tree = sample();
+    const bacillus = tree.children[0]!.children[1]!;
+    bacillus.omitted_child_count = 5; // unloaded: its children are not on the client at all
+    const out = asTaxonTree(tree).children[0]!;
+    expect(out.children.some(isOmittedSummary)).toBe(false);
+    expect(out.children.find((c) => c.name === "Bacillus")!.children).toEqual([]);
+  });
+
+  it("the summary row survives the BGC prune, like any GTDB-only clade", () => {
+    const tree = sample();
+    tree.children[0]!.omitted_child_count = 3;
+    tree.children[0]!.omitted_reference_genome_count = 7;
+    const pruned = pruneToBgcBearing(toRootDisplayNode(asTaxonTree(tree)), true, true);
+    expect(pruned.root.children[0]!.children.map((c) => c.name)).toContain("3 more genera");
+  });
+});
+
+describe("the synthetic root", () => {
+  it("is never drawn as GTDB-only, though it has no corpus taxon of its own", () => {
+    expect(isReferenceOnly(asTaxonTree(sample()))).toBe(false);
   });
 });

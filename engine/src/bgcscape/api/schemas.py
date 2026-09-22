@@ -609,6 +609,10 @@ class BackboneTreeNode(BaseModel):
     run behind them (see `bgcscape.coverage`). Sent because a client cannot
     roll the three coverage states up from genomes it has not loaded; with
     `examined_genome_count` it completes the split for an unloaded clade."""
+    bgc_genome_count: int = 0
+    """Of `genome_count`, how many carry at least one cluster. What the
+    "only genomes with BGCs" view counts for a clade whose genomes are not
+    loaded, since the client cannot filter genomes it does not have."""
     reference_genome_count: int
     """Genomes in the reference release under this clade. Never examined."""
     reference_species_count: int

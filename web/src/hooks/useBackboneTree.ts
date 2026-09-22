@@ -25,8 +25,9 @@ interface UseBackboneTreeResult {
 /**
  * The reference backbone for `scope`, grown as the reader opens clades.
  *
- * Does nothing while `enabled` is false, so the corpus-only view pays no
- * request for a feature it is not using.
+ * `status` is always fetched, because the toggle that switches this on is
+ * only offered when a backbone exists. The tree itself is fetched only while
+ * `enabled`, so the corpus-only view pays nothing for it.
  */
 export function useBackboneTree(scope: TreeScope, enabled: boolean): UseBackboneTreeResult {
   const [status, setStatus] = useState<BackboneStatus | null>(null);
@@ -45,23 +46,36 @@ export function useBackboneTree(scope: TreeScope, enabled: boolean): UseBackbone
   }, [tree]);
 
   useEffect(() => {
-    generation.current += 1;
+    let cancelled = false;
     setStatus(null);
+    fetchBackboneStatus(scope)
+      .then((s) => {
+        if (!cancelled) setStatus(s);
+      })
+      .catch(() => {
+        // An API without the endpoint (an older deployment) simply has no
+        // backbone to offer; the toggle stays hidden.
+        if (!cancelled) setStatus(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [scope, reloadToken]);
+
+  const available = status?.available === true;
+  useEffect(() => {
+    generation.current += 1;
     setTree(null);
     setExpanding(new Set());
     setError(null);
-    if (!enabled) {
+    if (!enabled || !available) {
       setLoading(false);
       return;
     }
     const mine = generation.current;
     setLoading(true);
-    fetchBackboneStatus(scope)
-      .then(async (s) => {
-        if (generation.current !== mine) return;
-        setStatus(s);
-        if (!s.available) return;
-        const root = await fetchBackboneTree(scope, null, INITIAL_DEPTH);
+    fetchBackboneTree(scope, null, INITIAL_DEPTH)
+      .then((root) => {
         if (generation.current === mine) setTree(root);
       })
       .catch((err: unknown) => {
@@ -70,7 +84,7 @@ export function useBackboneTree(scope: TreeScope, enabled: boolean): UseBackbone
       .finally(() => {
         if (generation.current === mine) setLoading(false);
       });
-  }, [scope, enabled, reloadToken]);
+  }, [scope, enabled, available, reloadToken]);
 
   const expand = useCallback(
     (key: string): boolean => {

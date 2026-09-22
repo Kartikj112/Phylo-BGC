@@ -785,6 +785,11 @@ export interface components {
              * @default 0
              */
             curated_only_genome_count: number;
+            /**
+             * Bgc Genome Count
+             * @default 0
+             */
+            bgc_genome_count: number;
             /** Reference Genome Count */
             reference_genome_count: number;
             /** Reference Species Count */

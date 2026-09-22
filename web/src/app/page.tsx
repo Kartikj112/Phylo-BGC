@@ -27,7 +27,7 @@ import { QuickTour } from "@/components/QuickTour";
 import { TreeCanvas } from "@/components/TreeCanvas";
 import { useTaxonomyTree } from "@/hooks/useTaxonomyTree";
 import { useBackboneTree } from "@/hooks/useBackboneTree";
-import { asTaxonTree } from "@/lib/backbone";
+import { asTaxonTree, isComparable } from "@/lib/backbone";
 import { fetchBgcClasses, search, invalidateApiCache } from "@/lib/api-client";
 import type { BGCFamilySummary, TaxonTreeNode } from "@/lib/api-types";
 import { CLASS_ORDER } from "@/lib/colors";
@@ -48,7 +48,9 @@ import {
   familyMembershipSets,
   familyMembershipSetsForAny,
   familyTreeIndex,
+  filtersAreActive,
   findMibigEntry,
+  findNodeByKey,
   findTaxonKeyByName,
   groupUnplacedTaxa,
   pruneToBgcBearing,
@@ -91,9 +93,9 @@ export default function HomePage() {
   const isTreeView = view === "tree";
   const treeScope = taxonomy;
   const { tree: corpusTree, loading, error, reload: reloadTree } = useTaxonomyTree(treeScope);
-  // "Show all genomes": the whole reference taxonomy behind the corpus,
-  // loaded a clade at a time (see lib/backbone.ts). Off by default, and only
-  // GTDB has a backbone so far. Until the toggle lands it is switched on
+  // "All GTDB genomes": the whole reference taxonomy behind the corpus,
+  // loaded a clade at a time (see lib/backbone.ts). Off by default, offered
+  // only where a backbone is loaded (GTDB, so prokaryotes), and deep-linkable
   // with ?backbone=1.
   const [showAllGenomes, setShowAllGenomes] = useState(false);
   useEffect(() => {
@@ -103,6 +105,11 @@ export default function HomePage() {
   }, []);
   const backbone = useBackboneTree(treeScope, showAllGenomes && treeScope === "prokaryote");
   const backboneOn = showAllGenomes && backbone.tree !== null;
+  const backboneOffered = taxonomy === "prokaryote" && backbone.status?.available === true;
+  const referenceSource =
+    backboneOn && backbone.status?.source_name
+      ? `${backbone.status.source_name} ${backbone.status.source_version ?? ""}`.trim()
+      : null;
   // The corpus tree stays on screen until the backbone arrives, and is what
   // every view falls back to when no backbone is loaded.
   const tree = useMemo(
@@ -180,6 +187,11 @@ export default function HomePage() {
   }, []);
 
   function toggleComparisonTaxon(taxonId: string): void {
+    // Clade comparison reads corpus taxa. A clade that is only in the
+    // backbone has nothing for it to compare, and would come back as an
+    // error from the endpoint.
+    const node = fullRoot ? findNodeByKey(fullRoot, taxonId) : null;
+    if (node && !isComparable(node)) return;
     setComparisonTaxonIds((prev) =>
       prev.includes(taxonId) ? prev.filter((id) => id !== taxonId) : [...prev, taxonId],
     );
@@ -641,6 +653,33 @@ export default function HomePage() {
           ))}
         </div>
 
+        {backboneOffered && (
+          <button
+            onClick={() => setShowAllGenomes((v) => !v)}
+            aria-pressed={showAllGenomes}
+            title={
+              showAllGenomes && backbone.error
+                ? `Could not load the backbone (${backbone.error.message}). Click to switch it off.`
+                : showAllGenomes
+                ? "Back to the corpus alone: only genomes this database records something for."
+                : `Draw all ${backbone.status?.reference_genome_count.toLocaleString("en-US") ?? ""} ${
+                    backbone.status?.source_name ?? ""
+                  } genomes behind the corpus, a clade at a time. None of them has been examined for clusters.`
+            }
+            className={`flex-shrink-0 whitespace-nowrap rounded border border-chrome-line px-2.5 py-1.5 text-xs ${
+              showAllGenomes
+                ? "bg-chrome-accent-wash text-chrome-accent"
+                : "text-chrome-ink-muted hover:bg-chrome-soft hover:text-chrome-ink"
+            }`}
+          >
+            {showAllGenomes && backbone.error
+              ? `${backbone.status?.source_name ?? "Backbone"} failed to load`
+              : showAllGenomes && backbone.loading
+                ? `Loading ${backbone.status?.source_name ?? ""}…`
+                : `All ${backbone.status?.source_name ?? ""} genomes`}
+          </button>
+        )}
+
         <div
           data-tour="views"
           className="flex flex-shrink-0 overflow-hidden rounded border border-chrome-line"
@@ -773,6 +812,15 @@ export default function HomePage() {
         shownGenomes={genomeCount}
         totalGenomes={pruned?.totalGenomes ?? 0}
         scope={treeScope}
+        reference={
+          referenceSource && backbone.status
+            ? {
+                source: referenceSource,
+                genomes: backbone.status.reference_genome_count,
+                species: backbone.status.reference_species_count,
+              }
+            : null
+        }
       />
 
       {isTreeView && selectedFamilyId && familyDist && (
@@ -904,6 +952,12 @@ export default function HomePage() {
               total={pruned?.shownGenomes ?? 0}
               filteredEverythingOut={filtered?.filteredEverythingOut ?? false}
             />
+            {backboneOn && filtersAreActive(filters) && (
+              <p className="mt-2 text-xs leading-relaxed text-chrome-ink-faint">
+                Filters test genomes, so they apply only to clades that have been opened. An
+                unopened clade is drawn whole until you open it.
+              </p>
+            )}
           </RailSection>
           <SiteFooter />
           </div>
@@ -1011,6 +1065,8 @@ export default function HomePage() {
               onNodeDrag={nudgeNode}
               showRegions={showRegions}
               alignedGlyphs={alignedGlyphs}
+              referenceSource={referenceSource}
+              expandingKeys={backbone.expanding}
             />
           )}
         </main>

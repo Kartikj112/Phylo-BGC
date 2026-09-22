@@ -13,7 +13,7 @@
  */
 import * as d3 from "d3";
 import type { BGCSummary, DisplayNode, GenomeDisplayNode, TaxonDisplayNode, TaxonTreeNode } from "./api-types";
-import { curatedOnlyCount, isUnloadedClade, referenceGenomeCount } from "./backbone";
+import { bgcGenomeCount, curatedOnlyCount, isUnloadedClade, referenceGenomeCount } from "./backbone";
 
 export function toRootDisplayNode(tree: TaxonTreeNode): TaxonDisplayNode {
   return { ...tree, _kind: "taxon" };
@@ -1012,8 +1012,10 @@ export function pruneToBgcBearing(
   function prune(node: TaxonTreeNode): TaxonTreeNode {
     // An unloaded backbone clade has nothing on the client to prune, and
     // recounting it from its (empty) children would report zero genomes.
+    // It is drawn whole; the "shown" figure takes the server's count of its
+    // genomes with clusters, which is what this prune would have kept.
     if (isUnloadedClade(node)) {
-      shown += node.genome_count;
+      shown += bgcGenomeCount(node);
       return node;
     }
     const genomes = node.direct_genomes.filter((g) => g.bgcs.length > 0);

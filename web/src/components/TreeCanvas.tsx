@@ -41,6 +41,12 @@ import {
   type FamilyMembershipSets,
   type TreeOrientation,
 } from "@/lib/tree-logic";
+import {
+  isOmittedSummary,
+  isReferenceOnly,
+  referenceGenomeCount,
+  unloadedChildCount,
+} from "@/lib/backbone";
 
 export interface UploadHighlight {
   /** nodeKey() of every node from the root down to each uploaded genome. */
@@ -104,6 +110,11 @@ interface TreeCanvasProps {
   /** Put cluster glyphs on one aligned track instead of hanging them off
    * each node. Off restores the original spaced barcode. */
   alignedGlyphs?: boolean;
+  /** Set while the reference backbone is drawn behind the corpus. Names the
+   * release ("GTDB R11-RS232") in tooltips and the key. */
+  referenceSource?: string | null;
+  /** Clades whose children are being fetched from the backbone. */
+  expandingKeys?: ReadonlySet<string>;
 }
 
 /** A node's drawn position, after any manual drag.
@@ -204,6 +215,8 @@ export function TreeCanvas({
   onNodeDrag,
   showRegions = true,
   alignedGlyphs = true,
+  referenceSource = null,
+  expandingKeys,
 }: TreeCanvasProps) {
   // Searching forces open the path to every match — a hit inside a
   // collapsed clade would otherwise never render, which made search look
@@ -1171,7 +1184,11 @@ export function TreeCanvas({
               const pos = drawnPos(n, isRadial, nodeOffsets);
               const isGenome = node._kind === "genome";
               const isMatch = matchesQuery(node, searchQuery);
-              const hidden = hiddenChildrenCount(node, openCollapsed);
+              // An unloaded backbone clade is drawn collapsed: its children
+              // exist on the server, and opening it is what fetches them.
+              const hidden = isGenome
+                ? 0
+                : hiddenChildrenCount(node, openCollapsed) || unloadedChildCount(node);
 
               const dimmed =
                 dimAll && !isGenome && ![...nodeVisibleClasses(node)].some((c) => activeClasses.has(c));
@@ -1244,6 +1261,8 @@ export function TreeCanvas({
                           : (rectLabels?.visible.has(key) ?? true)
                       }
                       hiddenCount={hidden}
+                      expanding={expandingKeys?.has(key) ?? false}
+                      referenceSource={referenceSource}
                       matched={isMatch}
                       inSelectedFamily={inSelectedFamily}
                       isEnclosing={isEnclosing}
@@ -1309,7 +1328,7 @@ export function TreeCanvas({
       {/* A texture with no key is decoration. Shown only when the tree
           actually contains a state that draws one, so a fully surveyed
           corpus is not handed a legend to nothing. */}
-      {(corpusCoverage.curatedOnly > 0 || corpusCoverage.unexamined > 0) && (
+      {(corpusCoverage.curatedOnly > 0 || corpusCoverage.unexamined > 0 || referenceSource) && (
         <div className="pointer-events-none absolute bottom-2 left-2 rounded border border-line bg-card/95 px-2 py-1.5 text-[10px] leading-tight text-ink-muted shadow-sm sm:bottom-3 sm:left-3">
           <div className="mb-1 uppercase tracking-wider text-ink-faint">Survey coverage</div>
           <div className="flex flex-col gap-1">
@@ -1321,6 +1340,12 @@ export function TreeCanvas({
             )}
             {corpusCoverage.unexamined > 0 && (
               <KeyRow kind="hatch" label="nothing has looked" />
+            )}
+            {referenceSource && (
+              <KeyRow
+                kind="reference"
+                label={`in ${referenceSource} only — not in this corpus, nothing has looked`}
+              />
             )}
           </div>
         </div>
@@ -1443,6 +1468,8 @@ function TaxonNode({
   angle,
   showLabel,
   hiddenCount,
+  expanding,
+  referenceSource,
   matched,
   inSelectedFamily,
   isEnclosing,
@@ -1463,6 +1490,10 @@ function TaxonNode({
   angle: number;
   showLabel: boolean;
   hiddenCount: number;
+  /** Its children are being fetched from the backbone. */
+  expanding: boolean;
+  /** See TreeCanvasProps.referenceSource. */
+  referenceSource: string | null;
   matched: boolean;
   inSelectedFamily: boolean;
   isEnclosing: boolean;
@@ -1502,6 +1533,20 @@ function TaxonNode({
   // Same per-character estimate the badge offset uses — good enough for a
   // hit box, and it avoids a getBBox() measure per node.
   const labelBoxWidth = (node.name.length + (hiddenCount > 0 ? 5 : 0)) * charWidth + 8 * ls;
+  // Backbone view only. A reference-only clade is in GTDB and not in the
+  // corpus: drawn faint and dashed, and never with a count of clusters,
+  // because none of its genomes has been looked at.
+  const refOnly = isReferenceOnly(node);
+  const refGenomes = referenceGenomeCount(node);
+  const referenceNote =
+    referenceSource && refGenomes > 0
+      ? `${refGenomes.toLocaleString("en-US")} genome${refGenomes === 1 ? "" : "s"} in ${referenceSource}` +
+        (refOnly ? ", none in this corpus" : "") +
+        `. None of the ${referenceSource} genomes has been examined for clusters.`
+      : null;
+  const summaryNote = isOmittedSummary(node)
+    ? " Not listed one by one: none of them holds a genome from this corpus."
+    : "";
   return (
     <>
       {/* The tightest clade wrapping the selected family gets a ring, so
@@ -1511,7 +1556,31 @@ function TaxonNode({
         <circle r={7 * ms} fill="none" stroke={COLORS.present} strokeWidth={1.5 * ms} />
       )}
 
-      {hiddenCount > 0 ? (
+      {refOnly ? (
+        hiddenCount > 0 ? (
+          <ReferenceGlyph
+            refGenomes={refGenomes}
+            sourceName={referenceSource?.split(" ")[0] ?? "reference"}
+            title={`${node.name}: ${referenceNote ?? ""}`}
+            flip={isRadial && isLeftHalf(angle)}
+            trackOffset={trackOffset}
+            touchMode={touchMode}
+            onToggleCollapse={onToggleCollapse}
+          />
+        ) : (
+          <g className={isOmittedSummary(node) ? undefined : "cursor-pointer"} onClick={onToggleCollapse}>
+            <title>{`${node.name}: ${referenceNote ?? ""}${summaryNote}`}</title>
+            {touchMode && <circle r={14 * ms} fill="transparent" />}
+            <circle
+              r={3.5 * ms}
+              fill={COLORS.paper}
+              stroke={COLORS.inkFaint}
+              strokeWidth={ms}
+              strokeDasharray={`${1.5 * ms} ${1.5 * ms}`}
+            />
+          </g>
+        )
+      ) : hiddenCount > 0 ? (
         <CladeGlyph
           node={node}
           coverage={coverage}
@@ -1519,6 +1588,7 @@ function TaxonNode({
           flip={isRadial && isLeftHalf(angle)}
           trackOffset={trackOffset}
           touchMode={touchMode}
+          referenceNote={referenceNote}
           onToggleCollapse={onToggleCollapse}
         />
       ) : (
@@ -1606,6 +1676,8 @@ function TaxonNode({
             fill={
               matched
                 ? COLORS.labelMatch
+                : refOnly
+                  ? COLORS.inkFaint
                 : inSelectedFamily || inComparison
                   // `present`, not `signal`: this is family/comparison
                   // STATE on the figure, the same thing the node ring and
@@ -1636,7 +1708,7 @@ function TaxonNode({
           >
             {inComparison ? "◆ " : ""}
             {node.name}
-            {hiddenCount > 0 ? ` (+${hiddenCount})` : ""}
+            {expanding ? " (loading…)" : hiddenCount > 0 ? ` (+${hiddenCount})` : ""}
           </text>
         </g>
       )}
@@ -1648,7 +1720,13 @@ function TaxonNode({
  * definition rather than reaching into the tree's `<defs>` by fragment id:
  * cross-`<svg>` references resolve inconsistently, and a key whose swatch
  * silently renders blank is worse than no key. */
-function KeyRow({ kind, label }: { kind: "solid" | "stipple" | "hatch"; label: string }) {
+function KeyRow({
+  kind,
+  label,
+}: {
+  kind: "solid" | "stipple" | "hatch" | "reference";
+  label: string;
+}) {
   const id = `key-${kind}`;
   return (
     <div className="flex items-center gap-1.5">
@@ -1678,8 +1756,9 @@ function KeyRow({ kind, label }: { kind: "solid" | "stipple" | "hatch"; label: s
           width={17}
           height={9}
           fill={kind === "solid" ? COLORS.lineStrong : `url(#${id})`}
-          stroke={COLORS.line}
+          stroke={kind === "reference" ? COLORS.lineStrong : COLORS.line}
           strokeWidth={1}
+          strokeDasharray={kind === "reference" ? "2 2" : undefined}
           rx={1.5}
         />
       </svg>
@@ -1756,9 +1835,13 @@ function CladeGlyph({
   flip,
   trackOffset,
   touchMode,
+  referenceNote = null,
   onToggleCollapse,
 }: {
   node: Extract<DisplayNode, { _kind: "taxon" }>;
+  /** Backbone view: how many reference genomes the clade has, and that none
+   * was examined. Appended to the tooltip. */
+  referenceNote?: string | null;
   /** Three-state coverage for this clade, recomputed over the tree on
    * screen. An all-zero rollup means the caller supplied no index, and the
    * glyph falls back to the node's own (possibly stale) rolled-up count
@@ -1849,6 +1932,7 @@ function CladeGlyph({
             genomeCount - examinedCount
           } have not been looked at`}
         {reading === "examined-empty" && " — surveyed, and none found"}
+        {referenceNote && ` · ${referenceNote}`}
       </title>
 
       {summary.bgcCount === 0 ? (
@@ -1938,6 +2022,75 @@ function CladeGlyph({
         transform={flip ? "rotate(180)" : undefined}
       >
         {genomeCount}g · {summary.bgcCount}b
+      </text>
+    </g>
+  );
+}
+
+/**
+ * The collapsed-clade mark for a clade that is only in the reference
+ * backbone.
+ *
+ * Deliberately not a CladeGlyph. That bar's width is corpus genomes and its
+ * fill is cluster classes; a reference-only clade has neither, and a
+ * zero-width bar would say "nothing here" where the truth is "nothing
+ * looked". So it is a fixed-size box in the tree's existing
+ * "nothing has looked" hatch, dashed like an unexamined clade, with the
+ * reference genome count written beside it instead of encoded in a width
+ * that would have to share a scale with the corpus.
+ */
+function ReferenceGlyph({
+  refGenomes,
+  sourceName,
+  title,
+  flip,
+  trackOffset,
+  touchMode,
+  onToggleCollapse,
+}: {
+  refGenomes: number;
+  /** The reference's short name, e.g. "GTDB". */
+  sourceName: string;
+  title: string;
+  flip: boolean;
+  trackOffset: number;
+  touchMode: boolean;
+  onToggleCollapse: () => void;
+}) {
+  const width = 22;
+  const height = 11;
+  const start = trackOffset > 0 ? trackOffset : 6;
+  const x = flip ? -width - start : start;
+  return (
+    <g
+      className="cursor-pointer"
+      transform={flip ? "rotate(180)" : undefined}
+      onClick={onToggleCollapse}
+    >
+      {touchMode && <rect x={x - 6} y={-16} width={width + 12} height={32} fill="transparent" />}
+      <title>{title}</title>
+      <rect x={x} y={-height / 2} width={width} height={height} fill="url(#unexamined-hatch)" />
+      <rect
+        x={x}
+        y={-height / 2}
+        width={width}
+        height={height}
+        fill="none"
+        stroke={COLORS.lineStrong}
+        strokeWidth={1}
+        strokeDasharray="2 2"
+        rx={2}
+      />
+      <text
+        x={flip ? x - 4 : x + width + 4}
+        dy="0.32em"
+        textAnchor={flip ? "end" : "start"}
+        fontSize={9}
+        fill={COLORS.inkFaint}
+        className="font-mono"
+        transform={flip ? "rotate(180)" : undefined}
+      >
+        {refGenomes.toLocaleString("en-US")} in {sourceName}
       </text>
     </g>
   );

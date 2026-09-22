@@ -174,6 +174,8 @@ def test_curated_only_count_rolls_up_mibig_style_genomes(session, corpus_and_bac
     assert not bacteria.children_loaded
     assert bacteria.curated_only_genome_count == 1
     assert bacteria.examined_genome_count == 0
+    # One of its three corpus genomes now carries a cluster.
+    assert (bacteria.genome_count, bacteria.bgc_genome_count) == (3, 1)
 
 
 def test_limit_summarises_reference_only_children_but_never_corpus_ones(session, corpus_and_backbone):
