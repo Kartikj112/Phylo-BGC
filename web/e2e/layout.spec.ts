@@ -20,12 +20,21 @@ async function ready(page: Page) {
 const nodes = (page: Page) =>
   page.locator("svg [data-figure-root='true'] g[data-node-key]");
 
+/** Layout and the drawing toggles live in the toolbar's Display menu. Opens
+ * it if it is not already open, and returns the menu. */
+async function displayMenu(page: Page) {
+  const trigger = page.getByRole("button", { name: "Display" });
+  if ((await trigger.getAttribute("aria-expanded")) !== "true") await trigger.click();
+  return page.getByRole("menu", { name: "Display" });
+}
+
 /** The tree now opens horizontal, so the checks that measure radial geometry
  * — distance and direction from the figure centre — have to ask for that
  * view rather than assume the first paint is it. */
 async function readyRadial(page: Page) {
   await ready(page);
-  await page.getByTitle("Circular tree").click();
+  await (await displayMenu(page)).getByTitle("Circular tree").click();
+  await page.keyboard.press("Escape");
   await page.waitForTimeout(1200);
 }
 
@@ -34,8 +43,10 @@ test("opens horizontal, collapsed to a readable level", async ({ page }) => {
 
   // Horizontal is the default: its toggle is the active one, and the
   // circular toggle is not.
-  await expect(page.getByTitle("Horizontal tree")).toHaveClass(/bg-chrome-accent-wash/);
-  await expect(page.getByTitle("Circular tree")).not.toHaveClass(/bg-chrome-accent-wash/);
+  const menu = await displayMenu(page);
+  await expect(menu.getByTitle("Horizontal tree")).toHaveAttribute("aria-checked", "true");
+  await expect(menu.getByTitle("Circular tree")).toHaveAttribute("aria-checked", "false");
+  await page.keyboard.press("Escape");
 
   // Far fewer than the fully-expanded 3,528 — the point is that the shape of
   // the corpus is readable before the user expands anything.
@@ -58,9 +69,10 @@ test("horizontal view spreads across the viewport width", async ({ page }) => {
   await ready(page);
   // Already the default view; the round trip proves the toggle still lands
   // back on a correctly framed horizontal tree rather than the first paint.
-  await page.getByTitle("Circular tree").click();
+  await (await displayMenu(page)).getByTitle("Circular tree").click();
   await page.waitForTimeout(600);
-  await page.getByTitle("Horizontal tree").click();
+  await (await displayMenu(page)).getByTitle("Horizontal tree").click();
+  await page.keyboard.press("Escape");
   await page.waitForTimeout(1200);
 
   // Measure the drawn extent of the tree on screen. It used to render as a
@@ -96,12 +108,13 @@ test("dragging a node moves it without changing the tree", async ({ page }) => {
   expect(await nodes(page).count()).toBe(before);
 });
 
-test("Auto arrange restores the computed layout after a drag", async ({ page }) => {
+test("Reset node positions restores the computed layout after a drag", async ({ page }) => {
   await ready(page);
-  const autoArrange = page.getByRole("button", { name: "Auto arrange" });
+  const autoArrange = (await displayMenu(page)).getByRole("menuitem", { name: /Reset node positions/ });
 
   // Disabled while nothing has been moved — nothing to tidy.
   await expect(autoArrange).toBeDisabled();
+  await page.keyboard.press("Escape");
 
   const target = nodes(page).nth(3);
   const box = await target.boundingBox();
@@ -114,11 +127,13 @@ test("Auto arrange restores the computed layout after a drag", async ({ page }) 
   await page.mouse.up();
   await page.waitForTimeout(400);
 
+  await displayMenu(page);
   await expect(autoArrange).toBeEnabled();
   await autoArrange.click();
   await page.waitForTimeout(600);
 
   expect(await target.getAttribute("transform")).toEqual(original);
+  await displayMenu(page);
   await expect(autoArrange).toBeDisabled();
 });
 
@@ -138,7 +153,7 @@ test("hierarchy regions render behind the tree and can be turned off", async ({ 
   });
   expect(regionsComeFirst).toBe(true);
 
-  await page.getByRole("button", { name: "Clades" }).click();
+  await (await displayMenu(page)).getByRole("menuitemcheckbox", { name: /Clade shading/ }).click();
   await page.waitForTimeout(400);
   expect(await regions.count()).toBe(0);
 });
@@ -229,7 +244,8 @@ test("aligned glyphs share one baseline; turning it off does not", async ({ page
   const aligned = await glyphRadiusSpread(page);
   expect(aligned, "not enough glyphs sampled").toBeGreaterThan(-1);
 
-  await page.getByRole("button", { name: "Aligned" }).click();
+  await (await displayMenu(page)).getByRole("menuitemcheckbox", { name: /Aligned cluster track/ }).click();
+  await page.keyboard.press("Escape");
   await page.waitForTimeout(1000);
   const inline = await glyphRadiusSpread(page);
 

@@ -40,6 +40,7 @@ export type CoverageState = components["schemas"]["CoverageState"];
 export type AnalysisRunSummary = components["schemas"]["AnalysisRunSummary"];
 export type BackboneTreeNode = components["schemas"]["BackboneTreeNode"];
 export type BackboneStatus = components["schemas"]["BackboneStatus"];
+export type BackboneSearchHit = components["schemas"]["BackboneSearchHit"];
 export type PlacementConfidence = components["schemas"]["PlacementConfidence"];
 export type PrioritizationResponse = components["schemas"]["PrioritizationResponse"];
 export type PrioritizationOut = components["schemas"]["PrioritizationOut"];

@@ -1,10 +1,11 @@
 "use client";
 
-import { Download } from "lucide-react";
+import { Download, FileCode2, FileText, Link2, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { exportFigure, fetchProvenance } from "@/lib/api-client";
 import { buildViewConfig, figureFilename, serializeSvgForExport } from "@/lib/export";
 import { CLASS_ORDER } from "@/lib/colors";
+import { MenuItem, MenuSeparator, ToolbarMenu } from "@/components/ToolbarMenu";
 
 interface ExportButtonProps {
   svgRef: React.RefObject<SVGSVGElement | null>;
@@ -13,8 +14,15 @@ interface ExportButtonProps {
   selectedFamilyId: string | null;
   comparisonTaxonIds: string[];
   searchQuery: string;
+  /** Whether a tree is on screen to export. The Flows and Matrix views
+   * draw their own charts, which this path does not serialise. */
+  canExportFigure: boolean;
+  /** A link that reopens the current view, for "Copy link". */
+  shareUrl: () => string;
 }
 
+/** Everything that takes the view off the page: the figure as SVG or PDF,
+ * and a link back to it. One menu rather than three toolbar buttons. */
 export function ExportButton({
   svgRef,
   collapsed,
@@ -22,9 +30,12 @@ export function ExportButton({
   selectedFamilyId,
   comparisonTaxonIds,
   searchQuery,
+  canExportFigure,
+  shareUrl,
 }: ExportButtonProps) {
   const [busy, setBusy] = useState<"svg" | "pdf" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   async function handleExport(format: "svg" | "pdf") {
     const svgEl = svgRef.current;
@@ -65,20 +76,70 @@ export function ExportButton({
     }
   }
 
+  async function copyLink() {
+    setError(null);
+    try {
+      await navigator.clipboard.writeText(shareUrl());
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard access is refused on plain http and in some embeds; the
+      // link is still worth having, so hand it over to copy by hand.
+      window.prompt("Copy this link", shareUrl());
+    }
+  }
+
   return (
     <div className="flex flex-shrink-0 items-center gap-1.5">
-      <Download size={13} className="flex-shrink-0 text-chrome-ink-faint" />
-      {(["svg", "pdf"] as const).map((format) => (
-        <button
-          key={format}
-          onClick={() => handleExport(format)}
-          disabled={busy !== null}
-          className="rounded border border-chrome-line px-2 py-1.5 text-xs uppercase tracking-wide text-chrome-ink-muted hover:border-chrome-line-strong hover:bg-chrome-soft hover:text-chrome-ink disabled:opacity-50"
+      <ToolbarMenu
+        label="Export"
+        dataTour="export"
+        title="Download the figure, or copy a link to this view"
+        align="right"
+        icon={
+          busy ? (
+            <Loader2 size={13} className="animate-spin" aria-hidden />
+          ) : (
+            <Download size={13} aria-hidden />
+          )
+        }
+      >
+        <MenuItem
+          icon={<FileCode2 size={13} />}
+          onSelect={() => handleExport("svg")}
+          disabled={busy !== null || !canExportFigure}
+          hint="Editable vector, with the view settings embedded"
         >
-          {busy === format ? "…" : format}
-        </button>
-      ))}
-      {error && <span className="max-w-[10rem] truncate text-xs text-red-300">{error}</span>}
+          SVG figure
+        </MenuItem>
+        <MenuItem
+          icon={<FileText size={13} />}
+          onSelect={() => handleExport("pdf")}
+          disabled={busy !== null || !canExportFigure}
+          hint="For a manuscript or a poster"
+        >
+          PDF figure
+        </MenuItem>
+        {!canExportFigure && (
+          <p className="px-3 pb-1 text-[11px] text-chrome-ink-faint">
+            Figures export from the Tree view.
+          </p>
+        )}
+        <MenuSeparator />
+        <MenuItem
+          icon={<Link2 size={13} />}
+          onSelect={copyLink}
+          hint="Reopens this taxonomy, view and clade"
+        >
+          Copy link to this view
+        </MenuItem>
+      </ToolbarMenu>
+      {copied && <span className="whitespace-nowrap text-xs text-chrome-accent">Link copied</span>}
+      {error && (
+        <span title={error} className="max-w-[10rem] truncate text-xs text-red-300">
+          {error}
+        </span>
+      )}
     </div>
   );
 }

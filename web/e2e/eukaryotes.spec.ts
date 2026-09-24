@@ -62,14 +62,15 @@ test("each tab shows only its own taxonomy", async ({ page }) => {
   await expect(page.getByText("Eukaryota", { exact: false }).first()).toBeVisible();
 });
 
-test("the header names the taxonomy actually on screen", async ({ page }) => {
+test("the stats bar names the taxonomy actually on screen", async ({ page }) => {
   await ready(page);
-  await expect(page.getByText("taxonomic tree (GTDB)")).toBeVisible();
+  await expect(page.getByText("taxa · GTDB", { exact: true })).toBeVisible();
 
   await euk(page).click();
   await page.waitForTimeout(2000);
   // Labelling an NCBI tree "GTDB" would misattribute half the corpus.
-  await expect(page.getByText("taxonomic tree (NCBI Taxonomy)")).toBeVisible();
+  await expect(page.getByText("taxa · NCBI Taxonomy", { exact: true })).toBeVisible();
+  await expect(page.getByText("taxa · GTDB", { exact: true })).toHaveCount(0);
 });
 
 test("switching tabs does not carry stale view state across", async ({ page }) => {

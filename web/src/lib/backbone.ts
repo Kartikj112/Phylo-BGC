@@ -75,6 +75,75 @@ export function spliceBackboneNode(root: BackboneTreeNode, loaded: BackboneTreeN
   return visit(root);
 }
 
+/** What identifies a node across two responses: the backbone id, or for a
+ * corpus clade GTDB lacks, its corpus id. */
+function mergeKey(node: BackboneTreeNode): string {
+  return node.backbone_id ?? node.id ?? "__root__";
+}
+
+/**
+ * Lay a second response over the tree already held, keeping both.
+ *
+ * `/backbone/path` answers with the root and every clade down to one target
+ * opened; the tree on screen has whatever the reader opened before. Neither
+ * contains the other, so this takes the union: a clade loaded in either is
+ * loaded in the result, and a clade listed in either is listed. Untouched
+ * subtrees are returned as they were, so memos keyed on them stay valid.
+ */
+export function mergeBackbone(held: BackboneTreeNode, incoming: BackboneTreeNode): BackboneTreeNode {
+  if (!incoming.children_loaded) return held;
+  if (!held.children_loaded) return incoming;
+  const byKey = new Map(incoming.children.map((c) => [mergeKey(c), c]));
+  let changed = false;
+  const children = held.children.map((child) => {
+    const other = byKey.get(mergeKey(child));
+    if (!other) return child;
+    byKey.delete(mergeKey(child));
+    const merged = mergeBackbone(child, other);
+    if (merged !== child) changed = true;
+    return merged;
+  });
+  // What is left was summarised away in the held response (a small species
+  // in a wide genus) and listed in this one because it is on the path.
+  const added = [...byKey.values()];
+  if (!changed && added.length === 0) return held;
+  const all = [...children, ...added].sort((a, b) => a.name.localeCompare(b.name));
+  return {
+    ...held,
+    children: all,
+    omitted_child_count: Math.max(0, held.omitted_child_count - added.length),
+    omitted_reference_genome_count: Math.max(
+      0,
+      held.omitted_reference_genome_count - added.reduce((n, c) => n + c.reference_genome_count, 0),
+    ),
+  };
+}
+
+/** `mergeBackbone` at the clade `loaded` describes, wherever it sits in
+ * `root`: for a clade re-fetched with a higher limit, whose earlier
+ * listing may already have open children that must stay open. */
+export function mergeBackboneAt(root: BackboneTreeNode, loaded: BackboneTreeNode): BackboneTreeNode {
+  if (!loaded.backbone_id) return mergeBackbone(root, loaded);
+  function visit(node: BackboneTreeNode): BackboneTreeNode {
+    if (node.backbone_id === loaded.backbone_id) return mergeBackbone(node, loaded);
+    let changed = false;
+    const children = node.children.map((child) => {
+      const next = visit(child);
+      if (next !== child) changed = true;
+      return next;
+    });
+    return changed ? { ...node, children } : node;
+  }
+  return visit(root);
+}
+
+/** The key of the clade whose summarised children a "N more ..." row
+ * stands for, or null when `key` is not such a row. */
+export function omittedSummaryParentKey(key: string): string | null {
+  const suffix = "::more";
+  return key.endsWith(suffix) ? key.slice(0, -suffix.length) : null;
+}
+
 /** A clade that is in the reference taxonomy but not in the corpus: nothing
  * in this database is recorded for it, and none of its genomes has been
  * examined for clusters. Plain corpus trees have none. */

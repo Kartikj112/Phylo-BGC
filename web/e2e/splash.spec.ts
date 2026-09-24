@@ -45,8 +45,10 @@ test("does not swallow the first click once it starts fading", async ({ page }) 
   // rather than take effect.
   await page.getByRole("button", { name: "Browse the tree" }).click();
   await expect(page.locator("[data-welcome-dialog]")).toHaveCount(0);
+  // Layout lives in the toolbar's Display menu.
+  await page.getByRole("button", { name: "Display" }).click();
   await page.getByTitle("Circular tree").click();
-  await expect(page.getByTitle("Circular tree")).toHaveClass(/bg-chrome-accent-wash/);
+  await expect(page.getByTitle("Circular tree")).toHaveAttribute("aria-checked", "true");
 });
 
 test("stays gone when a later load reloads the tree", async ({ page }) => {

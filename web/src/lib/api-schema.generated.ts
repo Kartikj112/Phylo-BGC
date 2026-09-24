@@ -122,6 +122,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/backbone/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Backbone Search
+         * @description Clades of the reference taxonomy whose name matches `q`.
+         *
+         *     The corpus tree is searched in the browser, which holds all of it. The
+         *     backbone is a quarter of a million clades loaded a level at a time, so
+         *     the browser cannot search what it has not loaded; this can. Fewer than
+         *     two characters match nothing rather than everything.
+         */
+        get: operations["get_backbone_search_api_v1_backbone_search_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/backbone/path": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Backbone Path
+         * @description The backbone from the root, with every clade down to `node` opened.
+         *
+         *     What a search result is opened with: one request, where opening each
+         *     rank in turn would be seven.
+         */
+        get: operations["get_backbone_path_api_v1_backbone_path_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/bgc-classes": {
         parameters: {
             query?: never;
@@ -707,6 +755,32 @@ export interface components {
             bgc_class: string;
             /** Count */
             count: number;
+        };
+        /**
+         * BackboneSearchHit
+         * @description A clade of the reference backbone whose name matched a search.
+         */
+        BackboneSearchHit: {
+            /**
+             * Backbone Id
+             * Format: uuid
+             */
+            backbone_id: string;
+            /** Node Key */
+            node_key: string;
+            /** Name */
+            name: string;
+            rank: components["schemas"]["TaxonRank"];
+            /** Lineage */
+            lineage: string[];
+            /** Reference Genome Count */
+            reference_genome_count: number;
+            /** Reference Species Count */
+            reference_species_count: number;
+            /** Corpus Genome Count */
+            corpus_genome_count: number;
+            /** In Corpus */
+            in_corpus: boolean;
         };
         /**
          * BackboneStatus
@@ -1693,6 +1767,72 @@ export interface operations {
                 scope?: "all" | "prokaryote" | "eukaryote";
                 parent?: string | null;
                 depth?: number;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackboneTreeNode"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_backbone_search_api_v1_backbone_search_get: {
+        parameters: {
+            query: {
+                q: string;
+                scope?: "all" | "prokaryote" | "eukaryote";
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackboneSearchHit"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_backbone_path_api_v1_backbone_path_get: {
+        parameters: {
+            query: {
+                node: string;
+                scope?: "all" | "prokaryote" | "eukaryote";
                 limit?: number;
             };
             header?: never;

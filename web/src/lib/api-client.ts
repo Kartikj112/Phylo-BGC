@@ -37,6 +37,7 @@ import type {
   SearchResponse,
   BGCClassVocabulary,
   TaxonTreeNode,
+  BackboneSearchHit,
   BackboneStatus,
   BackboneTreeNode,
 } from "./api-types";
@@ -150,10 +151,36 @@ export function fetchBackboneTree(
   scope: TreeScope,
   parent?: string | null,
   depth = 1,
+  limit?: number,
 ): Promise<BackboneTreeNode> {
   const params = new URLSearchParams({ scope, depth: String(depth) });
+  if (limit) params.set("limit", String(limit));
   if (parent) params.set("parent", parent);
   return getJson<BackboneTreeNode>(`/api/v1/backbone/tree?${params}`);
+}
+
+/** Reference-taxonomy clades whose name matches `query`, best first. The
+ * browser can only search the part of the backbone it has loaded; this
+ * searches all of it. */
+export function searchBackbone(
+  scope: TreeScope,
+  query: string,
+  limit = 8,
+): Promise<BackboneSearchHit[]> {
+  const params = new URLSearchParams({ scope, q: query, limit: String(limit) });
+  return getJson<BackboneSearchHit[]>(`/api/v1/backbone/search?${params}`);
+}
+
+/** The backbone from the root with every clade down to `node` (a
+ * `backbone_id`) opened, for merging into the tree already on screen. */
+export function fetchBackbonePath(
+  scope: TreeScope,
+  node: string,
+  limit?: number,
+): Promise<BackboneTreeNode> {
+  const params = new URLSearchParams({ scope, node });
+  if (limit) params.set("limit", String(limit));
+  return getJson<BackboneTreeNode>(`/api/v1/backbone/path?${params}`);
 }
 
 /** Both BGC-class vocabularies, plus the note explaining how they differ.

@@ -2365,3 +2365,56 @@ than a run whose output this database holds."* A genome covered by several runs
 takes the strongest — one real ingested run is not weakened by a declaration
 beside it. `ABSENCE_NOTES` remains for callers that only hold a state, with a
 comment saying it describes the stronger case.
+
+## A quarter of a million clades need a search, not a switch
+
+"All GTDB genomes" worked and was hard to use. The switch was a plain button
+between the taxonomy tabs and the view tabs, so it read as a third taxonomy.
+Turning it on threw away the focused clade and opened a three-node tree at
+Domain; the explanation was one long sentence in the stats bar. And the only
+way to reach a clade was to open every rank above it: the search box filters
+the tree in the browser, which holds a few hundred of GTDB's 247,368 clades,
+so "Micromonospora" matched nothing until Actinomycetota, Actinomycetes,
+Mycobacteriales and Micromonosporaceae had each been opened by hand.
+
+Two endpoints close that:
+
+- `GET /api/v1/backbone/search?q=` matches every clade name, exact first,
+  then prefix, then substring, coarse ranks before fine and large before
+  small. Each hit carries its lineage and the `node_key` the tree will give
+  it (the corpus taxon id when the clade is in the corpus), so the client can
+  focus it without a second lookup. 0.3-0.6 s on the full R232 backbone.
+- `GET /api/v1/backbone/path?node=` returns the root with every clade on the
+  way down to `node` opened, in one request instead of one per rank. A clade
+  on the path is listed even when its parent would otherwise fold it into
+  "N more", which is what `_Builder.path_to` is for. The client merges it into
+  the tree it already holds (`mergeBackbone`), so clades opened earlier stay
+  open.
+
+The search box shows GTDB hits under the input wherever a backbone exists,
+including with the switch off; picking one switches it on. Flipping the
+switch carries the focused clade across, by name one way and by corpus id
+the other. The mode opens at phylum with any domain that holds nothing from
+the corpus shut, and lists 15 reference-only children per clade rather than
+the server's 200: GTDB's phyla drawn all at once were ~200 rows too dense for
+one label to fit. The rest fold into a "N more phyla" row that lists them all
+when clicked. Domains are never folded, since the corpus-only organisms at
+the root could otherwise use up the room and hide Archaea.
+
+## The toolbar holds groups, not every switch
+
+The toolbar had grown to eleven controls, and on a laptop the last of them
+was scrolled out of sight. Settings that only change how the tree is drawn
+(layout, the aligned track, clade shading, the class donut, resetting dragged
+nodes) are one **Display** menu; SVG, PDF and a new "Copy link to this view"
+are one **Export** menu; the tour and the mouse-and-key hints that used to
+sit in the header on 2xl screens only are one **Help** menu. `ToolbarMenu`
+portals its menu to `<body>`, because the toolbar scrolls sideways and would
+clip anything positioned inside it.
+
+The class donut moved behind a Display checkbox, off by default: it repeats
+the stats bar's class strip and covered the tree's bottom-right corner,
+swallowing clicks on whatever clade was drawn there. Each rail section folds
+under a heading that keeps a one-line summary of its state; genome filters
+start folded unless one is active. The copied link is read back on load:
+`scope`, `view`, `backbone`, `taxon` and `class`.

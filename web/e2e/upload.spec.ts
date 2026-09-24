@@ -97,8 +97,10 @@ test("choosing to browse clears the fork and leaves the tree usable", async ({ p
   await expect(welcome(page)).toHaveCount(0);
   await expect(dialog(page)).toHaveCount(0);
   // Not merely uncovered — actually interactive.
+  // Layout lives in the toolbar's Display menu.
+  await page.getByRole("button", { name: "Display" }).click();
   await page.getByTitle("Circular tree").click();
-  await expect(page.getByTitle("Circular tree")).toHaveClass(/bg-chrome-accent-wash/);
+  await expect(page.getByTitle("Circular tree")).toHaveAttribute("aria-checked", "true");
 });
 
 test("Escape and the backdrop both fall through to browsing", async ({ page }) => {
@@ -118,7 +120,7 @@ test("the upload path is still reachable after choosing to browse", async ({ pag
   await landed(page);
   await dismissWelcome(page);
   // The fork is shown once per visit, so the toolbar has to carry the door.
-  await page.getByRole("button", { name: "antiSMASH", exact: true }).click();
+  await page.getByRole("button", { name: "Upload antiSMASH results" }).click();
   await expect(dialog(page)).toBeVisible();
 });
 

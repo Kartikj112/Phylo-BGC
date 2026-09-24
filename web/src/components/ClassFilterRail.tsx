@@ -1,5 +1,8 @@
 "use client";
 
+import { Palette } from "lucide-react";
+import { useState } from "react";
+import { RailHeading } from "@/components/RailHeading";
 import { BGC_CLASS_COLORS, BGC_CLASS_LABELS, CLASS_ORDER } from "@/lib/colors";
 
 interface ClassFilterRailProps {
@@ -31,17 +34,28 @@ export function ClassFilterRail({
   // the corpus has that the palette lacks is appended rather than dropped.
   const extra = (vocabulary ?? []).filter((cls) => !CLASS_ORDER.includes(cls));
   const classes = [...CLASS_ORDER, ...extra];
+  const [open, setOpen] = useState(true);
+  const shown = classes.filter((cls) => activeClasses.has(cls) && (counts[cls] ?? 0) > 0).length;
+  const present = classes.filter((cls) => (counts[cls] ?? 0) > 0).length;
 
   return (
     <div className="flex flex-col gap-1">
-      <div className="mb-2 flex items-center justify-between">
-        <span className="text-xs uppercase tracking-wider text-chrome-ink-muted">BGC class</span>
-        <button onClick={onReset} className="py-1 text-xs text-chrome-accent hover:underline">
-          Reset
-        </button>
+      <div className="mb-1">
+        <RailHeading
+          icon={<Palette size={12} />}
+          title="BGC class"
+          open={open}
+          onToggle={() => setOpen((v) => !v)}
+          summary={shown >= present ? "all shown" : `${shown} of ${present} shown`}
+          action={
+            <button onClick={onReset} className="py-1 text-xs text-chrome-accent hover:underline">
+              Reset
+            </button>
+          }
+        />
       </div>
 
-      {classes.map((cls) => {
+      {open && classes.map((cls) => {
         const active = activeClasses.has(cls);
         const count = counts[cls] ?? 0;
         const color = BGC_CLASS_COLORS[cls] ?? "#8A8D86";
@@ -68,7 +82,7 @@ export function ClassFilterRail({
         );
       })}
 
-      {extra.length > 0 && (
+      {open && extra.length > 0 && (
         <p className="mt-1.5 text-[11px] leading-relaxed text-chrome-ink-faint">
           {extra.length} class{extra.length === 1 ? "" : "es"} in this corpus{" "}
           {extra.length === 1 ? "has" : "have"} no assigned colour yet and{" "}

@@ -40,7 +40,9 @@ from bgcscape.api.backbone_tree import (
     BackboneNodeNotFound,
     BackboneUnavailable,
     backbone_status,
+    build_backbone_path,
     build_backbone_tree,
+    search_backbone,
 )
 from bgcscape.api.lazy_tree import LazyTreeError, build_lazy_tree
 from bgcscape.api.uploads import (
@@ -57,6 +59,7 @@ from bgcscape.api.comparison import (
 from bgcscape.api.schemas import (
     AnalysisRunSummary,
     AntismashUploadResponse,
+    BackboneSearchHit,
     BackboneStatus,
     BackboneTreeNode,
     ClusteringOutcomeOut,
@@ -332,6 +335,50 @@ def get_backbone_tree(
     """
     try:
         return build_backbone_tree(session, scope, parent=parent, depth=depth, limit=limit)
+    except BackboneUnavailable as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except BackboneNodeNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/v1/backbone/search", response_model=list[BackboneSearchHit])
+def get_backbone_search(
+    q: str,
+    scope: TreeScope = "prokaryote",
+    limit: int = 10,
+    session: Session = Depends(get_session),
+) -> list[BackboneSearchHit]:
+    """Clades of the reference taxonomy whose name matches `q`.
+
+    The corpus tree is searched in the browser, which holds all of it. The
+    backbone is a quarter of a million clades loaded a level at a time, so
+    the browser cannot search what it has not loaded; this can. Fewer than
+    two characters match nothing rather than everything.
+    """
+    try:
+        return search_backbone(session, scope, q, limit=limit)
+    except BackboneUnavailable as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/v1/backbone/path", response_model=BackboneTreeNode)
+def get_backbone_path(
+    node: uuid.UUID,
+    scope: TreeScope = "prokaryote",
+    limit: int = BACKBONE_DEFAULT_LIMIT,
+    session: Session = Depends(get_session),
+) -> BackboneTreeNode:
+    """The backbone from the root, with every clade down to `node` opened.
+
+    What a search result is opened with: one request, where opening each
+    rank in turn would be seven.
+    """
+    try:
+        return build_backbone_path(session, scope, node, limit=limit)
     except BackboneUnavailable as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except BackboneNodeNotFound as exc:

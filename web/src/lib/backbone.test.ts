@@ -7,6 +7,9 @@ import {
   isOmittedSummary,
   isReferenceOnly,
   isUnloaded,
+  mergeBackbone,
+  mergeBackboneAt,
+  omittedSummaryParentKey,
   referenceGenomeCount,
   spliceBackboneNode,
   unloadedChildCount,
@@ -250,5 +253,82 @@ describe("asTaxonTree adds a row for children the server summarised", () => {
 describe("the synthetic root", () => {
   it("is never drawn as GTDB-only, though it has no corpus taxon of its own", () => {
     expect(isReferenceOnly(asTaxonTree(sample()))).toBe(false);
+  });
+});
+
+
+describe("mergeBackbone", () => {
+  const unloaded = (name: string, over: Partial<BackboneTreeNode> = {}) =>
+    node(name, { children_loaded: false, child_count: 3, ...over });
+
+  it("keeps what was opened before and adds the path", () => {
+    // Held: Bacteria open with Actinomycetota open; Bacillota closed.
+    const held = node("root", { id: null, backbone_id: null }, [
+      node("Bacteria", { rank: "domain" }, [
+        node("Actinomycetota", { rank: "phylum" }, [unloaded("Actinomycetes")]),
+        unloaded("Bacillota"),
+      ]),
+    ]);
+    // Path: down to Bacilli, with Actinomycetota closed.
+    const path = node("root", { id: null, backbone_id: null }, [
+      node("Bacteria", { rank: "domain" }, [
+        unloaded("Actinomycetota"),
+        node("Bacillota", { rank: "phylum" }, [node("Bacilli", { rank: "class" })]),
+      ]),
+    ]);
+    const merged = mergeBackbone(held, path);
+    const bacteria = merged.children[0]!;
+    expect(bacteria.children.map((c) => c.name)).toEqual(["Actinomycetota", "Bacillota"]);
+    // The earlier opening survives, and is the very same object.
+    expect(bacteria.children[0]).toBe(held.children[0]!.children[0]);
+    expect(bacteria.children[1]!.children_loaded).toBe(true);
+    expect(bacteria.children[1]!.children.map((c) => c.name)).toEqual(["Bacilli"]);
+  });
+
+  it("adds a clade the held response summarised away, and recounts the summary", () => {
+    const held = node("Streptomyces", { omitted_child_count: 5, omitted_reference_genome_count: 40 }, [
+      node("S. alpha"),
+    ]);
+    const path = node("Streptomyces", { omitted_child_count: 5 }, [
+      node("S. alpha"),
+      node("S. zeta", { reference_genome_count: 3 }),
+    ]);
+    const merged = mergeBackbone(held, path);
+    expect(merged.children.map((c) => c.name)).toEqual(["S. alpha", "S. zeta"]);
+    expect(merged.omitted_child_count).toBe(4);
+    expect(merged.omitted_reference_genome_count).toBe(37);
+  });
+
+  it("returns the held tree itself when the response adds nothing", () => {
+    const held = node("root", { id: null, backbone_id: null }, [node("Bacteria")]);
+    expect(mergeBackbone(held, node("root", { id: null, backbone_id: null }, [unloaded("Bacteria")]))).toBe(held);
+    expect(mergeBackbone(held, unloaded("root"))).toBe(held);
+  });
+});
+
+describe("mergeBackboneAt", () => {
+  it("lists a deep clade's remaining children and keeps its open ones open", () => {
+    const opened = node("S. alpha", { rank: "species" }, [node("strain", { rank: null })]);
+    const genus = node("Streptomyces", { omitted_child_count: 2, omitted_reference_genome_count: 5 }, [opened]);
+    const root = node("root", { id: null, backbone_id: null }, [node("Bacteria", { rank: "domain" }, [genus])]);
+    const all = node("Streptomyces", {}, [
+      node("S. alpha", { rank: "species", children_loaded: false, child_count: 1 }),
+      node("S. beta", { rank: "species", reference_genome_count: 3 }),
+      node("S. gamma", { rank: "species", reference_genome_count: 2 }),
+    ]);
+    const merged = mergeBackboneAt(root, all);
+    const g = merged.children[0]!.children[0]!;
+    expect(g.children.map((c) => c.name)).toEqual(["S. alpha", "S. beta", "S. gamma"]);
+    expect(g.children[0]).toBe(opened);
+    expect(g.omitted_child_count).toBe(0);
+    expect(g.omitted_reference_genome_count).toBe(0);
+  });
+});
+
+describe("omittedSummaryParentKey", () => {
+  it("names the clade a summary row belongs to, and nothing else", () => {
+    expect(omittedSummaryParentKey("abc::more")).toBe("abc");
+    expect(omittedSummaryParentKey("__root__::more")).toBe("__root__");
+    expect(omittedSummaryParentKey("abc")).toBeNull();
   });
 });
