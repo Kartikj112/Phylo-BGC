@@ -22,7 +22,8 @@ test("SVG export downloads a self-describing figure from the browser", async ({ 
   await page.waitForSelector("svg [data-figure-root='true']", { timeout: 45_000 });
   await dismissWelcome(page);
 
-  const svgButton = page.getByRole("button", { name: "svg", exact: true });
+  await page.getByRole("button", { name: "Export" }).click();
+  const svgButton = page.getByRole("menuitem", { name: /SVG figure/ });
   await expect(svgButton).toBeVisible();
 
   const [download] = await Promise.all([
@@ -52,7 +53,8 @@ test("PDF export either downloads or reports a usable error, never a bare 500", 
   await page.waitForSelector("svg [data-figure-root='true']", { timeout: 45_000 });
   await dismissWelcome(page);
 
-  const pdfButton = page.getByRole("button", { name: "pdf", exact: true });
+  await page.getByRole("button", { name: "Export" }).click();
+  const pdfButton = page.getByRole("menuitem", { name: /PDF figure/ });
   await expect(pdfButton).toBeVisible();
 
   const downloadPromise = page
@@ -94,7 +96,10 @@ test("the export POST survives a real CORS preflight", async ({ page }) => {
 
   const [response] = await Promise.all([
     page.waitForResponse((r) => r.url().includes("/api/v1/export"), { timeout: 45_000 }),
-    page.getByRole("button", { name: "svg", exact: true }).click(),
+    page
+      .getByRole("button", { name: "Export" })
+      .click()
+      .then(() => page.getByRole("menuitem", { name: /SVG figure/ }).click()),
   ]);
 
   expect(response.status(), "export POST must not be blocked by CORS").toBe(200);

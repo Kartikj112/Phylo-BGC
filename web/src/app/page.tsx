@@ -1,6 +1,16 @@
 "use client";
 
-import { FolderUp, X } from "lucide-react";
+import {
+  BookOpen,
+  Compass,
+  FolderUp,
+  HelpCircle,
+  Home,
+  Loader2,
+  RotateCcw,
+  SlidersHorizontal,
+  X,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Breadcrumbs } from "@/components/Breadcrumbs";
 import { BgcTypeDonut } from "@/components/BgcTypeDonut";
@@ -19,6 +29,16 @@ import { DetailPanel, type Selection } from "@/components/DetailPanel";
 import { FamilyRail } from "@/components/FamilyRail";
 import { Header } from "@/components/Header";
 import { AntismashUploadDialog } from "@/components/AntismashUploadDialog";
+import { BackboneGuide } from "@/components/BackboneGuide";
+import {
+  MenuCheckbox,
+  MenuItem,
+  MenuLabel,
+  MenuNote,
+  MenuRadio,
+  MenuSeparator,
+  ToolbarMenu,
+} from "@/components/ToolbarMenu";
 import { LoadingOverlay } from "@/components/LoadingOverlay";
 import { LoadingQuestions } from "@/components/LoadingQuestions";
 import { SiteFooter } from "@/components/SiteFooter";
@@ -27,9 +47,9 @@ import { QuickTour } from "@/components/QuickTour";
 import { TreeCanvas } from "@/components/TreeCanvas";
 import { useTaxonomyTree } from "@/hooks/useTaxonomyTree";
 import { useBackboneTree } from "@/hooks/useBackboneTree";
-import { asTaxonTree, isComparable } from "@/lib/backbone";
-import { fetchBgcClasses, search, invalidateApiCache } from "@/lib/api-client";
-import type { BGCFamilySummary, TaxonTreeNode } from "@/lib/api-types";
+import { asTaxonTree, isComparable, omittedSummaryParentKey } from "@/lib/backbone";
+import { fetchBgcClasses, search, searchBackbone, invalidateApiCache } from "@/lib/api-client";
+import type { BackboneSearchHit, BGCFamilySummary, TaxonTreeNode } from "@/lib/api-types";
 import { CLASS_ORDER } from "@/lib/colors";
 import {
   bgcFamilyIndex,
@@ -53,6 +73,7 @@ import {
   findNodeByKey,
   findTaxonKeyByName,
   groupUnplacedTaxa,
+  pathToNode,
   pruneToBgcBearing,
   ranksPresent,
   toRootDisplayNode,
@@ -98,13 +119,33 @@ export default function HomePage() {
   // only where a backbone is loaded (GTDB, so prokaryotes), and deep-linkable
   // with ?backbone=1.
   const [showAllGenomes, setShowAllGenomes] = useState(false);
+  // Read once from the URL, so a copied link (Export → Copy link) reopens
+  // the same taxonomy, view and mode. Clade and class are applied later,
+  // once there is a tree to find them in (see the deep-link effect).
   useEffect(() => {
-    if (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("backbone") === "1") {
-      setShowAllGenomes(true);
-    }
+    if (typeof window === "undefined") return;
+    const p = new URLSearchParams(window.location.search);
+    if (p.get("backbone") === "1") setShowAllGenomes(true);
+    if (p.get("scope") === "eukaryote") setTaxonomy("eukaryote");
+    const v = p.get("view");
+    if (v === "flow" || v === "heatmap") setView(v);
   }, []);
   const backbone = useBackboneTree(treeScope, showAllGenomes && treeScope === "prokaryote");
   const backboneOn = showAllGenomes && backbone.tree !== null;
+  // A clade to open in the backbone and then focus: a search result (by
+  // backbone id), or the clade that was focused when the switch was flipped
+  // on (by name, since the corpus tree does not know backbone ids).
+  type RevealRequest =
+    | { backboneId: string; nodeKey: string; name: string; rank: string | null }
+    | { name: string; rank: string | null };
+  const [pendingReveal, setPendingReveal] = useState<RevealRequest | null>(null);
+  const pendingRevealRef = useRef<RevealRequest | null>(null);
+  pendingRevealRef.current = pendingReveal;
+  const [revealingName, setRevealingName] = useState<string | null>(null);
+  // Focus this node key once it is in the tree; `parentIfLeaf` focuses a
+  // species' genus instead, since a species alone is a single dot.
+  const [focusTarget, setFocusTarget] = useState<{ key: string; parentIfLeaf: boolean } | null>(null);
+  const [guideCollapsed, setGuideCollapsed] = useState(false);
   const backboneOffered = taxonomy === "prokaryote" && backbone.status?.available === true;
   const referenceSource =
     backboneOn && backbone.status?.source_name
@@ -155,6 +196,10 @@ export default function HomePage() {
   // inline form is still the better read when only a handful of tips are on
   // screen, and it makes the two directly comparable.
   const [alignedGlyphs, setAlignedGlyphs] = useState(true);
+  // The class donut repeats the stats bar's class strip, and sat on top of
+  // the tree's bottom-right corner where it swallowed clicks on whatever
+  // clade was drawn under it. Offered in Display, off by default.
+  const [showTypeChart, setShowTypeChart] = useState(false);
   // Below `lg` the left rail is an off-canvas drawer rather than a column:
   // at 375px a 208px rail leaves 167px of tree, which is not a view of
   // anything. It is a plain overlay, not a separate route, so every filter
@@ -214,6 +259,10 @@ export default function HomePage() {
     [filtered, focusKey],
   );
   const root = focused?.root ?? null;
+  const focusedNode = focused && focused.path.length > 0 ? focused.path[focused.path.length - 1]! : null;
+  useEffect(() => {
+    focusedNodeRef.current = focusedNode;
+  }, [focusedNode]);
 
   /** The two upload highlights, over the FULL tree so they survive filtering.
    *
@@ -311,15 +360,39 @@ export default function HomePage() {
   // one has to go: collapse keys are node ids that do not exist in the other
   // tree, and the initial-collapse guard must re-arm or the new tree would
   // render fully expanded.
+  //
+  // Flipping "All GTDB genomes" is not a new taxonomy, though, and used to
+  // be treated as one: whatever clade the reader had focused, the switch
+  // threw them back to the root of a 900,000-genome tree. The focused clade
+  // now comes along. Corpus clades keep their id in the backbone, but the
+  // backbone loads a level at a time, so turning it on finds the clade by
+  // name and loads the path to it; turning it off keeps the focus when the
+  // clade is in the corpus.
+  const prevScopeRef = useRef(treeScope);
+  const focusedNodeRef = useRef<TaxonTreeNode | null>(null);
   useEffect(() => {
+    const scopeChanged = prevScopeRef.current !== treeScope;
+    prevScopeRef.current = treeScope;
     initialCollapseApplied.current = false;
     setCollapsed(new Set());
     setActiveLevel(null);
-    setFocusKey(null);
-    setSelection(null);
     setSelectedFamilyId(null);
-    setComparisonTaxonIds([]);
     setNodeOffsets(new Map());
+    if (scopeChanged) {
+      setFocusKey(null);
+      setSelection(null);
+      setComparisonTaxonIds([]);
+      return;
+    }
+    const f = focusedNodeRef.current;
+    if (!f || f.id === null) {
+      setFocusKey(null);
+    } else if (backboneOn) {
+      setFocusKey(null);
+      if (!pendingRevealRef.current) setPendingReveal({ name: f.name, rank: f.rank });
+    } else {
+      setFocusKey(isComparable(f) ? f.id : null);
+    }
   }, [treeScope, backboneOn]);
 
 
@@ -333,9 +406,23 @@ export default function HomePage() {
   useEffect(() => {
     if (!root || initialCollapseApplied.current) return;
     initialCollapseApplied.current = true;
-    const level = initialCollapseLevel(root);
+    // With all of GTDB behind it, open on phyla rather than the three
+    // domains the node budget would pick: the phyla are already loaded, and
+    // they are where the contrast this mode exists for — a few dense, many
+    // untouched — first shows.
+    const level: CollapseLevel =
+      backboneOn && ranksPresent(root).has("phylum") ? "phylum" : initialCollapseLevel(root);
     setActiveLevel(level);
-    setCollapsed(collapseToLevel(root, level));
+    const initial = collapseToLevel(root, level);
+    // A domain holding nothing from the corpus (Archaea, on the bundled
+    // data) stays shut: its phyla would double the rows on screen, crowd
+    // every label out, and show nothing but unexamined genomes.
+    if (backboneOn) {
+      for (const child of root.children) {
+        if (child.rank === "domain" && child.genome_count === 0 && child.id) initial.add(child.id);
+      }
+    }
+    setCollapsed(initial);
     setFitSignal((n) => n + 1);
   }, [root]);
 
@@ -397,8 +484,11 @@ export default function HomePage() {
   const deepLinkApplied = useRef(false);
   useEffect(() => {
     if (!fullRoot || deepLinkApplied.current || typeof window === "undefined") return;
-    deepLinkApplied.current = true;
     const p = new URLSearchParams(window.location.search);
+    // A eukaryote link must wait for the eukaryote tree, or the clade is
+    // looked for in the prokaryote one and not found.
+    if (p.get("scope") === "eukaryote" && treeScope !== "eukaryote") return;
+    deepLinkApplied.current = true;
     const clsParam = p.get("class")?.toLowerCase();
     const bgcParam = p.get("bgc")?.trim();
     const taxonParam = p.get("taxon")?.trim();
@@ -423,7 +513,74 @@ export default function HomePage() {
         setFitSignal((n) => n + 1);
       }
     }
-  }, [fullRoot]);
+  }, [fullRoot, treeScope]);
+
+  // Open a requested clade in the backbone, once the backbone is on screen.
+  // Not cancelled on re-run: clearing `pendingReveal` re-runs this effect,
+  // and the hook already drops a response that belongs to a replaced tree.
+  const revealInBackbone = backbone.reveal;
+  useEffect(() => {
+    if (!pendingReveal || !backboneOn) return;
+    const req = pendingReveal;
+    setPendingReveal(null);
+    setRevealingName(req.name);
+    (async () => {
+      let target: { backboneId: string; nodeKey: string; rank: string | null } | null =
+        "backboneId" in req ? req : null;
+      if (!target) {
+        const hits = await searchBackbone(treeScope, req.name, 8).catch(() => []);
+        const hit = hits.find((h) => h.name === req.name && (req.rank == null || h.rank === req.rank));
+        target = hit ? { backboneId: hit.backbone_id, nodeKey: hit.node_key, rank: hit.rank } : null;
+      }
+      if (target && (await revealInBackbone(target.backboneId))) {
+        setFocusTarget({ key: target.nodeKey, parentIfLeaf: target.rank === "species" });
+      }
+    })().finally(() => setRevealingName(null));
+  }, [pendingReveal, backboneOn, treeScope, revealInBackbone]);
+
+  // Focus the revealed clade once the merged tree has it.
+  useEffect(() => {
+    if (!focusTarget || !fullRoot) return;
+    const path = pathToNode(fullRoot, focusTarget.key);
+    if (path.length === 0) return;
+    setFocusTarget(null);
+    const target =
+      focusTarget.parentIfLeaf && path.length >= 2 ? path[path.length - 2]! : path[path.length - 1]!;
+    focusNode(target.id);
+    // focusNode is redefined each render and reads nothing stale.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fullRoot, focusTarget]);
+
+  /** A GTDB search result was picked: switch the backbone on if needed,
+   * open the path to the clade, and focus it. */
+  function openGtdbHit(hit: BackboneSearchHit): void {
+    // Focusing the clade already says where it is. Only a species keeps the
+    // query, because it is shown inside its genus and needs picking out.
+    setQuery(hit.rank === "species" ? hit.name : "");
+    setGuideCollapsed(true);
+    setView("tree");
+    setPendingReveal({ backboneId: hit.backbone_id, nodeKey: hit.node_key, name: hit.name, rank: hit.rank });
+    if (!showAllGenomes) setShowAllGenomes(true);
+    closeRailOnMobile();
+  }
+
+  function toggleAllGenomes(): void {
+    setShowAllGenomes((v) => !v);
+    setGuideCollapsed(false);
+  }
+
+  /** A link that reopens this view: taxonomy, view, mode, focused clade,
+   * and a single-class filter. What the deep-link reader understands. */
+  function shareUrl(): string {
+    const p = new URLSearchParams();
+    if (taxonomy === "eukaryote") p.set("scope", "eukaryote");
+    if (view !== "tree") p.set("view", view);
+    if (showAllGenomes && taxonomy === "prokaryote") p.set("backbone", "1");
+    if (focusedNode && focusedNode.id !== null) p.set("taxon", focusedNode.name);
+    if (activeClasses.size === 1) p.set("class", [...activeClasses][0]!);
+    const qs = p.toString();
+    return `${window.location.origin}${window.location.pathname}${qs ? `?${qs}` : ""}`;
+  }
 
   function selectFamily(id: string | null): void {
     setSelectedFamilyId(id);
@@ -545,6 +702,12 @@ export default function HomePage() {
     // A backbone clade that has not been fetched opens by fetching it. A
     // level preset may have put its key in `collapsed`; take it out, or the
     // children would arrive into a clade that stays shut.
+    // A "N more phyla" row lists them all when clicked.
+    const summaryParent = omittedSummaryParentKey(key);
+    if (summaryParent !== null) {
+      if (backboneOn) backbone.listAll(summaryParent);
+      return;
+    }
     if (backboneOn && backbone.expand(key)) {
       setActiveLevel(null);
       setAutoFramed(false);
@@ -627,7 +790,22 @@ export default function HomePage() {
         railOpen={railOpen}
         onToggleRail={() => setRailOpen((v) => !v)}
         onHome={() => setGate("welcome")}
-        taxonomyLabel={taxonomy === "eukaryote" ? "NCBI Taxonomy" : "GTDB"}>
+        taxonomyLabel={taxonomy === "eukaryote" ? "NCBI Taxonomy" : "GTDB"}
+        gtdbSearch={
+          backboneOffered && backbone.status
+            ? {
+                scope: treeScope,
+                sourceLabel: `${backbone.status.source_name ?? "GTDB"} ${backbone.status.source_version ?? ""}`.trim(),
+                backboneOn: showAllGenomes,
+                onPick: openGtdbHit,
+              }
+            : null
+        }>
+        {/* The toolbar reads left to right as: what data (taxonomy, and
+            whether all of GTDB is drawn behind it), how to look at it (view,
+            and the display settings for the tree), then what to do with it
+            (add genomes, take it out) and help. Settings that only change
+            how the tree is drawn live in one menu, not four buttons. */}
         <div
           data-tour="taxonomy"
           className="flex flex-shrink-0 overflow-hidden rounded border border-chrome-line"
@@ -642,6 +820,7 @@ export default function HomePage() {
               key={id}
               title={hint}
               onClick={() => setTaxonomy(id)}
+              aria-pressed={taxonomy === id}
               className={`whitespace-nowrap px-2.5 py-1.5 text-xs ${
                 taxonomy === id
                   ? "bg-chrome-accent-wash text-chrome-accent"
@@ -653,32 +832,55 @@ export default function HomePage() {
           ))}
         </div>
 
+        {/* A switch, drawn as one: it adds a layer behind the tree rather
+            than choosing between peers, and the old plain button read as a
+            third taxonomy tab. The count says what switching it on means. */}
         {backboneOffered && (
           <button
-            onClick={() => setShowAllGenomes((v) => !v)}
-            aria-pressed={showAllGenomes}
+            type="button"
+            role="switch"
+            aria-checked={showAllGenomes}
+            data-tour="backbone"
+            onClick={toggleAllGenomes}
             title={
-              showAllGenomes && backbone.error
-                ? `Could not load the backbone (${backbone.error.message}). Click to switch it off.`
-                : showAllGenomes
-                ? "Back to the corpus alone: only genomes this database records something for."
+              showAllGenomes
+                ? "Back to the BGC corpus alone: only genomes this database records something for."
                 : `Draw all ${backbone.status?.reference_genome_count.toLocaleString("en-US") ?? ""} ${
                     backbone.status?.source_name ?? ""
                   } genomes behind the corpus, a clade at a time. None of them has been examined for clusters.`
             }
-            className={`flex-shrink-0 whitespace-nowrap rounded border border-chrome-line px-2.5 py-1.5 text-xs ${
+            className={`flex flex-shrink-0 items-center gap-2 whitespace-nowrap rounded border px-2.5 py-1.5 text-xs focus:outline-none focus-visible:ring-1 focus-visible:ring-chrome-accent ${
               showAllGenomes
-                ? "bg-chrome-accent-wash text-chrome-accent"
-                : "text-chrome-ink-muted hover:bg-chrome-soft hover:text-chrome-ink"
+                ? "border-chrome-accent/50 bg-chrome-accent-wash text-chrome-accent"
+                : "border-chrome-line text-chrome-ink-muted hover:bg-chrome-soft hover:text-chrome-ink"
             }`}
           >
-            {showAllGenomes && backbone.error
-              ? `${backbone.status?.source_name ?? "Backbone"} failed to load`
-              : showAllGenomes && backbone.loading
-                ? `Loading ${backbone.status?.source_name ?? ""}…`
-                : `All ${backbone.status?.source_name ?? ""} genomes`}
+            <span
+              aria-hidden
+              className={`relative inline-flex h-3.5 w-6 flex-shrink-0 items-center rounded-full transition-colors ${
+                showAllGenomes ? "bg-chrome-accent" : "bg-chrome-line-strong"
+              }`}
+            >
+              <span
+                className={`absolute left-0.5 h-2.5 w-2.5 rounded-full bg-chrome transition-transform ${
+                  showAllGenomes ? "translate-x-2.5" : ""
+                }`}
+              />
+            </span>
+            All {backbone.status?.source_name ?? ""} genomes
+            {showAllGenomes && (backbone.loading || backbone.revealing) ? (
+              <Loader2 size={12} className="animate-spin" aria-label="Loading" />
+            ) : (
+              <span className="font-mono text-[10px] text-chrome-ink-faint">
+                {new Intl.NumberFormat("en-US", { notation: "compact" }).format(
+                  backbone.status?.reference_genome_count ?? 0,
+                )}
+              </span>
+            )}
           </button>
         )}
+
+        <span aria-hidden className="mx-0.5 h-5 w-px flex-shrink-0 bg-chrome-line" />
 
         <div
           data-tour="views"
@@ -695,6 +897,7 @@ export default function HomePage() {
               key={id}
               title={hint}
               onClick={() => setView(id)}
+              aria-pressed={view === id}
               className={`whitespace-nowrap px-2.5 py-1.5 text-xs ${
                 view === id
                   ? "bg-chrome-accent-wash text-chrome-accent"
@@ -707,77 +910,68 @@ export default function HomePage() {
         </div>
 
         {isTreeView && (
-        <div className="flex flex-shrink-0 overflow-hidden rounded border border-chrome-line">
-          {(["horizontal", "radial"] as const).map((mode) => (
-            <button
-              key={mode}
-              onClick={() => {
-                setOrientation(mode);
-                setFitSignal((n) => n + 1);
-              }}
-              title={mode === "horizontal" ? "Horizontal tree" : "Circular tree"}
-              className={`px-2.5 py-1.5 text-xs ${
-                orientation === mode
-                  ? "bg-chrome-accent-wash text-chrome-accent"
-                  : "text-chrome-ink-muted hover:bg-chrome-soft hover:text-chrome-ink"
-              }`}
+          <ToolbarMenu
+            label="Display"
+            dataTour="display"
+            title="Layout and what is drawn on the tree"
+            icon={<SlidersHorizontal size={13} aria-hidden />}
+            width={280}
+          >
+            <MenuLabel>Layout</MenuLabel>
+            {(["horizontal", "radial"] as const).map((mode) => (
+              <MenuRadio
+                key={mode}
+                checked={orientation === mode}
+                title={mode === "horizontal" ? "Horizontal tree" : "Circular tree"}
+                icon={mode === "horizontal" ? "⊢" : "◎"}
+                onSelect={() => {
+                  setOrientation(mode);
+                  setFitSignal((n) => n + 1);
+                }}
+              >
+                {mode === "horizontal" ? "Horizontal" : "Circular"}
+              </MenuRadio>
+            ))}
+            <MenuSeparator />
+            <MenuLabel>Show</MenuLabel>
+            <MenuCheckbox
+              checked={alignedGlyphs}
+              onChange={setAlignedGlyphs}
+              hint="Line every cluster glyph up in one column, so rows can be compared. Off hangs them off each node."
             >
-              {mode === "horizontal" ? "⊢" : "◎"}
-            </button>
-          ))}
-        </div>
+              Aligned cluster track
+            </MenuCheckbox>
+            <MenuCheckbox
+              checked={showRegions}
+              onChange={setShowRegions}
+              hint="Faint shading behind each clade, to make the nesting visible."
+            >
+              Clade shading
+            </MenuCheckbox>
+            <MenuCheckbox
+              checked={showTypeChart}
+              onChange={setShowTypeChart}
+              hint="A donut of cluster counts by class, in the corner of the tree."
+            >
+              BGC class chart
+            </MenuCheckbox>
+            <MenuSeparator />
+            <MenuItem
+              icon={<RotateCcw size={13} />}
+              onSelect={autoArrange}
+              disabled={nodeOffsets.size === 0}
+              hint={
+                nodeOffsets.size === 0
+                  ? "Nodes can be dragged on the tree; this puts them back."
+                  : `Undo ${nodeOffsets.size} dragged node${nodeOffsets.size === 1 ? "" : "s"} and re-centre.`
+              }
+            >
+              Reset node positions
+            </MenuItem>
+          </ToolbarMenu>
         )}
 
-        {isTreeView && (
-          <button
-            onClick={() => setAlignedGlyphs((v) => !v)}
-            title={
-              alignedGlyphs
-                ? "Cluster glyphs share one aligned track, so counts and classes line up across the whole tree. Click to hang them off each node instead."
-                : "Cluster glyphs hang off each node. Click to align them on a shared track so rows can be compared."
-            }
-            className={`flex-shrink-0 whitespace-nowrap rounded border border-chrome-line px-2 py-1.5 text-xs ${
-              alignedGlyphs
-                ? "bg-chrome-accent-wash text-chrome-accent"
-                : "text-chrome-ink-muted hover:bg-chrome-soft hover:text-chrome-ink"
-            }`}
-          >
-            Aligned
-          </button>
-        )}
-
-        {isTreeView && (
-          <button
-            onClick={() => setShowRegions((v) => !v)}
-            title={
-              showRegions
-                ? "Hide the taxonomic grouping shading"
-                : "Show subtle shading behind each clade to make the taxonomic nesting visible"
-            }
-            className={`flex-shrink-0 whitespace-nowrap rounded border border-chrome-line px-2 py-1.5 text-xs ${
-              showRegions
-                ? "bg-chrome-accent-wash text-chrome-accent"
-                : "text-chrome-ink-muted hover:bg-chrome-soft hover:text-chrome-ink"
-            }`}
-          >
-            Clades
-          </button>
-        )}
-
-        {isTreeView && (
-          <button
-            onClick={autoArrange}
-            disabled={nodeOffsets.size === 0}
-            title={
-              nodeOffsets.size === 0
-                ? "Layout is already tidy — drag nodes to rearrange, then use this to restore it"
-                : `Discard ${nodeOffsets.size} manual node move(s) and re-centre`
-            }
-            className="flex-shrink-0 whitespace-nowrap rounded border border-chrome-line px-2 py-1.5 text-xs text-chrome-ink-muted enabled:hover:bg-chrome-soft enabled:hover:text-chrome-ink disabled:opacity-40"
-          >
-            Auto arrange
-          </button>
-        )}
+        <span aria-hidden className="mx-0.5 h-5 w-px flex-shrink-0 bg-chrome-line" />
 
         {/* The upload path's permanent door. Without it the only way back
             to it would be a page reload, since the welcome fork is shown
@@ -786,10 +980,11 @@ export default function HomePage() {
           data-tour="upload"
           onClick={() => setGate("upload")}
           title="Upload antiSMASH result JSON files and place those genomes on the tree"
-          className="flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap rounded border border-chrome-line px-2 py-1.5 text-xs text-chrome-ink-muted hover:bg-chrome-soft hover:text-chrome-ink"
+          aria-label="Upload antiSMASH results"
+          className="flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap rounded border border-chrome-line px-2.5 py-1.5 text-xs text-chrome-ink-muted hover:bg-chrome-soft hover:text-chrome-ink"
         >
           <FolderUp size={13} aria-hidden />
-          antiSMASH
+          Upload<span className="hidden 2xl:inline"> antiSMASH</span>
         </button>
 
         <ExportButton
@@ -799,7 +994,54 @@ export default function HomePage() {
           selectedFamilyId={selectedFamilyId}
           comparisonTaxonIds={comparisonTaxonIds}
           searchQuery={query}
+          canExportFigure={isTreeView && root !== null}
+          shareUrl={shareUrl}
         />
+
+        <ToolbarMenu
+          label="Help"
+          iconOnly
+          align="right"
+          dataTour="help"
+          title="Help: the tour, and how to move around the tree"
+          icon={<HelpCircle size={14} aria-hidden />}
+          width={300}
+        >
+          <MenuItem icon={<Compass size={13} />} onSelect={() => setGate("tour")}>
+            Take the quick tour
+          </MenuItem>
+          <MenuItem icon={<Home size={13} />} onSelect={() => setGate("welcome")}>
+            Back to the start screen
+          </MenuItem>
+          <MenuSeparator />
+          <MenuLabel>On the tree</MenuLabel>
+          <MenuNote>
+            <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+              {[
+                ["Click a clade", "open or close it"],
+                ["Double-click", "focus on that clade"],
+                ["Shift-click", "add it to a comparison"],
+                ["Click a genome", "show its clusters"],
+                ["Drag", "pan · drag a node to move it"],
+                ["Scroll or pinch", "zoom"],
+              ].map(([k, v]) => (
+                <div key={k} className="contents">
+                  <dt className="whitespace-nowrap text-chrome-ink">{k}</dt>
+                  <dd>{v}</dd>
+                </div>
+              ))}
+            </dl>
+          </MenuNote>
+          <MenuSeparator />
+          <MenuItem
+            icon={<BookOpen size={13} />}
+            onSelect={() => {
+              window.location.href = "/data-sources";
+            }}
+          >
+            Data sources and how to cite
+          </MenuItem>
+        </ToolbarMenu>
       </Header>
 
       {/* What this dataset contains, above everything: how many clusters,
@@ -812,15 +1054,6 @@ export default function HomePage() {
         shownGenomes={genomeCount}
         totalGenomes={pruned?.totalGenomes ?? 0}
         scope={treeScope}
-        reference={
-          referenceSource && backbone.status
-            ? {
-                source: referenceSource,
-                genomes: backbone.status.reference_genome_count,
-                species: backbone.status.reference_species_count,
-              }
-            : null
-        }
       />
 
       {isTreeView && selectedFamilyId && familyDist && (
@@ -886,6 +1119,11 @@ export default function HomePage() {
               activeLevel={activeLevel}
               availableRanks={availableRanks}
               onSelectLevel={selectLevel}
+              note={
+                backboneOn
+                  ? "With all of GTDB drawn, a level opens only the clades already loaded. Click a clade to load deeper ranks, or search to jump straight to one."
+                  : undefined
+              }
             />
           </RailSection>
 
@@ -975,7 +1213,7 @@ export default function HomePage() {
               and never crosses the centre where the radial layout puts its
               densest structure. Hidden below lg, where the tree needs the
               whole viewport more than the breakdown does. */}
-          {isTreeView && root && (
+          {isTreeView && root && showTypeChart && (
             <div className="pointer-events-none absolute bottom-4 right-4 z-10 hidden lg:block">
               <BgcTypeDonut scope={treeScope} />
             </div>
@@ -985,8 +1223,28 @@ export default function HomePage() {
               green is claiming — "shares a BiG-SCAPE family" is a much
               narrower statement than "similar", and the difference is the
               whole reason the clustering file is asked for. */}
-          {isTreeView && uploadHighlight && (
-            <div className="absolute left-4 top-4 z-10 max-w-xs rounded border border-line bg-card/95 px-3 py-2.5 shadow-sm">
+          {/* Top-left of the canvas: what the tree is showing beyond the
+              corpus. Stacked, so the GTDB guide and an upload legend never
+              sit on top of each other. */}
+          {isTreeView && ((showAllGenomes && backboneOffered) || uploadHighlight) && (
+          <div className="pointer-events-none absolute left-2 top-2 z-10 flex flex-col items-start gap-2 sm:left-4 sm:top-4">
+          {showAllGenomes && backboneOffered && backbone.status && (
+            <BackboneGuide
+              sourceLabel={referenceSource ?? `${backbone.status.source_name ?? "GTDB"} ${backbone.status.source_version ?? ""}`.trim()}
+              referenceGenomes={backbone.status.reference_genome_count}
+              referenceSpecies={backbone.status.reference_species_count}
+              corpusGenomes={backbone.tree?.genome_count ?? pruned?.totalGenomes ?? 0}
+              loading={backbone.loading}
+              error={backbone.error}
+              revealing={revealingName}
+              collapsed={guideCollapsed}
+              onToggleCollapsed={() => setGuideCollapsed((v) => !v)}
+              onRetry={backbone.reload}
+              onTurnOff={() => setShowAllGenomes(false)}
+            />
+          )}
+          {uploadHighlight && (
+            <div className="pointer-events-auto max-w-xs rounded border border-line bg-card/95 px-3 py-2.5 shadow-sm">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="text-xs font-semibold text-ink">Your upload</p>
@@ -1021,6 +1279,8 @@ export default function HomePage() {
                 </button>
               </div>
             </div>
+          )}
+          </div>
           )}
           {view === "flow" && <SankeyView scope={taxonomy} />}
           {view === "heatmap" && <HeatmapView scope={taxonomy} />}

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useState } from "react";
 
 /**
- * A six-step tour that points at the real controls.
+ * A short tour that points at the real controls.
  *
  * It spotlights live elements rather than showing pictures of them, because
  * the thing a new reader has to learn here is not what the app can do — the
@@ -36,6 +36,11 @@ const STEPS: readonly Step[] = [
     body: "Prokaryotes sit on the GTDB backbone; eukaryotes are ranked by NCBI Taxonomy, because GTDB does not cover them. They are separate trees on purpose — the counts are never added together.",
   },
   {
+    target: "backbone",
+    title: "All of GTDB, behind the corpus",
+    body: "Switch this on to draw every GTDB genome behind the curated ones, a clade at a time. Faint, dashed clades are ones nothing here has examined; click one to open it, or search to jump straight to any GTDB clade.",
+  },
+  {
     target: "stats",
     title: "Everything here is scoped to the open tab",
     body: "Clusters, genomes, taxa and the class strip all describe the taxonomy you are looking at, and say what they are a fraction of. Switch tabs and every figure changes with it.",
@@ -44,6 +49,11 @@ const STEPS: readonly Step[] = [
     target: "views",
     title: "Three readings of the same corpus",
     body: "The tree places clusters on branches. Flows trace phylum to genus to class. The matrix is clade by class. Same data, three questions.",
+  },
+  {
+    target: "display",
+    title: "How the tree is drawn",
+    body: "Horizontal or circular layout, the aligned cluster track and clade shading all live in this one menu, so the toolbar stays short.",
   },
   {
     target: "search",

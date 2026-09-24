@@ -633,6 +633,25 @@ class BackboneTreeNode(BaseModel):
 BackboneTreeNode.model_rebuild()
 
 
+class BackboneSearchHit(BaseModel):
+    """A clade of the reference backbone whose name matched a search."""
+
+    backbone_id: uuid.UUID
+    """What to pass to `/backbone/path` to open the tree down to it."""
+    node_key: str
+    """The `id` this clade has in `/backbone/tree` responses: the corpus
+    taxon's id when it is in the corpus, otherwise `backbone_id`."""
+    name: str
+    rank: TaxonRank
+    lineage: list[str]
+    """Names of its ancestors, root first."""
+    reference_genome_count: int
+    reference_species_count: int
+    corpus_genome_count: int
+    """Corpus genomes under this clade, of `reference_genome_count`."""
+    in_corpus: bool
+
+
 class BackboneStatus(BaseModel):
     """Whether a backbone is loaded for a taxonomy, and what it holds."""
 

@@ -48,7 +48,7 @@ export const PROJECT = {
   contactEmail: "kartik.nio24a@acsir.res.in" as Maybe,
 
   /** Where the source lives. */
-  repositoryUrl: "https://github.com/Kartikj112/bgc-scape",
+  repositoryUrl: "https://github.com/Kartikj112/Phylo-BGC",
 
   /**
    * Provenance of the wordmark (`logo.png`, `logo-animation.mp4`).

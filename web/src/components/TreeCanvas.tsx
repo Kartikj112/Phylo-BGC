@@ -1545,7 +1545,7 @@ function TaxonNode({
         `. None of the ${referenceSource} genomes has been examined for clusters.`
       : null;
   const summaryNote = isOmittedSummary(node)
-    ? " Not listed one by one: none of them holds a genome from this corpus."
+    ? " Not listed one by one: none of them holds a genome from this corpus. Click to list them all."
     : "";
   return (
     <>
@@ -1568,7 +1568,7 @@ function TaxonNode({
             onToggleCollapse={onToggleCollapse}
           />
         ) : (
-          <g className={isOmittedSummary(node) ? undefined : "cursor-pointer"} onClick={onToggleCollapse}>
+          <g className="cursor-pointer" onClick={onToggleCollapse}>
             <title>{`${node.name}: ${referenceNote ?? ""}${summaryNote}`}</title>
             {touchMode && <circle r={14 * ms} fill="transparent" />}
             <circle
@@ -1605,7 +1605,7 @@ function TaxonNode({
         </g>
       )}
 
-      {matched && !isRadial && (
+      {matched && showLabel && !isRadial && (
         <rect
           x={labelX - node.name.length * charWidth - 4 * ls}
           y={-8 * ls}

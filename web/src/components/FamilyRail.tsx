@@ -2,6 +2,7 @@
 
 import { Layers, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { RailHeading } from "@/components/RailHeading";
 import { fetchFamilies } from "@/lib/api-client";
 import type { BGCFamilySummary } from "@/lib/api-types";
 import type { FamilyIndexEntry } from "@/lib/tree-logic";
@@ -53,6 +54,7 @@ export function FamilyRail({
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<SortMode>("members");
+  const [open, setOpen] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -145,19 +147,29 @@ export function FamilyRail({
     return sorted;
   }, [families, familyIndex, query, sort]);
 
+  const selectedLabel = selectedFamilyId ? families.find((f) => f.id === selectedFamilyId)?.label : null;
+
   return (
     <div>
-      <div className="mb-2 flex items-center justify-between">
-        <span className="flex items-center gap-1.5 text-xs uppercase tracking-wider text-chrome-ink-muted">
-          <Layers size={12} />
-          {kind.title}
-        </span>
-        {selectedFamilyId && (
-          <button onClick={() => onSelectFamily(null)} className="py-1 text-xs text-chrome-accent hover:underline">
-            Clear
-          </button>
-        )}
+      <div className="mb-1">
+        <RailHeading
+          icon={<Layers size={12} />}
+          title={kind.title}
+          open={open}
+          onToggle={() => setOpen((v) => !v)}
+          summary={selectedLabel ?? (families.length ? `${families.length}` : undefined)}
+          action={
+            selectedFamilyId ? (
+              <button onClick={() => onSelectFamily(null)} className="py-1 text-xs text-chrome-accent hover:underline">
+                Clear
+              </button>
+            ) : undefined
+          }
+        />
       </div>
+
+      {open && (
+      <>
 
       {!loading && !error && families.length > 0 && (
         <>
@@ -276,6 +288,8 @@ export function FamilyRail({
           );
         })}
       </div>
+      </>
+      )}
     </div>
   );
 }

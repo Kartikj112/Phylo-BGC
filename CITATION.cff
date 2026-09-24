@@ -22,7 +22,7 @@ abstract: >-
   evidence is distinguishable from evidence of absence.
 type: software
 license: MIT
-repository-code: "https://github.com/Kartikj112/bgc-scape"
+repository-code: "https://github.com/Kartikj112/Phylo-BGC"
 version: "0.1.0"
 date-released: "2026-09-08"
 

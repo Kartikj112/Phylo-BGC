@@ -1,22 +1,36 @@
 "use client";
 
 import { Layers3 } from "lucide-react";
+import { useState } from "react";
+import { RailHeading } from "@/components/RailHeading";
 import { COLLAPSE_LEVELS, type CollapseLevel } from "@/lib/tree-logic";
 
 interface LevelControlProps {
   activeLevel: CollapseLevel | null;
   availableRanks: Set<string>;
   onSelectLevel: (level: CollapseLevel) => void;
+  /** Replaces the default explanation, for a mode where levels behave
+   * differently (the lazily loaded GTDB backbone). */
+  note?: string;
 }
 
-export function LevelControl({ activeLevel, availableRanks, onSelectLevel }: LevelControlProps) {
+export function LevelControl({ activeLevel, availableRanks, onSelectLevel, note }: LevelControlProps) {
+  const [open, setOpen] = useState(true);
+  const activeLabel = COLLAPSE_LEVELS.find((l) => l.id === activeLevel)?.label;
   return (
     <div>
-      <div className="mb-2 flex items-center gap-1.5">
-        <Layers3 size={12} className="text-chrome-ink-muted" />
-        <span className="text-xs uppercase tracking-wider text-chrome-ink-muted">Show down to</span>
+      <div className="mb-1">
+        <RailHeading
+          icon={<Layers3 size={12} />}
+          title="Show down to"
+          open={open}
+          onToggle={() => setOpen((v) => !v)}
+          summary={activeLabel ?? "custom"}
+        />
       </div>
 
+      {open && (
+      <>
       <div className="flex flex-col gap-0.5">
         {COLLAPSE_LEVELS.map((level) => {
           // Real taxonomies skip ranks, so a level absent from this
@@ -51,10 +65,14 @@ export function LevelControl({ activeLevel, availableRanks, onSelectLevel }: Lev
       </div>
 
       <p className="mt-2 text-xs leading-relaxed text-chrome-ink-faint">
-        Sets the depth for the whole tree; individual nodes can still be toggled afterwards. BGCs appear as
-        marks on each genome rather than as nodes, so <span className="text-chrome-ink-muted">Genomes</span> is the
-        deepest level.
+        {note ?? (
+          <>
+            How deep to open the whole tree. Click any clade afterwards to open or close just that one.
+          </>
+        )}
       </p>
+      </>
+      )}
     </div>
   );
 }

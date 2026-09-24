@@ -22,7 +22,7 @@ antiSMASH + BiG-SCAPE on Postgres, is at the bottom of this file.
 
 ## 0. One-time setup
 
-- **GitHub**: create an empty repo (private is fine), e.g. `bgc-scape`.
+- **GitHub**: create an empty repo (private is fine), e.g. `Phylo-BGC`.
 - **Vercel**: you have it.
 - **API host** — one of:
   - **Render** — sign up with GitHub. Free web services currently need **no card**.
@@ -37,7 +37,7 @@ From the repo root (`bgc-scape-v10/bgc-scape`):
 git add -A
 git commit -m "GCF distribution UI + deploy config"
 git branch -M main
-git remote add origin https://github.com/<you>/bgc-scape.git
+git remote add origin https://github.com/<you>/Phylo-BGC.git
 git push -u origin main
 ```
 

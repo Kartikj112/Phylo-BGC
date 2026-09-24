@@ -1,6 +1,8 @@
 "use client";
 
 import { SlidersHorizontal, X } from "lucide-react";
+import { useState } from "react";
+import { RailHeading } from "@/components/RailHeading";
 import { EMPTY_FILTERS, filtersAreActive, type GenomeFilters } from "@/lib/tree-logic";
 
 interface FilterPanelProps {
@@ -20,23 +22,37 @@ export function FilterPanel({ filters, onChange, matched, total, filteredEveryth
     onChange({ ...filters, [key]: value });
 
   const num = (v: string): number | null => (v.trim() === "" ? null : Number(v));
+  // Folded until wanted: six number boxes are a lot of rail for a control
+  // most visits never touch. An active filter keeps it open, and the folded
+  // heading still says so.
+  const [open, setOpen] = useState(active);
 
   return (
     <div>
-      <div className="mb-2 flex items-center justify-between">
-        <span className="flex items-center gap-1.5 text-xs uppercase tracking-wider text-chrome-ink-muted">
-          <SlidersHorizontal size={12} />
-          Filters
-        </span>
-        {active && (
-          <button
-            onClick={() => onChange(EMPTY_FILTERS)}
-            className="flex items-center gap-0.5 py-1 text-xs text-chrome-accent hover:underline"
-          >
-            <X size={10} /> Clear
-          </button>
-        )}
+      <div className="mb-1">
+        <RailHeading
+          icon={<SlidersHorizontal size={12} />}
+          title="Genome filters"
+          open={open || active}
+          onToggle={() => setOpen((v) => !(v || active))}
+          summary={active ? `${matched} of ${total} match` : "size, GC, quality, MAGs"}
+          action={
+            active ? (
+              <button
+                onClick={() => {
+                  onChange(EMPTY_FILTERS);
+                  setOpen(true);
+                }}
+                className="flex items-center gap-0.5 py-1 text-xs text-chrome-accent hover:underline"
+              >
+                <X size={10} /> Clear
+              </button>
+            ) : undefined
+          }
+        />
       </div>
+      {(open || active) && (
+      <>
 
       {filteredEverythingOut && (
         <div className="mb-2 rounded border border-amber-500/60 bg-amber-500/15 px-2 py-1.5 text-xs text-amber-200">
@@ -143,6 +159,8 @@ export function FilterPanel({ filters, onChange, matched, total, filteredEveryth
           MAG status is unrecorded for most genomes here, and unknown is not the same as no. This
           shows only genomes something has actually established to be metagenome-assembled.
         </p>
+      )}
+      </>
       )}
     </div>
   );

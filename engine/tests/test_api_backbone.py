@@ -17,7 +17,9 @@ from bgcscape.api.backbone_tree import (
     BackboneNodeNotFound,
     BackboneUnavailable,
     backbone_status,
+    build_backbone_path,
     build_backbone_tree,
+    search_backbone,
 )
 from bgcscape.api.tree_builder import build_taxonomy_tree
 from bgcscape.ingest.backbone import build_backbone
@@ -192,6 +194,11 @@ def test_limit_summarises_reference_only_children_but_never_corpus_ones(session,
     assert genus.omitted_child_count == 3
     assert genus.omitted_reference_genome_count == 4  # alpha 1 + beta 2 + gamma 1
 
+    # Domains are never summarised, whatever the limit.
+    root = build_backbone_tree(session, "prokaryote", depth=1, limit=1)
+    assert {c.name for c in root.children} >= {"Bacteria", "Archaea"}
+    assert root.omitted_child_count == 0
+
     # With room for one, the largest reference-only species is kept.
     genus = build_backbone_tree(session, "prokaryote", parent=genus_id, limit=3)
     assert "Streptomyces beta" in {c.name for c in genus.children}
@@ -253,3 +260,81 @@ def test_a_database_without_the_backbone_tables_reports_unavailable():
         assert "alembic upgrade head" in status.reason
         with pytest.raises(BackboneUnavailable):
             build_backbone_tree(old_session, "prokaryote")
+
+
+# ----- search and path ------------------------------------------------------
+
+
+def test_search_finds_any_clade_coarsest_first(session, corpus_and_backbone):
+    hits = search_backbone(session, "prokaryote", "strepto")
+    # The genus, then its family and order ("Streptomycetaceae" etc.) would
+    # be prefix matches too; coarse ranks lead, so the order comes first.
+    assert [h.name for h in hits][:3] == ["Streptomycetales", "Streptomycetaceae", "Streptomyces"]
+    genus = next(h for h in hits if h.name == "Streptomyces")
+    assert genus.lineage == ["Bacteria", "Actinomycetota", "Actinomycetes", "Streptomycetales", "Streptomycetaceae"]
+    assert genus.in_corpus and genus.corpus_genome_count == 3
+    # A corpus clade is keyed by its taxon id, as in /backbone/tree.
+    corpus_genus = session.query(Taxon).filter_by(name="Streptomyces").one()
+    assert genus.node_key == str(corpus_genus.id)
+
+
+def test_search_puts_an_exact_name_first(session, corpus_and_backbone):
+    hits = search_backbone(session, "prokaryote", "Streptomyces beta")
+    assert hits[0].name == "Streptomyces beta"
+    assert not hits[0].in_corpus and hits[0].node_key == str(hits[0].backbone_id)
+    # Substring matches are found when prefixes run out.
+    assert [h.name for h in search_backbone(session, "prokaryote", "brevibacter")] == [
+        "Methanobrevibacter", "Methanobrevibacter eps",
+    ]
+
+
+def test_search_ignores_one_character_and_treats_wildcards_literally(session, corpus_and_backbone):
+    assert search_backbone(session, "prokaryote", "s") == []
+    assert search_backbone(session, "prokaryote", "%%") == []
+    assert search_backbone(session, "prokaryote", "__") == []
+
+
+def test_path_opens_every_clade_down_to_the_target(session, corpus_and_backbone):
+    beta = search_backbone(session, "prokaryote", "Streptomyces beta")[0]
+    root = build_backbone_path(session, "prokaryote", beta.backbone_id)
+    node = root
+    for name in [
+        "Bacteria", "Actinomycetota", "Actinomycetes", "Streptomycetales",
+        "Streptomycetaceae", "Streptomyces", "Streptomyces beta",
+    ]:
+        node = _child(node, name)
+        assert node.children_loaded
+    # Clades off the path stay closed.
+    assert not _child(_child(root, "Bacteria"), "Bacillota").children_loaded
+    assert not _child(root, "Archaea").children_loaded
+
+
+def test_path_keeps_the_target_even_past_the_limit(session, corpus_and_backbone):
+    gamma = search_backbone(session, "prokaryote", "Streptomyces gamma")[0]
+    root = build_backbone_path(session, "prokaryote", gamma.backbone_id, limit=1)
+    genus = _child(
+        _child(_child(_child(_child(_child(root, "Bacteria"), "Actinomycetota"), "Actinomycetes"),
+                      "Streptomycetales"), "Streptomycetaceae"),
+        "Streptomyces",
+    )
+    shown = {c.name for c in genus.children}
+    # The smallest reference-only species, kept because it was asked for.
+    assert "Streptomyces gamma" in shown
+    assert {"Streptomyces testomycini", "Streptomyces fixturensis"} <= shown
+    assert genus.omitted_child_count == 2
+
+
+def test_path_bad_requests(session, corpus_and_backbone):
+    import uuid
+
+    with pytest.raises(BackboneNodeNotFound):
+        build_backbone_path(session, "prokaryote", uuid.uuid4())
+    with pytest.raises(BackboneUnavailable):
+        build_backbone_path(session, "eukaryote", uuid.uuid4())
+
+
+def test_http_search_and_path_without_a_backbone(api_client):  # noqa: F811
+    assert api_client.get("/api/v1/backbone/search?q=strep").status_code == 404
+    import uuid
+
+    assert api_client.get(f"/api/v1/backbone/path?node={uuid.uuid4()}").status_code == 404

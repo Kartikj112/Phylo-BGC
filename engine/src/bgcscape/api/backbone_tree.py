@@ -41,7 +41,7 @@ from dataclasses import dataclass
 from sqlalchemy import exists, func, inspect
 from sqlalchemy.orm import Session
 
-from bgcscape.api.schemas import BackboneStatus, BackboneTreeNode, TaxonTreeNode
+from bgcscape.api.schemas import BackboneSearchHit, BackboneStatus, BackboneTreeNode, TaxonTreeNode
 from bgcscape.api.tree_builder import TreeScope, build_taxonomy_tree
 from bgcscape.coverage import CoverageState
 from bgcscape.models import BGC, BackboneNode, Genome, Source, Taxon
@@ -231,11 +231,22 @@ def _corpus_only_node(corpus: TaxonTreeNode, index: _CorpusIndex) -> BackboneTre
 
 
 class _Builder:
-    def __init__(self, session: Session, source: Source, index: _CorpusIndex, limit: int):
+    def __init__(
+        self,
+        session: Session,
+        source: Source,
+        index: _CorpusIndex,
+        limit: int,
+        path_to: frozenset[uuid.UUID] = frozenset(),
+    ):
         self.session = session
         self.source = source
         self.index = index
         self.limit = limit
+        # Clades on the way to one the reader asked for (see
+        # build_backbone_path). Each is listed even when a wide parent would
+        # otherwise summarise it away, and each has its children loaded.
+        self.path_to = path_to
 
     def _rows(self, parent_id: uuid.UUID | None) -> list:
         query = self.session.query(*_NODE_COLUMNS).filter(BackboneNode.source_id == self.source.id)
@@ -283,8 +294,15 @@ class _Builder:
         with_corpus = [m for m in matched if m[2] is not None and m[2].genome_count > 0]
         reference_only = [m for m in matched if m[2] is None or m[2].genome_count == 0]
         reference_only.sort(key=lambda m: (-m[0].genome_count, m[0].name))
-        room = max(0, self.limit - len(with_corpus) - len(corpus_only))
-        shown = with_corpus + reference_only[:room]
+        # Domains are never folded into "N more": there are two, and the
+        # corpus-only organisms that hang off the root can fill the room.
+        def forced_in(m: tuple) -> bool:
+            return m[0].id in self.path_to or m[0].rank.value == "domain"
+
+        forced = [m for m in reference_only if forced_in(m)]
+        reference_only = [m for m in reference_only if not forced_in(m)]
+        room = max(0, self.limit - len(with_corpus) - len(corpus_only) - len(forced))
+        shown = with_corpus + forced + reference_only[:room]
         omitted = reference_only[room:]
 
         nodes = self._build_many(shown, depth)
@@ -305,8 +323,9 @@ class _Builder:
                 if ((c.rank.value if c.rank else ""), c.name) not in names
             )
             child_count = len(names) + corpus_extra
-            if depth > 0 and child_count:
-                children, omitted, omitted_genomes = self.children(row.id, path, depth - 1)
+            on_path = row.id in self.path_to
+            if (depth > 0 or on_path) and child_count:
+                children, omitted, omitted_genomes = self.children(row.id, path, max(depth - 1, 0))
                 loaded = True
             else:
                 children, omitted, omitted_genomes = [], 0, 0
@@ -396,3 +415,136 @@ def build_backbone_tree(
     path_t: Path = tuple(reversed(path))
     selected = session.query(*_NODE_COLUMNS).filter(BackboneNode.id == row.id).one()
     return builder._build_many([(selected, path_t, builder.index.by_path.get(path_t))], depth)[0]
+
+
+# ----- finding a clade -------------------------------------------------------
+
+
+def _lineage(session: Session, row: BackboneNode) -> list[BackboneNode]:
+    """`row` and its ancestors, root first."""
+    chain = [row]
+    while chain[-1].parent_id is not None:
+        parent = session.get(BackboneNode, chain[-1].parent_id)
+        if parent is None:
+            break
+        chain.append(parent)
+    return list(reversed(chain))
+
+
+#: Coarse ranks first, so "Streptomyces" finds the genus before the 2,000
+#: species whose names start with it.
+_RANK_ORDER = {
+    rank: i
+    for i, rank in enumerate(
+        ["domain", "kingdom", "phylum", "class", "order", "family", "genus", "species"]
+    )
+}
+
+
+def search_backbone(
+    session: Session, scope: TreeScope, query: str, limit: int = 10
+) -> list[BackboneSearchHit]:
+    """Clades of the reference taxonomy whose name matches `query`.
+
+    This is what lets a reader reach any of GTDB's quarter-million clades
+    without opening the tree a level at a time. Exact names come first, then
+    names that start with the query, then names that contain it, each
+    coarsest rank first and then largest first.
+    """
+    needle = query.strip()
+    if len(needle) < 2:
+        return []
+    if not 1 <= limit <= 50:
+        raise ValueError("limit must be between 1 and 50")
+    source = backbone_source(session, scope)
+    if source is None:
+        raise BackboneUnavailable(_unavailable_reason(scope, session))
+
+    base = session.query(BackboneNode).filter(BackboneNode.source_id == source.id)
+    escaped = needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    lowered = needle.lower()
+    # Prefix matches are fetched on their own first: on 250,000 names a
+    # substring query is a full scan, and a prefix is what a reader typing a
+    # name usually has.
+    rows = (
+        base.filter(BackboneNode.name.ilike(f"{escaped}%", escape="\\"))
+        .order_by(BackboneNode.genome_count.desc())
+        .limit(200)
+        .all()
+    )
+    if len(rows) < limit:
+        seen = {r.id for r in rows}
+        rows += [
+            r
+            for r in base.filter(BackboneNode.name.ilike(f"%{escaped}%", escape="\\"))
+            .order_by(BackboneNode.genome_count.desc())
+            .limit(200)
+            .all()
+            if r.id not in seen
+        ]
+
+    def order(r: BackboneNode) -> tuple:
+        name = r.name.lower()
+        closeness = 0 if name == lowered else 1 if name.startswith(lowered) else 2
+        return (closeness, _RANK_ORDER.get(r.rank.value, 99), -r.genome_count, r.name)
+
+    rows.sort(key=order)
+    index = _corpus_index(session, scope)
+    hits = []
+    for row in rows[:limit]:
+        chain = _lineage(session, row)
+        path: Path = tuple((n.rank.value, n.name) for n in chain)
+        corpus = index.by_path.get(path)
+        in_corpus = corpus is not None and corpus.genome_count > 0
+        hits.append(
+            BackboneSearchHit(
+                backbone_id=row.id,
+                node_key=str(corpus.id) if corpus is not None and corpus.id else str(row.id),
+                name=row.name,
+                rank=row.rank,
+                lineage=[n.name for n in chain[:-1]],
+                reference_genome_count=row.genome_count,
+                reference_species_count=row.species_count,
+                corpus_genome_count=corpus.genome_count if corpus is not None else 0,
+                in_corpus=in_corpus,
+            )
+        )
+    return hits
+
+
+def build_backbone_path(
+    session: Session, scope: TreeScope, target: uuid.UUID, limit: int = DEFAULT_LIMIT
+) -> BackboneTreeNode:
+    """The root with every clade on the way down to `target` opened.
+
+    One request instead of one per rank, which on a free host that answers in
+    a second or more is the difference between a jump and a slow crawl. Each
+    clade on the path, `target` included, has its children loaded, and is
+    always listed however many larger siblings it has. The interface merges
+    this into the tree it already holds (see web/src/lib/backbone.ts).
+    """
+    if not 1 <= limit <= MAX_LIMIT:
+        raise ValueError(f"limit must be between 1 and {MAX_LIMIT}")
+    source = backbone_source(session, scope)
+    if source is None:
+        raise BackboneUnavailable(_unavailable_reason(scope, session))
+    row = (
+        session.query(BackboneNode)
+        .filter(BackboneNode.id == target, BackboneNode.source_id == source.id)
+        .one_or_none()
+    )
+    if row is None:
+        raise BackboneNodeNotFound(f"backbone node {target} not found")
+    chain = _lineage(session, row)
+    builder = _Builder(
+        session, source, _corpus_index(session, scope), limit, path_to=frozenset(n.id for n in chain)
+    )
+    root = build_backbone_tree(session, scope, depth=1, limit=limit)
+    children, omitted, omitted_genomes = builder.children(None, (), 0)
+    return root.model_copy(
+        update={
+            "children": children,
+            "omitted_child_count": omitted,
+            "omitted_reference_genome_count": omitted_genomes,
+        }
+    )

@@ -209,7 +209,7 @@ test("a class filter left on from browsing does not fade the highlight away", as
   await page.getByRole("button", { name: "Terpene", exact: false }).first().click();
   await page.waitForTimeout(1000);
 
-  await page.getByRole("button", { name: "antiSMASH", exact: true }).click();
+  await page.getByRole("button", { name: "Upload antiSMASH results" }).click();
   await dialog(page)
     .locator('input[type="file"]')
     .first()
