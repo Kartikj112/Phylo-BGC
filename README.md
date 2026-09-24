@@ -14,7 +14,7 @@ work on this project.**
 
 ## Use it online
 
-No installation: **https://bgc-scape.vercel.app**. The free API behind it
+No installation: **https://phylo-bgc.vercel.app**. The free API behind it
 sleeps when idle, so the first visit after a quiet spell can take up to a
 minute to load.
 
@@ -43,7 +43,7 @@ can use [Docker Desktop](https://www.docker.com/products/docker-desktop/)
 
 ### Option A: one script (recommended)
 
-1. **Get the code.** Either `git clone https://github.com/Kartikj112/bgc-scape.git`,
+1. **Get the code.** Either `git clone https://github.com/Kartikj112/Phylo-BGC.git`,
    or on GitHub click the green **Code** button → **Download ZIP** and unzip it.
 2. **Open a terminal in that folder** (the one with `start.sh` in it) and run:
 
@@ -145,7 +145,7 @@ see **Run it on your computer** above.
 ### Repository layout
 
 ```
-bgc-scape/
+Phylo-BGC/
 ├── engine/                Python scientific engine: data model, ingestion,
 │                           visualization API. No biological logic lives in
 │                           the frontend; see ARCHITECTURE.md's separation
