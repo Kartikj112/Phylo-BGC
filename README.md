@@ -1,4 +1,5 @@
 # Phylo-BGC
+[![DOI](https://zenodo.org/badge/1348628567.svg)](https://doi.org/10.5281/zenodo.24243632)
 
 **Interactive exploration of biosynthetic diversity across the tree of life.**
 
