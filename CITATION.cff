@@ -25,6 +25,8 @@ license: MIT
 repository-code: "https://github.com/Kartikj112/Phylo-BGC"
 version: "0.1.0"
 date-released: "2026-11-15"
+doi: "10.5281/zenodo.YOUR_VERSION_ID"
+
 
 keywords:
   - biosynthetic gene clusters
